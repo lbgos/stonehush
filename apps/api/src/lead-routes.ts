@@ -74,6 +74,13 @@ function mutationStatus(code: string): 400 | 404 | 409 | 500 | 503 {
   return 500;
 }
 
+// LeadMutationErrorSchema has no invalid_repository_input variant, so a
+// repo-level input rejection surfaces as invalid_request instead of throwing
+// inside sendMutationError (which would escape as a 500).
+function mutationErrorCode(code: string): string {
+  return code === "invalid_repository_input" ? "invalid_request" : code;
+}
+
 export function registerLeadRoutes(
   app: FastifyInstance,
   repository: LeadRoutesRepository,
@@ -113,7 +120,7 @@ export function registerLeadRoutes(
       return sendMutationError(reply, 500, "invalid_persisted_data");
     }
     if (!result.ok) {
-      return sendMutationError(reply, mutationStatus(result.error.code), result.error.code);
+      return sendMutationError(reply, mutationStatus(result.error.code), mutationErrorCode(result.error.code));
     }
     const validated = LeadResponseSchema.safeParse(result.value);
     if (!validated.success) return sendMutationError(reply, 500, "invalid_persisted_data");
@@ -175,7 +182,7 @@ export function registerLeadRoutes(
           return sendMutationError(reply, 500, "invalid_persisted_data");
         }
         if (!result.ok) {
-          return sendMutationError(reply, mutationStatus(result.error.code), result.error.code);
+          return sendMutationError(reply, mutationStatus(result.error.code), mutationErrorCode(result.error.code));
         }
         const validated = LeadResponseSchema.safeParse(result.value);
         if (!validated.success) {
@@ -200,7 +207,7 @@ export function registerLeadRoutes(
           return sendMutationError(reply, 500, "invalid_persisted_data");
         }
         if (!result.ok) {
-          return sendMutationError(reply, mutationStatus(result.error.code), result.error.code);
+          return sendMutationError(reply, mutationStatus(result.error.code), mutationErrorCode(result.error.code));
         }
         const validated = LeadResponseSchema.safeParse(result.value);
         if (!validated.success) {
@@ -253,7 +260,7 @@ export function registerLeadRoutes(
       return sendMutationError(reply, 500, "invalid_persisted_data");
     }
     if (!result.ok) {
-      return sendMutationError(reply, mutationStatus(result.error.code), result.error.code);
+      return sendMutationError(reply, mutationStatus(result.error.code), mutationErrorCode(result.error.code));
     }
     const validated = LeadAttemptResponseSchema.safeParse(result.value);
     if (!validated.success) return sendMutationError(reply, 500, "invalid_persisted_data");
@@ -278,7 +285,7 @@ export function registerLeadRoutes(
       return sendMutationError(reply, 500, "invalid_persisted_data");
     }
     if (!result.ok) {
-      return sendMutationError(reply, mutationStatus(result.error.code), result.error.code);
+      return sendMutationError(reply, mutationStatus(result.error.code), mutationErrorCode(result.error.code));
     }
     const validated = LeadAttemptResponseSchema.safeParse(result.value);
     if (!validated.success) return sendMutationError(reply, 500, "invalid_persisted_data");

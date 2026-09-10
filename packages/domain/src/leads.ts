@@ -210,6 +210,45 @@ const OUTCOME_LABELS: Record<AttemptOutcome, string> = {
   interrupted: "interrupted (tool finished, hypothesis undecided)",
 };
 
+export const LEAD_CITED_REASON_MAX_CHARS = 500 as const;
+
+function codePointLength(value: string): number {
+  return Array.from(value).length;
+}
+
+function truncateCodePoints(value: string, maxChars: number): string {
+  const points = Array.from(value);
+  if (maxChars >= points.length) return value;
+  return points.slice(0, Math.max(0, maxChars)).join("");
+}
+
+// Cite the parked reason inside a revisit suggestion without breaking the
+// 500-char bound the contract and the database both enforce. Both inputs are
+// individually legal up to 500 chars, so the quoted park reason yields room
+// first and the new reason is always kept whole. Only when the new reason
+// alone leaves no room for the citation does the quote drop; the suggestion
+// itself is still recorded.
+export function citeParkReasonForRevisit(
+  parkReason: string | null,
+  reason: string,
+): string {
+  if (parkReason === null) return reason;
+  const prefix = 'Previously parked: "';
+  const suffix = '". ';
+  const room =
+    LEAD_CITED_REASON_MAX_CHARS -
+    codePointLength(prefix) -
+    codePointLength(suffix) -
+    codePointLength(reason);
+  if (room >= codePointLength(parkReason)) {
+    return `${prefix}${parkReason}${suffix}${reason}`;
+  }
+  if (room > 0) {
+    return `${prefix}${truncateCodePoints(parkReason, room)}${suffix}${reason}`;
+  }
+  return reason;
+}
+
 // A successful chain of attempts to a finding or access record renders as a
 // writeup outline: lead, ordered attempts with outcomes and conditions, then
 // the establishing links back to their attempts.

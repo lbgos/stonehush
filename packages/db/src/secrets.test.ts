@@ -111,4 +111,31 @@ describe("secret persistence", () => {
     expect(other.value.verifications).toHaveLength(0);
     expect(other.value.serviceRef).not.toBe(verified.value.serviceRef);
   });
+
+  it("rejects mutations on archived engagements but keeps reads", () => {
+    const { database, secrets, engagementId } = createFixture();
+    const created = secrets.createSecret(engagementId, {
+      label: "SSH password",
+      serviceRef: "192.0.2.10:22/ssh",
+      secretRef: "vault:stone/lab-app-ssh",
+    });
+    if (!created.ok) throw new Error("setup failed");
+    database.sqlite
+      .prepare(`update engagements set status = 'archived' where id = ?`)
+      .run(engagementId);
+    expect(
+      secrets.createSecret(engagementId, {
+        label: "Another",
+        serviceRef: "192.0.2.10:22/ssh",
+        secretRef: "vault:stone/other",
+      }).ok,
+    ).toBe(false);
+    expect(
+      secrets.recordVerification(engagementId, created.value.id, {
+        result: "verified",
+        method: "ssh login",
+      }).ok,
+    ).toBe(false);
+    expect(secrets.listSecrets(engagementId).ok).toBe(true);
+  });
 });

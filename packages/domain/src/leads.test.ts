@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   anonymousConditionsMatch,
   buildLeadOutline,
+  citeParkReasonForRevisit,
   isServiceTestedBySecret,
   resolveAttemptLeadLink,
   suggestLeadRevisit,
@@ -212,6 +213,43 @@ describe("service-scoped credentials", () => {
     expect(isServiceTestedBySecret("192.0.2.10:22/ssh", "192.0.2.10:80/http")).toBe(false);
     expect(isServiceTestedBySecret("192.0.2.10:22/ssh", "192.0.2.11:22/ssh")).toBe(false);
     expect(isServiceTestedBySecret("192.0.2.10:22/ssh", "")).toBe(false);
+  });
+});
+
+describe("park reason citation", () => {
+  it("cites the full parked reason when it fits", () => {
+    const cited = citeParkReasonForRevisit(
+      "No working credentials yet",
+      "SSH access gained for 192.0.2.10.",
+    );
+    expect(cited).toBe(
+      'Previously parked: "No working credentials yet". SSH access gained for 192.0.2.10.',
+    );
+  });
+
+  it("passes the reason through when there is no parked reason", () => {
+    expect(citeParkReasonForRevisit(null, "SSH access gained.")).toBe("SSH access gained.");
+  });
+
+  it("truncates the quoted park reason so the citation never exceeds 500 chars", () => {
+    const cited = citeParkReasonForRevisit("r".repeat(500), "SSH access gained.");
+    expect(Array.from(cited).length).toBeLessThanOrEqual(500);
+    expect(cited.startsWith('Previously parked: "')).toBe(true);
+    expect(cited.endsWith("SSH access gained.")).toBe(true);
+  });
+
+  it("keeps a 500-char new reason whole even when the quote must drop", () => {
+    const reason = "n".repeat(500);
+    const cited = citeParkReasonForRevisit("r".repeat(500), reason);
+    expect(cited).toBe(reason);
+    expect(Array.from(cited).length).toBe(500);
+  });
+
+  it("truncates on code-point boundaries without splitting characters", () => {
+    const cited = citeParkReasonForRevisit("🛠".repeat(500), "x".repeat(100));
+    expect(Array.from(cited).length).toBeLessThanOrEqual(500);
+    expect(cited.endsWith("x".repeat(100))).toBe(true);
+    expect(cited).not.toContain("�");
   });
 });
 

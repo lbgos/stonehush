@@ -147,6 +147,33 @@ describe("lead persistence", () => {
     expect(second.ok).toBe(false);
   });
 
+  it("bounds the cited suggestion to 500 chars for long park reasons", () => {
+    const { leads, engagementId } = createFixture();
+    const created = leads.createLead(engagementId, {
+      title: "Long parked lead",
+      source: SOURCE,
+    });
+    if (!created.ok) throw new Error("setup failed");
+    const parked = leads.parkLead(engagementId, created.value.id, {
+      reason: "r".repeat(500),
+      testedConditions: "Only checked without authentication",
+    });
+    if (!parked.ok) throw new Error("setup failed");
+    const suggested = leads.suggestRevisit(engagementId, created.value.id, {
+      trigger: "new_access",
+      reason: "n".repeat(500),
+      anonymous: false,
+    });
+    expect(suggested.ok).toBe(true);
+    if (!suggested.ok) return;
+    const stored = suggested.value.revisitSuggestion;
+    expect(stored).not.toBe(null);
+    if (stored === null) return;
+    expect(Array.from(stored.reason).length).toBeLessThanOrEqual(500);
+    expect(stored.reason).toBe("n".repeat(500));
+    expect(suggested.value.disposition).toBe("parked");
+  });
+
   it("orders attempts and renders the successful chain as an outline", () => {
     const { leads, engagementId } = createFixture();
     const created = leads.createLead(engagementId, {

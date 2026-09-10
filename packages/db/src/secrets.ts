@@ -7,7 +7,7 @@ import {
   SecretSchema,
   type Secret,
 } from "@blackglass/contracts";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 
 import * as schema from "./schema.js";
@@ -115,12 +115,20 @@ export class SecretRepository {
     }
   }
 
-  private verificationsFor(secretId: string): SecretResult<SecretVerificationRow[]> {
+  private verificationsFor(
+    engagementId: string,
+    secretId: string,
+  ): SecretResult<SecretVerificationRow[]> {
     try {
       const rows = this.db
         .select()
         .from(secretVerifications)
-        .where(eq(secretVerifications.secretId, secretId))
+        .where(
+          and(
+            eq(secretVerifications.secretId, secretId),
+            eq(secretVerifications.engagementId, engagementId),
+          ),
+        )
         .orderBy(asc(secretVerifications.createdAt), asc(secretVerifications.id))
         .all();
       return { ok: true, value: rows };
@@ -170,7 +178,7 @@ export class SecretRepository {
         .all();
       const values: Secret[] = [];
       for (const row of rows) {
-        const verifications = this.verificationsFor(row.id);
+        const verifications = this.verificationsFor(engagementId, row.id);
         if (!verifications.ok) return verifications;
         const parsed = secretFromRows(row, verifications.value);
         if (!parsed.ok) return parsed;
@@ -187,7 +195,7 @@ export class SecretRepository {
     if (!status.ok) return status;
     const row = this.readSecretRow(engagementId, secretId);
     if (!row.ok) return row;
-    const verifications = this.verificationsFor(secretId);
+    const verifications = this.verificationsFor(engagementId, secretId);
     if (!verifications.ok) return verifications;
     return secretFromRows(row.value, verifications.value);
   }

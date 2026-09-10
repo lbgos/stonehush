@@ -1,7 +1,17 @@
-import Fastify from "fastify";
-import { describe, expect, it } from "vitest";
-import type { Lead, LeadAttempt } from "@blackglass/contracts";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
+import Fastify from "fastify";
+import { afterEach, describe, expect, it } from "vitest";
+import type { Lead, LeadAttempt } from "@blackglass/contracts";
+import {
+  EngagementRepository,
+  LeadRepository,
+  openEngagementDatabase,
+} from "@blackglass/db";
+
+import { buildApp } from "./app.js";
 import { registerLeadRoutes } from "./lead-routes.js";
 
 const ENGAGEMENT_ID = "10000000-0000-4000-8000-000000000001";
@@ -48,17 +58,25 @@ function attemptRecord(overrides: Partial<LeadAttempt> = {}): LeadAttempt {
   };
 }
 
-function buildStubApp() {
+function buildStubApp(
+  overrides: {
+    createLead?: (engagementId: string) =>
+      | { ok: true; value: Lead }
+      | { ok: false; error: { code: "invalid_repository_input" } };
+  } = {},
+) {
   const app = Fastify();
   const state = {
     lead: leadRecord(),
     attempts: [attemptRecord()],
   };
   registerLeadRoutes(app, {
-    createLead: (engagementId: string) => ({
-      ok: true as const,
-      value: { ...leadRecord(), engagementId },
-    }),
+    createLead:
+      overrides.createLead ??
+      ((engagementId: string) => ({
+        ok: true as const,
+        value: { ...leadRecord(), engagementId },
+      })),
     listLeads: () => ({ ok: true as const, value: [state.lead] }),
     getLead: () => ({ ok: true as const, value: state.lead }),
     parkLead: (_engagementId: string, _leadId: string, input: unknown) => {
@@ -226,5 +244,105 @@ describe("lead routes", () => {
     expect(outline.statusCode).toBe(200);
     expect(outline.json().outline).toContain("Lead:");
     await app.close();
+  });
+
+  it("maps repository input rejections to invalid_request instead of a 500", async () => {
+    const app = buildStubApp({
+      createLead: () => ({
+        ok: false as const,
+        error: { code: "invalid_repository_input" as const },
+      }),
+    });
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/leads`,
+      payload: {
+        title: "Odd login form",
+        source: { kind: "manual", ref: "operator note" },
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ code: "invalid_request" });
+    await app.close();
+  });
+});
+
+const temporaryDirectories: string[] = [];
+const openApps: ReturnType<typeof buildApp>[] = [];
+
+afterEach(async () => {
+  await Promise.all(openApps.splice(0).map(async (app) => app.close()));
+  await Promise.all(
+    temporaryDirectories.splice(0).map(async (directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+describe("lead routes with repositories", () => {
+  it("records a revisit suggestion for 500-char reasons instead of failing", async () => {
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "blackglass-lead-overflow-test-"));
+    temporaryDirectories.push(dataDirectory);
+    await chmod(dataDirectory, 0o700);
+    const database = openEngagementDatabase({ dataDirectory });
+    let nextId = 1;
+    const engagementRepository = new EngagementRepository(database.db, {
+      createId: () => `10000000-0000-4000-8000-${String(nextId++).padStart(12, "0")}`,
+      now: () => new Date(Date.UTC(2026, 7, 12, 12, 0)),
+    });
+    const createdEngagement = engagementRepository.createEngagement({
+      name: "Overflow lab",
+      kind: "lab",
+      description: null,
+      authorizationContext: null,
+      autoContinueWarnings: false,
+    });
+    if (!createdEngagement.ok) throw new Error("Fixture create failed");
+    const engagementId = createdEngagement.value.id;
+    const app = buildApp({
+      engagementRepository,
+      leadRepository: new LeadRepository(database.db),
+      getDevelopmentStorageReadiness: () => "ready",
+    });
+    app.addHook("onClose", async () => database.close());
+    openApps.push(app);
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/leads`,
+      payload: {
+        title: "Long parked lead",
+        source: { kind: "manual", ref: "operator note" },
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const leadId = (created.json() as { id: string }).id;
+
+    const parked = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/leads/${leadId}/park`,
+      payload: {
+        reason: "r".repeat(500),
+        testedConditions: "Only checked without authentication",
+      },
+    });
+    expect(parked.statusCode).toBe(200);
+
+    const suggested = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/leads/${leadId}/revisit`,
+      payload: {
+        trigger: "new_access",
+        reason: "n".repeat(500),
+        anonymous: false,
+      },
+    });
+    expect(suggested.statusCode).toBe(200);
+    const body = suggested.json() as {
+      disposition: string;
+      revisitSuggestion: { reason: string } | null;
+    };
+    expect(body.disposition).toBe("parked");
+    expect(body.revisitSuggestion?.reason).toBe("n".repeat(500));
   });
 });

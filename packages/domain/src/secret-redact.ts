@@ -69,14 +69,11 @@ function utf8ByteLength(value: string): number {
   return new TextEncoder().encode(value).length;
 }
 
-// Short masked hint recorded at capture time, for example "32 bytes, ends
-// ab". The hint is operator-visible by design; keep it short and never put
-// the value itself into it.
+// Short masked hint recorded at capture time, for example "26 bytes". The
+// hint carries the value length only: no characters of the value itself are
+// persisted or displayed, so masked output stays masked.
 export function proofHintForValue(value: string): string {
-  const bytes = utf8ByteLength(value);
-  const points = Array.from(value);
-  const tail = points.slice(-2).join("");
-  return `${bytes} bytes, ends ${tail}`;
+  return `${utf8ByteLength(value)} bytes`;
 }
 
 export const SECRET_STORAGE_COPY =

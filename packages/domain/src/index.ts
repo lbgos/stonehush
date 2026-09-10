@@ -2,7 +2,9 @@ export { normalizeTarget } from "./normalize-target.js";
 export {
   anonymousConditionsMatch,
   buildLeadOutline,
+  citeParkReasonForRevisit,
   isServiceTestedBySecret,
+  LEAD_CITED_REASON_MAX_CHARS,
   resolveAttemptLeadLink,
   suggestLeadRevisit,
   transitionLeadDisposition,

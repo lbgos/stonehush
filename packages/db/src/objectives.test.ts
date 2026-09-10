@@ -120,4 +120,20 @@ describe("objective persistence", () => {
     expect(reopened.value.state).toBe("open");
     expect(reopened.value.proofDigest).toBe(null);
   });
+
+  it("rejects mutations on archived engagements but keeps reads", () => {
+    const { database, objectives, engagementId } = createFixture();
+    const created = objectives.createObjective(engagementId, { name: "goal", kind: "custom" });
+    if (!created.ok) throw new Error("setup failed");
+    database.sqlite
+      .prepare(`update engagements set status = 'archived' where id = ?`)
+      .run(engagementId);
+    expect(
+      objectives.createObjective(engagementId, { name: "another", kind: "custom" }).ok,
+    ).toBe(false);
+    expect(
+      objectives.captureObjective(engagementId, created.value.id, { proofValue: PROOF }).ok,
+    ).toBe(false);
+    expect(objectives.listObjectives(engagementId).ok).toBe(true);
+  });
 });
