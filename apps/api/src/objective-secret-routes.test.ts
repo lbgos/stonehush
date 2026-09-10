@@ -38,7 +38,7 @@ function buildObjectiveApp() {
       objective = {
         ...objective,
         state: "captured",
-        proofHint: "24 bytes, ends 01",
+        proofHint: "24 bytes",
         proofDigest: `sha256:${"0".repeat(64)}`,
         capturedAt: TS,
       };

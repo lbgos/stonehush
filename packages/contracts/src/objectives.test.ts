@@ -40,7 +40,7 @@ describe("objective contracts", () => {
     const parsed = ObjectiveResponseSchema.safeParse(
       objectiveRecord({
         state: "submitted",
-        proofHint: "32 chars, ends ab",
+        proofHint: "32 bytes",
         proofDigest: `sha256:${"0".repeat(64)}`,
         capturedAt: "2026-08-12T12:00:00.000Z",
         submittedAt: "2026-08-12T13:00:00.000Z",

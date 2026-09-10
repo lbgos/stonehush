@@ -15,6 +15,7 @@ import {
 } from "@blackglass/contracts";
 import {
   buildLeadOutline,
+  citeParkReasonForRevisit,
   suggestLeadRevisit,
   transitionLeadDisposition,
   type RevisitSuppressReason,
@@ -336,7 +337,8 @@ export class LeadRepository {
 
   // One quiet revisit suggestion. The parked reason is cited in the stored
   // text so the suggestion never claims the check will work elsewhere. The
-  // disposition is never changed here: no auto-reopen exists.
+  // citation is bounded to 500 chars so long park reasons cannot break the
+  // revisit CHECK. The disposition is never changed here: no auto-reopen exists.
   suggestRevisit(engagementId: string, leadId: string, input: unknown): LeadResult<Lead> {
     const parsed = SuggestLeadRevisitRequestSchema.safeParse(input);
     if (!parsed.success) return failed({ code: "invalid_repository_input" });
@@ -347,10 +349,10 @@ export class LeadRepository {
     if (!row.ok) return row;
     const current = leadFromRow(row.value);
     if (!current.ok) return current;
-    const citedReason =
-      current.value.parkReason === null
-        ? parsed.data.reason
-        : `Previously parked: "${current.value.parkReason}". ${parsed.data.reason}`;
+    const citedReason = citeParkReasonForRevisit(
+      current.value.parkReason,
+      parsed.data.reason,
+    );
     const suggestion = suggestLeadRevisit(
       current.value,
       {

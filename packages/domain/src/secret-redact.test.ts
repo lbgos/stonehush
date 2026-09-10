@@ -33,13 +33,14 @@ describe("secret redaction util", () => {
     }
   });
 
-  it("redacts known values from search, AI, log, and report text", () => {
+  it("redacts known values from search, AI, log, report, and command-preview text", () => {
     const known = "synthetic-secret-001";
     for (const surfaceText of [
       `search index entry ${known} here`,
       `ai context block ${known} here`,
       `log line ${known} here`,
       `report paragraph ${known} here`,
+      `run --password ${known} preview here`,
     ]) {
       const result = redactKnownSecretsFromText(surfaceText, [known]);
       expect(result.redactions).toBe(1);
@@ -53,9 +54,11 @@ describe("secret redaction util", () => {
     expect(result).toEqual({ text: "an ordinary log line", redactions: 0 });
   });
 
-  it("builds short masked hints without the value", () => {
+  it("builds length-only masked hints with no value characters", () => {
     const hint = proofHintForValue("flag{synthetic-proof-0001}");
-    expect(hint).not.toContain("flag{synthetic-proof-0001}");
+    expect(hint).toBe("26 bytes");
+    expect(hint).not.toContain("flag");
+    expect(hint).not.toContain("01");
     expect(hint.length).toBeLessThanOrEqual(64);
   });
 

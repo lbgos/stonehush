@@ -163,7 +163,7 @@ describe("stone leads workspace sections", () => {
             {
               ...(objectives[0] as Record<string, unknown>),
               state: "captured",
-              proofHint: "24 bytes, ends 01",
+              proofHint: "24 bytes",
               proofDigest: `sha256:${"0".repeat(64)}`,
               capturedAt: TS,
             },
