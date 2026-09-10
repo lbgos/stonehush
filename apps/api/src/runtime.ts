@@ -5,11 +5,14 @@ import {
   ExcerptRepository,
   FfufRepository,
   HttpProbeRepository,
+  LeadRepository,
   NmapServiceRepository,
+  ObjectiveRepository,
   OperatorCommandRepository,
   RunOutputRepository,
   RunRepository,
   RunnerRepository,
+  SecretRepository,
   SettingsRepository,
   openEngagementDatabase,
   type EngagementDatabase,
@@ -58,6 +61,9 @@ export async function buildStorageBackedApp(
     const advisorTurnsRepository = new AdvisorTurnsRepository(database.db);
     const runOutputRepository = new RunOutputRepository(database.db);
     const excerptRepository = new ExcerptRepository(database.db);
+    const leadRepository = new LeadRepository(database.db);
+    const objectiveRepository = new ObjectiveRepository(database.db);
+    const secretRepository = new SecretRepository(database.db);
 
     // Evidence publication is fail-closed: without a loadable native binding
     // or valid managed evidence roots, the upload routes are not registered.
@@ -113,6 +119,9 @@ export async function buildStorageBackedApp(
       ffufRepository,
       runOutputRepository,
       excerptRepository,
+      leadRepository,
+      objectiveRepository,
+      secretRepository,
       async getDevelopmentStorageReadiness() {
         await checkDevelopmentStorage(dataDirectory);
         return "ready" as const;
