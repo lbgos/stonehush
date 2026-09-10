@@ -201,6 +201,22 @@ describe("advisor stone-7 panel", () => {
     ).toBeDefined();
   });
 
+  it("distinguishes supported, ruled-out, and untried tried-check states", async () => {
+    await renderStonePanel([succeededTurn()]);
+    const panel = screen.getByRole("dialog");
+    expect(
+      await within(panel).findByText("Not yet tried under these conditions."),
+    ).toBeDefined();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Mark supported" }));
+    expect(
+      await within(panel).findByText("Supported under these conditions."),
+    ).toBeDefined();
+    fireEvent.click(within(panel).getByRole("button", { name: "Mark ruled out" }));
+    expect(
+      await within(panel).findByText(/Already ruled out under the same conditions/),
+    ).toBeDefined();
+  });
+
   it("marks a suggested check ruled out and retries with a new reason", async () => {
     await renderStonePanel([succeededTurn()]);
     const panel = screen.getByRole("dialog");

@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import type { HintDepthStorage } from "./hint-depth.js";
 import {
   filterRuledOutSuggestions,
+  type AttemptOutcome,
   type SuggestionVerdict,
 } from "./ruled-out.js";
 import {
@@ -65,6 +66,16 @@ export function TriedChecksSection({
     saveTriedChecks(storage, engagementId, next);
   }
 
+  function findRecordedOutcome(summary: string): AttemptOutcome | null {
+    const id = checkId(summary);
+    const context = checkId(conditions);
+    const found = attempts.find(
+      (attempt) =>
+        checkId(attempt.summary) === id && checkId(attempt.conditions) === context,
+    );
+    return found?.outcome ?? null;
+  }
+
   function handleRecord(summary: string, outcome: "ruled-out" | "supported") {
     persist(recordTriedCheck(attempts, summary, conditions, outcome));
     setReasons((current) => {
@@ -113,6 +124,7 @@ export function TriedChecksSection({
               key={check.id}
               summary={check.summary}
               verdict={verdictById.get(check.id)}
+              recordedOutcome={findRecordedOutcome(check.summary)}
               archived={archived}
               onRecord={handleRecord}
               onForget={handleForget}
@@ -134,6 +146,7 @@ function checkId(summary: string): string {
 function TriedCheckRow({
   summary,
   verdict,
+  recordedOutcome,
   archived,
   onRecord,
   onForget,
@@ -141,6 +154,7 @@ function TriedCheckRow({
 }: {
   summary: string;
   verdict: SuggestionVerdict | undefined;
+  recordedOutcome: AttemptOutcome | null;
   archived: boolean;
   onRecord: (summary: string, outcome: "ruled-out" | "supported") => void;
   onForget: (summary: string) => void;
@@ -162,7 +176,12 @@ function TriedCheckRow({
           {verdict.note}
         </p>
       ) : null}
-      {verdict?.verdict === "keep" ? (
+      {verdict?.verdict === "keep" && recordedOutcome === "supported" ? (
+        <p className="m-0 mt-1 text-[11px] text-muted-foreground" role="status">
+          Supported under these conditions.
+        </p>
+      ) : null}
+      {verdict?.verdict === "keep" && recordedOutcome !== "supported" ? (
         <p className="m-0 mt-1 text-[11px] text-muted-foreground" role="status">
           Not yet tried under these conditions.
         </p>
