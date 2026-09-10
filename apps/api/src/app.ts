@@ -26,6 +26,7 @@ import type {
   RunnerRepository,
   SecretRepository,
   SettingsRepository,
+  TechniqueRepository,
 } from "@stonehush/db";
 
 import { registerActionMutationRoutes } from "./action-mutation-routes.js";
@@ -55,6 +56,7 @@ import { registerLeadRoutes } from "./lead-routes.js";
 import { registerObjectiveRoutes } from "./objective-routes.js";
 import { registerReportRoutes } from "./report-routes.js";
 import { registerSecretRoutes } from "./secret-routes.js";
+import { registerTechniqueRoutes } from "./technique-routes.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import {
   registerAdvisorTurnRoutes,
@@ -179,6 +181,12 @@ interface BuildAppOptions {
     SecretRepository,
     "createSecret" | "listSecrets" | "getSecret" | "recordVerification"
   >;
+  // Saved advisor techniques (STONE-7). Registered only when the technique
+  // repository is wired; without it the routes do not exist.
+  techniqueRepository?: Pick<
+    TechniqueRepository,
+    "createTechnique" | "listTechniques" | "getTechniqueForEngagement"
+  >;
   logger?: FastifyServerOptions["logger"];
   now?: () => Date;
 }
@@ -206,6 +214,7 @@ export function buildApp({
   objectiveRepository,
   secretRepository,
   resumeRepository,
+  techniqueRepository,
   logger = false,
   now,
 }: BuildAppOptions): FastifyInstance {
@@ -441,6 +450,9 @@ export function buildApp({
       },
       ...(now === undefined ? {} : { now }),
     });
+  }
+  if (techniqueRepository !== undefined) {
+    registerTechniqueRoutes(app, techniqueRepository);
   }
 
   app.get("/health", async (_request, reply) => {

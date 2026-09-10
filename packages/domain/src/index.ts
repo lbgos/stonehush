@@ -153,6 +153,14 @@ export {
   type TextSnippet,
 } from "./excerpts.js";
 export {
+  extractTechniquePlaceholders,
+  fillTechniquePlaceholders,
+  isSupportedCheck,
+  matchTechniquePrereqs,
+  type FilledTemplate,
+  type TechniquePrereqMatch,
+} from "./technique.js";
+export {
   ADVISOR_EXPLANATION_PROMPT_VERSION,
   ADVISOR_EXPLANATION_SYSTEM_PROMPT,
   ADVISOR_HISTORY_ENTRY_MAX_BYTES,

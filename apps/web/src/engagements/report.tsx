@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { engagementReportMarkdown, type ReportBundle } from "@stonehush/contracts";
+import { engagementReportMarkdown, type Finding, type ReportBundle } from "@stonehush/contracts";
 import {
   Button,
   LoadingRegion,
@@ -9,6 +9,29 @@ import {
   StaleDataState,
 } from "@stonehush/ui";
 
+import {
+  addOutlineItem,
+  createOutline,
+  moveOutlineItem,
+  outlineSections,
+  removeOutlineItem,
+  setOutlineTemplate,
+  type OutlineTemplate,
+  type ReportOutline,
+} from "./report-outline.js";
+import { buildPrintHtml } from "./report-print.js";
+import { reviewOutline } from "./report-review.js";
+import {
+  buildPortableBundleManifest,
+  buildSharingPreview,
+  exportSharingMarkdown,
+} from "./report-sharing.js";
+import {
+  captureExportSnapshot,
+  describeSnapshotStaleness,
+  type ExportSnapshot,
+} from "./report-snapshot.js";
+
 import { maskReportBundle } from "./report-mask.js";
 
 import {
@@ -16,6 +39,8 @@ import {
   downloadTextFile,
   reportJsonFilename,
   reportMarkdownFilename,
+  reportPortableFilename,
+  reportPrintFilename,
   useReportQuery,
 } from "./report-query.js";
 
@@ -119,6 +144,38 @@ function ReportBody({
   const empty = isReportEmpty(bundle);
   const summary = `${bundle.findings.length} findings · ${bundle.services.total} services · ${bundle.probes.total} probes · ${bundle.ffufResults.total} ffuf results · ${bundle.evidenceArtifacts.total} artifacts`;
 
+  // STONE-7 outline state: selected findings/leads/evidence in outline
+  // order. Records stay where they are; only this order changes. The
+  // parent keys ReportBody by engagement, so this resets per engagement.
+  const [outline, setOutline] = useState<ReportOutline>(() => createOutline("ctf-writeup"));
+  const [includeRawArtifacts, setIncludeRawArtifacts] = useState(false);
+  const [snapshot, setSnapshot] = useState<ExportSnapshot | null>(null);
+
+  // One sharing derivation feeds its preview and every outline-based
+  // download, so the preview always matches the artifact exactly.
+  const sharing = useMemo(
+    () =>
+      buildSharingPreview({
+        bundle: view,
+        outline,
+        options: { includeRawArtifacts },
+      }),
+    [view, outline, includeRawArtifacts],
+  );
+  const sharingMarkdown = exportSharingMarkdown(sharing);
+  const flags = useMemo(
+    () =>
+      reviewOutline({
+        outline,
+        findings: bundle.findings,
+        notesMarkdown: bundle.notesMarkdown,
+      }),
+    [outline, bundle.findings, bundle.notesMarkdown],
+  );
+  const staleness = describeSnapshotStaleness(snapshot, {
+    bundleGeneratedAt: bundle.generatedAt,
+  });
+
   const onCopy = () => {
     setActionError(undefined);
     void copyTextToClipboard(markdown).then((ok) => {
@@ -161,6 +218,64 @@ function ReportBody({
     }
     setCopied(false);
     setMasked((value) => !value);
+  };
+
+  function recordSnapshot(markdown: string) {
+    setSnapshot(
+      captureExportSnapshot({
+        bundleGeneratedAt: bundle.generatedAt,
+        template: outline.template,
+        itemKeys: outline.items.map((item) => item.key),
+        markdown,
+      }),
+    );
+  }
+
+  const onDownloadOutlineMarkdown = () => {
+    setActionError(undefined);
+    try {
+      downloadTextFile(
+        reportMarkdownFilename(engagementId),
+        sharingMarkdown,
+        "text/markdown",
+      );
+      recordSnapshot(sharingMarkdown);
+    } catch {
+      setActionError("Download failed. Try again.");
+    }
+  };
+
+  const onDownloadPrintHtml = () => {
+    setActionError(undefined);
+    try {
+      const html = buildPrintHtml(
+        `Engagement report (${outline.template}): ${bundle.engagement.name}`,
+        sharingMarkdown,
+      );
+      downloadTextFile(reportPrintFilename(engagementId, outline.template), html, "text/html");
+      recordSnapshot(sharingMarkdown);
+    } catch {
+      setActionError("Download failed. Try again.");
+    }
+  };
+
+  const onDownloadPortableBundle = () => {
+    setActionError(undefined);
+    try {
+      const manifest = buildPortableBundleManifest({
+        bundle,
+        outline,
+        options: { includeRawArtifacts },
+      });
+      downloadTextFile(
+        reportPortableFilename(engagementId),
+        `${JSON.stringify(manifest, null, 2)}\n`,
+        "application/json",
+      );
+      recordSnapshot(sharingMarkdown);
+    } catch {
+      setActionError("Download failed. Try again.");
+    }
   };
 
   return (
@@ -224,6 +339,354 @@ function ReportBody({
         <pre className="m-0 max-h-96 min-w-0 overflow-auto px-3 py-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words">
           {markdown}
         </pre>
+      </div>
+      <OutlineSection
+        findings={bundle.findings}
+        evidenceArtifactIds={bundle.evidenceArtifacts.rows.map(
+          (artifact) => artifact.artifactId,
+        )}
+        notesAvailable={bundle.notesMarkdown.length > 0}
+        outline={outline}
+        onOutlineChange={setOutline}
+      />
+      <ReviewSection flags={flags} />
+      <SharingSection
+        sharing={sharing}
+        sharingMarkdown={sharingMarkdown}
+        includeRawArtifacts={includeRawArtifacts}
+        onToggleRawArtifacts={() => setIncludeRawArtifacts((value) => !value)}
+        staleness={staleness}
+        refreshing={refreshing}
+        onDownloadOutlineMarkdown={onDownloadOutlineMarkdown}
+        onDownloadPrintHtml={onDownloadPrintHtml}
+        onDownloadPortableBundle={onDownloadPortableBundle}
+      />
+    </div>
+  );
+}
+
+function OutlineSection({
+  findings,
+  evidenceArtifactIds,
+  notesAvailable,
+  outline,
+  onOutlineChange,
+}: {
+  findings: readonly Finding[];
+  evidenceArtifactIds: readonly string[];
+  notesAvailable: boolean;
+  outline: ReportOutline;
+  onOutlineChange: (outline: ReportOutline) => void;
+}) {
+  function setTemplate(template: OutlineTemplate) {
+    onOutlineChange(setOutlineTemplate(outline, template));
+  }
+  const selectedKeys = new Set(outline.items.map((item) => item.key));
+  return (
+    <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">
+      <div className="border-b border-border px-3 py-2">
+        <h3 className="m-0 text-[13px] font-semibold">Report outline</h3>
+      </div>
+      <div className="grid gap-2 px-3 py-2.5">
+        <p className="m-0 text-[12px] text-muted-foreground">
+          Select findings, evidence, and notes into an ordered outline. Reordering
+          never moves investigation records. Sections: {outlineSections(outline.template).join(" · ")}
+        </p>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Outline template">
+          <Button
+            type="button"
+            variant={outline.template === "ctf-writeup" ? "secondary" : "quiet"}
+            className="h-7 px-2 text-[12px]"
+            aria-pressed={outline.template === "ctf-writeup"}
+            onClick={() => setTemplate("ctf-writeup")}
+          >
+            CTF writeup
+          </Button>
+          <Button
+            type="button"
+            variant={outline.template === "assessment" ? "secondary" : "quiet"}
+            className="h-7 px-2 text-[12px]"
+            aria-pressed={outline.template === "assessment"}
+            onClick={() => setTemplate("assessment")}
+          >
+            Assessment report
+          </Button>
+        </div>
+        {outline.items.length === 0 ? (
+          <p className="m-0 text-[12px] text-muted-foreground">
+            Outline is empty. Add findings or evidence below.
+          </p>
+        ) : (
+          <ol className="m-0 space-y-1 p-0 pl-4 text-[12px]">
+            {outline.items.map((item, index) => (
+              <li key={item.key} className="flex min-h-8 flex-wrap items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className="font-mono text-[11px] text-muted-foreground">
+                    {item.kind}
+                  </span>{" "}
+                  {item.caption}
+                </span>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  className="h-7 px-2 text-[12px]"
+                  disabled={index === 0}
+                  onClick={() => onOutlineChange(moveOutlineItem(outline, item.key, index - 1))}
+                  aria-label={`Move ${item.caption} up`}
+                >
+                  Up
+                </Button>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  className="h-7 px-2 text-[12px]"
+                  disabled={index === outline.items.length - 1}
+                  onClick={() => onOutlineChange(moveOutlineItem(outline, item.key, index + 1))}
+                  aria-label={`Move ${item.caption} down`}
+                >
+                  Down
+                </Button>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  className="h-7 px-2 text-[12px]"
+                  onClick={() => onOutlineChange(removeOutlineItem(outline, item.key))}
+                  aria-label={`Remove ${item.caption}`}
+                >
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ol>
+        )}
+        <div>
+          <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+            Findings
+          </p>
+          {findings.length === 0 ? (
+            <p className="m-0 mt-1 text-[12px] text-muted-foreground">No findings yet.</p>
+          ) : (
+            <ul className="m-0 mt-1 list-none space-y-1 p-0">
+              {findings.map((finding) => {
+                const selected = selectedKeys.has(`finding:${finding.id}`);
+                return (
+                  <li key={finding.id} className="flex min-h-8 items-center gap-2 text-[12px]">
+                    <span className="min-w-0 flex-1 truncate" title={finding.title}>
+                      {finding.title}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      className="h-7 shrink-0 px-2 text-[12px]"
+                      disabled={selected}
+                      onClick={() =>
+                        onOutlineChange(
+                          addOutlineItem(outline, {
+                            kind: "finding",
+                            refId: finding.id,
+                            caption: finding.title,
+                          }),
+                        )
+                      }
+                    >
+                      {selected ? "Added" : "Add"}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <div>
+          <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+            Evidence
+          </p>
+          {evidenceArtifactIds.length === 0 ? (
+            <p className="m-0 mt-1 text-[12px] text-muted-foreground">No evidence artifacts.</p>
+          ) : (
+            <ul className="m-0 mt-1 list-none space-y-1 p-0">
+              {evidenceArtifactIds.map((artifactId) => {
+                const selected = selectedKeys.has(`evidence:${artifactId}`);
+                return (
+                  <li key={artifactId} className="flex min-h-8 items-center gap-2 text-[12px]">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[12px]" title={artifactId}>
+                      {artifactId}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      className="h-7 shrink-0 px-2 text-[12px]"
+                      disabled={selected}
+                      onClick={() =>
+                        onOutlineChange(
+                          addOutlineItem(outline, {
+                            kind: "evidence",
+                            refId: artifactId,
+                            caption: artifactId,
+                          }),
+                        )
+                      }
+                    >
+                      {selected ? "Added" : "Add"}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="quiet"
+            className="h-7 px-2 text-[12px]"
+            disabled={!notesAvailable || selectedKeys.has("note:notes")}
+            onClick={() =>
+              onOutlineChange(
+                addOutlineItem(outline, {
+                  kind: "note",
+                  refId: "notes",
+                  caption: "Engagement notes",
+                }),
+              )
+            }
+          >
+            {selectedKeys.has("note:notes") ? "Notes added" : "Add notes"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReviewSection({
+  flags,
+}: {
+  flags: readonly { code: string; itemKey: string | null; detail: string }[];
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">
+      <div className="border-b border-border px-3 py-2">
+        <h3 className="m-0 text-[13px] font-semibold">Review</h3>
+      </div>
+      <div className="grid gap-1 px-3 py-2.5">
+        <p className="m-0 text-[12px] text-muted-foreground">
+          Finishing aid, not a compliance form. Fix flags before exporting.
+        </p>
+        {flags.length === 0 ? (
+          <p className="m-0 text-[12px] text-muted-foreground" role="status">
+            No issues flagged.
+          </p>
+        ) : (
+          <ul className="m-0 list-none space-y-1 p-0">
+            {flags.map((flag, index) => (
+              <li key={`${flag.code}-${index}`} className="text-[12px]">
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  {flag.code}
+                </span>{" "}
+                {flag.detail}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SharingSection({
+  sharing,
+  sharingMarkdown,
+  includeRawArtifacts,
+  onToggleRawArtifacts,
+  staleness,
+  refreshing,
+  onDownloadOutlineMarkdown,
+  onDownloadPrintHtml,
+  onDownloadPortableBundle,
+}: {
+  sharing: { included: readonly { caption: string; filename?: string }[]; excluded: readonly string[]; maskedFields: number };
+  sharingMarkdown: string;
+  includeRawArtifacts: boolean;
+  onToggleRawArtifacts: () => void;
+  staleness: { stale: boolean; reason: string };
+  refreshing: boolean;
+  onDownloadOutlineMarkdown: () => void;
+  onDownloadPrintHtml: () => void;
+  onDownloadPortableBundle: () => void;
+}) {
+  return (
+    <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">
+      <div className="border-b border-border px-3 py-2">
+        <h3 className="m-0 text-[13px] font-semibold">Sharing and export</h3>
+      </div>
+      <div className="grid gap-2 px-3 py-2.5">
+        <p className="m-0 text-[12px] text-muted-foreground" aria-live="polite">
+          {staleness.stale ? staleness.reason : `Exports current. ${staleness.reason}`}
+        </p>
+        <div>
+          <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+            Included ({sharing.included.length})
+          </p>
+          {sharing.included.length === 0 ? (
+            <p className="m-0 mt-1 text-[12px] text-muted-foreground">
+              Nothing selected. Add outline items above.
+            </p>
+          ) : (
+            <ul className="m-0 mt-1 list-none space-y-1 p-0">
+              {sharing.included.map((entry, index) => (
+                <li key={index} className="text-[12px]">
+                  {entry.caption}
+                  {entry.filename !== undefined ? (
+                    <span className="font-mono text-[11px] text-muted-foreground">
+                      {" "}({entry.filename})
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+            Excluded
+          </p>
+          <ul className="m-0 mt-1 list-none space-y-1 p-0">
+            {sharing.excluded.map((entry, index) => (
+              <li key={index} className="text-[12px] text-muted-foreground">
+                {entry}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Button type="button" variant="secondary" disabled={refreshing} onClick={onDownloadOutlineMarkdown}>
+            Download outline Markdown
+          </Button>
+          <Button type="button" variant="secondary" disabled={refreshing} onClick={onDownloadPrintHtml}>
+            Download print HTML
+          </Button>
+          <Button type="button" variant="secondary" disabled={refreshing} onClick={onDownloadPortableBundle}>
+            Download portable bundle
+          </Button>
+          <Button
+            type="button"
+            variant="quiet"
+            className="h-7 px-2 text-[12px]"
+            aria-pressed={includeRawArtifacts}
+            onClick={onToggleRawArtifacts}
+          >
+            {includeRawArtifacts ? "Exclude raw artifacts" : "Include raw artifacts"}
+          </Button>
+        </div>
+        <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">
+          <div className="border-b border-border px-3 py-2">
+            <h4 className="m-0 text-[12px] font-semibold">Sharing preview (exact export text)</h4>
+          </div>
+          <pre className="m-0 max-h-96 min-w-0 overflow-auto px-3 py-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words">
+            {sharingMarkdown}
+          </pre>
+        </div>
       </div>
     </div>
   );
