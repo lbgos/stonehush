@@ -66,6 +66,15 @@ export {
   type RunnerResult,
 } from "./runner.js";
 export { NmapServiceRepository } from "./nmap-service.js";
+export {
+  StoneTargetRepository,
+  digestStoneCaptureContent,
+  type CreateStoneCaptureInput,
+  type CreateStoneTargetInput,
+  type StoneTargetCaptureErrorCode,
+  type StoneTargetCaptureProviders,
+  type StoneTargetCaptureResult,
+} from "./target-capture.js";
 export { SettingsRepository } from "./settings.js";
 export type {
   SettingsRepositoryError,
@@ -117,4 +126,8 @@ export {
   runs,
   scopeRevisions,
   settings,
+  stoneAddressBindings,
+  stoneCaptures,
+  stoneHostnameAssociations,
+  stoneTargets,
 } from "./schema.js";

@@ -1364,6 +1364,178 @@ export const settings = sqliteTable(
   ],
 );
 
+// STONE-5 target identity and external capture tables. Targets are identity
+// rows: two targets never merge by reused address. Address bindings carry the
+// actionable address over time with exactly one current row per target.
+// Captures carry operator-supplied external evidence with content-digest
+// dedupe per engagement. No execution-fact columns exist here by design:
+// started/finished time, exit codes, and runner targets are never invented.
+export const stoneTargets = sqliteTable(
+  "stone_targets",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    label: text("label").notNull(),
+    revision: integer("revision").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("stone_target_contract_version", sql`${table.contractVersion} = 1`),
+    check("stone_target_revision_positive", sql`${table.revision} >= 1`),
+    check(
+      "stone_target_label_length",
+      sql`length(${table.label}) between 1 and 120 and ${table.label} = trim(${table.label})`,
+    ),
+    check("stone_target_created_at", sql`length(${table.createdAt}) >= 20`),
+    check("stone_target_updated_at", sql`length(${table.updatedAt}) >= 20`),
+    index("stone_target_engagement_created_idx").on(table.engagementId, table.createdAt),
+  ],
+);
+
+export const stoneAddressBindings = sqliteTable(
+  "stone_address_bindings",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    targetId: text("target_id")
+      .notNull()
+      .references(() => stoneTargets.id, { onDelete: "restrict" }),
+    bindingKind: text("binding_kind", { enum: ["ip", "hostname"] }).notNull(),
+    addressText: text("address_text").notNull(),
+    status: text("status", { enum: ["current", "historical"] }).notNull(),
+    createdAt: text("created_at").notNull(),
+    supersededAt: text("superseded_at"),
+  },
+  (table) => [
+    check("stone_binding_contract_version", sql`${table.contractVersion} = 1`),
+    check("stone_binding_kind", sql`${table.bindingKind} in ('ip', 'hostname')`),
+    check("stone_binding_status", sql`${table.status} in ('current', 'historical')`),
+    check(
+      "stone_binding_address_length",
+      sql`length(${table.addressText}) between 1 and 512`,
+    ),
+    check("stone_binding_created_at", sql`length(${table.createdAt}) >= 20`),
+    check(
+      "stone_binding_superseded_at",
+      sql`(${table.status} = 'current' and ${table.supersededAt} is null) or (${table.status} = 'historical' and ${table.supersededAt} is not null)`,
+    ),
+    uniqueIndex("stone_binding_current_target_unique")
+      .on(table.targetId)
+      .where(sql`${table.status} = 'current'`),
+    index("stone_binding_target_created_idx").on(table.targetId, table.createdAt),
+  ],
+);
+
+export const stoneHostnameAssociations = sqliteTable(
+  "stone_hostname_associations",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    targetId: text("target_id")
+      .notNull()
+      .references(() => stoneTargets.id, { onDelete: "restrict" }),
+    connectionAddress: text("connection_address").notNull(),
+    requestedHostname: text("requested_hostname").notNull(),
+    status: text("status", {
+      enum: ["proposed", "associated", "declined"],
+    }).notNull(),
+    createdAt: text("created_at").notNull(),
+    decidedAt: text("decided_at"),
+  },
+  (table) => [
+    check("stone_hostname_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "stone_hostname_connection_length",
+      sql`length(${table.connectionAddress}) between 1 and 512`,
+    ),
+    check(
+      "stone_hostname_requested_length",
+      sql`length(${table.requestedHostname}) between 1 and 253`,
+    ),
+    check(
+      "stone_hostname_status",
+      sql`${table.status} in ('proposed', 'associated', 'declined')`,
+    ),
+    check("stone_hostname_created_at", sql`length(${table.createdAt}) >= 20`),
+    check(
+      "stone_hostname_decided_at",
+      sql`(${table.status} = 'proposed' and ${table.decidedAt} is null) or (${table.status} in ('associated', 'declined') and ${table.decidedAt} is not null)`,
+    ),
+    index("stone_hostname_target_created_idx").on(table.targetId, table.createdAt),
+  ],
+);
+
+export const stoneCaptures = sqliteTable(
+  "stone_captures",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    targetId: text("target_id").references(() => stoneTargets.id, {
+      onDelete: "restrict",
+    }),
+    leadId: text("lead_id"),
+    kind: text("kind", {
+      enum: ["pasted_terminal", "dropped_file", "screenshot", "nmap_xml", "ffuf_json"],
+    }).notNull(),
+    originLabel: text("origin_label", { enum: ["pasted", "imported"] }).notNull(),
+    title: text("title").notNull(),
+    command: text("command"),
+    observation: text("observation"),
+    contentDigest: text("content_digest").notNull(),
+    provenanceExistingId: text("provenance_existing_id"),
+    byteSize: integer("byte_size").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("stone_capture_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "stone_capture_kind",
+      sql`${table.kind} in ('pasted_terminal', 'dropped_file', 'screenshot', 'nmap_xml', 'ffuf_json')`,
+    ),
+    check(
+      "stone_capture_origin",
+      sql`${table.originLabel} in ('pasted', 'imported') and ((${table.kind} in ('pasted_terminal', 'dropped_file', 'screenshot') and ${table.originLabel} = 'pasted') or (${table.kind} in ('nmap_xml', 'ffuf_json') and ${table.originLabel} = 'imported'))`,
+    ),
+    check(
+      "stone_capture_title_length",
+      sql`length(${table.title}) between 1 and 120 and ${table.title} = trim(${table.title})`,
+    ),
+    check(
+      "stone_capture_command_length",
+      sql`${table.command} is null or length(${table.command}) between 1 and 2048`,
+    ),
+    check(
+      "stone_capture_observation_single_line",
+      sql`${table.observation} is null or (length(${table.observation}) between 1 and 2048 and instr(${table.observation}, char(10)) = 0 and instr(${table.observation}, char(13)) = 0)`,
+    ),
+    check(
+      "stone_capture_digest",
+      sql`length(${table.contentDigest}) = 71 and ${table.contentDigest} glob 'sha256:[0-9a-f]*' and ${table.contentDigest} not glob 'sha256:*[^0-9a-f]*'`,
+    ),
+    check("stone_capture_byte_size", sql`${table.byteSize} >= 0`),
+    check("stone_capture_created_at", sql`length(${table.createdAt}) >= 20`),
+    uniqueIndex("stone_capture_engagement_digest_unique").on(
+      table.engagementId,
+      table.contentDigest,
+    ),
+    index("stone_capture_engagement_created_idx").on(table.engagementId, table.createdAt),
+    index("stone_capture_target_created_idx").on(table.targetId, table.createdAt),
+  ],
+);
+
 export type RunRow = typeof runs.$inferSelect;
 export type RunLeaseRow = typeof runLeases.$inferSelect;
 export type RunEventRow = typeof runEvents.$inferSelect;
@@ -1379,3 +1551,7 @@ export type FfufResultRow = typeof ffufResults.$inferSelect;
 export type FindingRow = typeof findings.$inferSelect;
 export type AdvisorTurnRow = typeof advisorTurns.$inferSelect;
 export type SettingsRow = typeof settings.$inferSelect;
+export type StoneTargetRow = typeof stoneTargets.$inferSelect;
+export type StoneAddressBindingRow = typeof stoneAddressBindings.$inferSelect;
+export type StoneHostnameAssociationRow = typeof stoneHostnameAssociations.$inferSelect;
+export type StoneCaptureRow = typeof stoneCaptures.$inferSelect;
