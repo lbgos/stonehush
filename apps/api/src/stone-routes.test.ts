@@ -120,20 +120,40 @@ describe("stone target routes", () => {
     expect(decided.json()).toMatchObject({ status: "associated" });
   });
 
-  it("maps unknown targets to 404 and invalid input to 400", async () => {
-    const { app } = await fixture();
-    const missing = await app.inject({
+  it("rejects invalid addresses with 400 and foreign engagements with 404", async () => {
+    const { app, engagementId } = await fixture();
+    const invalid = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-targets`,
+      payload: { label: "web01", initialAddress: "not a target!!!" },
+    });
+    expect(invalid.statusCode).toBe(400);
+    const foreign = await app.inject({
       method: "POST",
       url: "/api/v1/engagements/10000000-0000-4000-8000-000000000099/stone-targets",
       payload: { label: "web01", initialAddress: "10.0.0.5" },
     });
-    expect(missing.statusCode).toBe(404);
-    const invalid = await app.inject({
+    expect(foreign.statusCode).toBe(404);
+  });
+
+  it("rejects bindings reads for foreign targets with 404", async () => {
+    const { app, engagementId } = await fixture();
+    const created = await app.inject({
       method: "POST",
-      url: `/api/v1/engagements/${(await fixture()).engagementId}/stone-targets`,
-      payload: { label: "web01", initialAddress: "not a target!!!" },
+      url: `/api/v1/engagements/${engagementId}/stone-targets`,
+      payload: { label: "web01", initialAddress: "10.0.0.5" },
     });
-    expect(invalid.statusCode).toBe(400);
+    const target = created.json() as { id: string };
+    const foreign = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/10000000-0000-4000-8000-000000000099/stone-targets/${target.id}/bindings`,
+    });
+    expect(foreign.statusCode).toBe(404);
+    const unknown = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${engagementId}/stone-targets/10000000-0000-4000-8000-000000000099/bindings`,
+    });
+    expect(unknown.statusCode).toBe(404);
   });
 });
 
@@ -191,6 +211,29 @@ describe("stone capture and import routes", () => {
     expect(response.json()).toEqual({ code: "invalid_request" });
   });
 
+  it("rejects malformed nmap and ffuf uploads instead of storing them as typed evidence", async () => {
+    const { app, engagementId } = await fixture();
+    const nmap = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-imports/nmap-xml`,
+      payload: { targetId: null, leadId: null, title: "Nmap import", contentText: "not xml" },
+    });
+    expect(nmap.statusCode).toBe(400);
+    const ffuf = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-imports/ffuf-json`,
+      payload: { targetId: null, leadId: null, title: "Ffuf import", contentText: "not json" },
+    });
+    expect(ffuf.statusCode).toBe(400);
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${engagementId}/stone-captures`,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect((listed.json() as unknown[])).toHaveLength(0);
+  });
+
   it("points a second identical nmap import at the existing capture", async () => {
     const { app, engagementId } = await fixture();
     const url = `/api/v1/engagements/${engagementId}/stone-imports/nmap-xml`;
@@ -205,9 +248,13 @@ describe("stone capture and import routes", () => {
     const second = await app.inject({ method: "POST", url, payload });
     expect(second.statusCode).toBe(200);
     const firstBody = first.json() as { capture: { id: string } };
-    const secondBody = second.json() as { deduplicated: boolean; capture: { id: string } };
+    const secondBody = second.json() as {
+      deduplicated: boolean;
+      capture: { id: string; provenanceExistingId: string | null };
+    };
     expect(secondBody.deduplicated).toBe(true);
     expect(secondBody.capture.id).toBe(firstBody.capture.id);
+    expect(secondBody.capture.provenanceExistingId).toBe(firstBody.capture.id);
 
     const listed = await app.inject({
       method: "GET",

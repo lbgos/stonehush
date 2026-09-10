@@ -78,7 +78,6 @@ export const CreateStoneCaptureRequestSchema = z.strictObject({
   contentDigest: StoneContentDigestSchema.optional(),
   fileName: z.string().min(1).max(255).optional(),
   byteSize: z.number().int().min(0).max(67_108_864).optional(),
-  rawCount: z.number().int().min(0).optional(),
 });
 
 export const StoneCaptureSchema = z.strictObject({
@@ -144,8 +143,13 @@ export function proposeCaptureTitle(input: {
 
 export const StoneCaptureListResponseSchema = z.array(StoneCaptureSchema);
 
+const StoneTargetIdSchema = z.uuid({ version: "v4" });
+
+// Import request boundary. Counts are derived server-side by parsing the
+// presented content, so no client count field exists here: a rawCount member
+// is rejected by the strict object rather than accepted and dropped.
 export const StoneImportBodySchema = z.strictObject({
-  targetId: EngagementSchema.shape.id.nullable().optional().default(null),
+  targetId: StoneTargetIdSchema.nullable().optional().default(null),
   leadId: z.string().min(1).max(255).nullable().optional().default(null),
   title: z.string().min(1).max(120).optional(),
   command: z.string().min(1).max(2048).optional(),
@@ -154,7 +158,6 @@ export const StoneImportBodySchema = z.strictObject({
   contentDigest: StoneContentDigestSchema.optional(),
   fileName: z.string().min(1).max(255).optional(),
   byteSize: z.number().int().min(0).max(67_108_864).optional(),
-  rawCount: z.number().int().min(0).optional(),
 });
 
 export const StoneCaptureErrorSchema = z.union([

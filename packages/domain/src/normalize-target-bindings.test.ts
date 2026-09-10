@@ -58,7 +58,7 @@ describe("normalize-target bindings", () => {
     expect(probe.reason).toBe("ip_reuse_never_merges");
   });
 
-  it("rejects unchanged and invalid addresses", () => {
+  it("rejects unchanged, invalid, and non-binding addresses", () => {
     expect(planAddressChange([binding()], { newAddressText: "10.0.0.5" })).toEqual({
       ok: false,
       error: { code: "address_unchanged" },
@@ -67,5 +67,12 @@ describe("normalize-target bindings", () => {
       ok: false,
       error: { code: "invalid_target" },
     });
+    expect(planAddressChange([binding()], { newAddressText: "10.0.0.0/24" })).toEqual({
+      ok: false,
+      error: { code: "invalid_target" },
+    });
+    expect(
+      planAddressChange([binding()], { newAddressText: "https://app.internal:443/" }),
+    ).toEqual({ ok: false, error: { code: "invalid_target" } });
   });
 });

@@ -7,6 +7,7 @@ import {
   originLabelForKind,
   proposeCaptureTitle,
   StoneCaptureSchema,
+  StoneImportBodySchema,
 } from "./import-capture.js";
 
 const ENGAGEMENT_ID = "10000000-0000-4000-8000-000000000002";
@@ -94,5 +95,24 @@ describe("stone import capture contracts", () => {
     expect(
       proposeCaptureTitle({ kind: "screenshot", targetLabel: "web01" }),
     ).toContain("web01");
+  });
+
+  it("rejects client-supplied raw counts on the import boundary", () => {
+    const parsed = StoneImportBodySchema.safeParse({
+      targetId: null,
+      leadId: null,
+      title: "Nmap import",
+      contentText: "<nmaprun></nmaprun>",
+      rawCount: 3,
+    });
+    expect(parsed.success).toBe(false);
+    expect(
+      StoneImportBodySchema.safeParse({
+        targetId: null,
+        leadId: null,
+        title: "Nmap import",
+        contentText: "<nmaprun></nmaprun>",
+      }).success,
+    ).toBe(true);
   });
 });

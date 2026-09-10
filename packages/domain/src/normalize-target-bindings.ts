@@ -51,7 +51,11 @@ export function planAddressChange(
   const normalized = normalizeTarget(trimmed);
   if (!normalized.ok) return { ok: false, error: { code: "invalid_target" } };
   const target = normalized.target;
-  if (target.kind === "cidr") return { ok: false, error: { code: "invalid_target" } };
+  // Only IP and hostname inputs are address bindings. CIDR ranges and URLs
+  // are not assignable to a target binding: origins live on service origins.
+  if (target.kind === "cidr" || target.kind === "url") {
+    return { ok: false, error: { code: "invalid_target" } };
+  }
   const addressText = displayForNormalized(target);
   const bindingKind = bindingKindForNormalized(target.kind);
   const active = current.find((binding) => binding.status === "current") ?? null;

@@ -85,15 +85,27 @@ export function CaptureView({
     try {
       const kind: StoneCaptureKind = file.type.startsWith("image/") ? "screenshot" : "dropped_file";
       const buffer = await file.arrayBuffer();
+      // Text is presented as content so the server hashes it; binary-only
+      // uploads travel by digest, name, and size.
+      let contentText: string | undefined;
+      if (file.type.startsWith("text/") || file.size <= 65_536) {
+        try {
+          contentText = await file.text();
+        } catch {
+          contentText = undefined;
+        }
+      }
       let contentDigest: string | undefined;
-      try {
-        const digest = await crypto.subtle.digest("SHA-256", buffer);
-        const hex = [...new Uint8Array(digest)]
-          .map((byte) => byte.toString(16).padStart(2, "0"))
-          .join("");
-        contentDigest = `sha256:${hex}`;
-      } catch {
-        contentDigest = undefined;
+      if (contentText === undefined) {
+        try {
+          const digest = await crypto.subtle.digest("SHA-256", buffer);
+          const hex = [...new Uint8Array(digest)]
+            .map((byte) => byte.toString(16).padStart(2, "0"))
+            .join("");
+          contentDigest = `sha256:${hex}`;
+        } catch {
+          contentDigest = undefined;
+        }
       }
       const draft: {
         targetId: string | null;
@@ -112,14 +124,8 @@ export function CaptureView({
         fileName: file.name,
         byteSize: file.size,
       };
+      if (contentText !== undefined) draft.contentText = contentText;
       if (contentDigest !== undefined) draft.contentDigest = contentDigest;
-      if (file.type.startsWith("text/") || file.size <= 65_536) {
-        try {
-          draft.contentText = await file.text();
-        } catch {
-          // Binary content travels by digest, name, and size only.
-        }
-      }
       const result = await createStoneCaptureRequest(engagementId, draft);
       setFileName(file.name);
       setMessage(
