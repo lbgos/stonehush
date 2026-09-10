@@ -39,6 +39,7 @@ import {
   downloadTextFile,
   reportJsonFilename,
   reportMarkdownFilename,
+  reportOutlineFilename,
   reportPortableFilename,
   reportPrintFilename,
   useReportQuery,
@@ -148,7 +149,7 @@ function ReportBody({
   // order. Records stay where they are; only this order changes. The
   // parent keys ReportBody by engagement, so this resets per engagement.
   const [outline, setOutline] = useState<ReportOutline>(() => createOutline("ctf-writeup"));
-  const [includeRawArtifacts, setIncludeRawArtifacts] = useState(false);
+  const [includeAssetLinks, setIncludeAssetLinks] = useState(false);
   const [snapshot, setSnapshot] = useState<ExportSnapshot | null>(null);
 
   // One sharing derivation feeds its preview and every outline-based
@@ -158,9 +159,9 @@ function ReportBody({
       buildSharingPreview({
         bundle: view,
         outline,
-        options: { includeRawArtifacts },
+        options: { includeAssetLinks },
       }),
-    [view, outline, includeRawArtifacts],
+    [view, outline, includeAssetLinks],
   );
   const sharingMarkdown = exportSharingMarkdown(sharing);
   const flags = useMemo(
@@ -174,6 +175,8 @@ function ReportBody({
   );
   const staleness = describeSnapshotStaleness(snapshot, {
     bundleGeneratedAt: bundle.generatedAt,
+    template: outline.template,
+    itemKeys: outline.items.map((item) => item.key),
   });
 
   const onCopy = () => {
@@ -235,7 +238,7 @@ function ReportBody({
     setActionError(undefined);
     try {
       downloadTextFile(
-        reportMarkdownFilename(engagementId),
+        reportOutlineFilename(engagementId, outline.template),
         sharingMarkdown,
         "text/markdown",
       );
@@ -265,7 +268,7 @@ function ReportBody({
       const manifest = buildPortableBundleManifest({
         bundle,
         outline,
-        options: { includeRawArtifacts },
+        options: { includeAssetLinks },
       });
       downloadTextFile(
         reportPortableFilename(engagementId),
@@ -353,8 +356,8 @@ function ReportBody({
       <SharingSection
         sharing={sharing}
         sharingMarkdown={sharingMarkdown}
-        includeRawArtifacts={includeRawArtifacts}
-        onToggleRawArtifacts={() => setIncludeRawArtifacts((value) => !value)}
+        includeAssetLinks={includeAssetLinks}
+        onToggleAssetLinks={() => setIncludeAssetLinks((value) => !value)}
         staleness={staleness}
         refreshing={refreshing}
         onDownloadOutlineMarkdown={onDownloadOutlineMarkdown}
@@ -597,8 +600,8 @@ function ReviewSection({
 function SharingSection({
   sharing,
   sharingMarkdown,
-  includeRawArtifacts,
-  onToggleRawArtifacts,
+  includeAssetLinks,
+  onToggleAssetLinks,
   staleness,
   refreshing,
   onDownloadOutlineMarkdown,
@@ -607,8 +610,8 @@ function SharingSection({
 }: {
   sharing: { included: readonly { caption: string; filename?: string }[]; excluded: readonly string[]; maskedFields: number };
   sharingMarkdown: string;
-  includeRawArtifacts: boolean;
-  onToggleRawArtifacts: () => void;
+  includeAssetLinks: boolean;
+  onToggleAssetLinks: () => void;
   staleness: { stale: boolean; reason: string };
   refreshing: boolean;
   onDownloadOutlineMarkdown: () => void;
@@ -673,10 +676,10 @@ function SharingSection({
             type="button"
             variant="quiet"
             className="h-7 px-2 text-[12px]"
-            aria-pressed={includeRawArtifacts}
-            onClick={onToggleRawArtifacts}
+            aria-pressed={includeAssetLinks}
+            onClick={onToggleAssetLinks}
           >
-            {includeRawArtifacts ? "Exclude raw artifacts" : "Include raw artifacts"}
+            {includeAssetLinks ? "Exclude evidence links" : "Include evidence links"}
           </Button>
         </div>
         <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">

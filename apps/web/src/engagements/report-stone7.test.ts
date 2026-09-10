@@ -147,6 +147,13 @@ describe("report outline", () => {
     );
     expect(markdown).toContain("(./assets/nmap-xml-1)");
     expect(markdown).not.toContain("://");
+    const digestOnly = renderOutlineMarkdown(
+      { findings: [], evidence: [{ artifactId: "nmap-xml-1", digest: "sha256:0" }], notesMarkdown: "" },
+      outline,
+      { assetLinks: false },
+    );
+    expect(digestOnly).not.toContain("./assets/");
+    expect(digestOnly).toContain("digest-only");
   });
 });
 
@@ -200,6 +207,14 @@ describe("report review panel", () => {
 });
 
 describe("export snapshots", () => {
+  function liveFor(
+    bundleGeneratedAt: string,
+    template = "ctf-writeup",
+    itemKeys: readonly string[] = ["finding:x"],
+  ) {
+    return { bundleGeneratedAt, template, itemKeys };
+  }
+
   it("goes visibly stale after a later edit", () => {
     const snapshot = captureExportSnapshot({
       bundleGeneratedAt: "2026-08-12T13:00:00.000Z",
@@ -210,18 +225,39 @@ describe("export snapshots", () => {
       createId: () => "snapshot-1",
     });
     expect(
-      describeSnapshotStaleness(snapshot, { bundleGeneratedAt: "2026-08-12T13:00:00.000Z" }).stale,
+      describeSnapshotStaleness(snapshot, liveFor("2026-08-12T13:00:00.000Z")).stale,
     ).toBe(false);
-    const stale = describeSnapshotStaleness(snapshot, {
-      bundleGeneratedAt: "2026-08-12T14:00:00.000Z",
-    });
+    const stale = describeSnapshotStaleness(snapshot, liveFor("2026-08-12T14:00:00.000Z"));
     expect(stale.stale).toBe(true);
     expect(stale.reason).toContain("Stale");
+  });
+
+  it("goes stale when the outline is reordered or retemplated", () => {
+    const snapshot = captureExportSnapshot({
+      bundleGeneratedAt: "2026-08-12T13:00:00.000Z",
+      template: "ctf-writeup",
+      itemKeys: ["finding:x", "evidence:y"],
+      markdown: "# Report\n",
+      now: () => new Date("2026-08-12T13:05:00.000Z"),
+      createId: () => "snapshot-1",
+    });
+    const reordered = describeSnapshotStaleness(
+      snapshot,
+      liveFor("2026-08-12T13:00:00.000Z", "ctf-writeup", ["evidence:y", "finding:x"]),
+    );
+    expect(reordered.stale).toBe(true);
+    expect(reordered.reason).toContain("order");
+    const retemplated = describeSnapshotStaleness(
+      snapshot,
+      liveFor("2026-08-12T13:00:00.000Z", "assessment", ["finding:x", "evidence:y"]),
+    );
+    expect(retemplated.stale).toBe(true);
+    expect(retemplated.reason).toContain("template");
   });
 });
 
 describe("sharing preview", () => {
-  it("excludes scratchpad, secrets, history, and raw bytes by default", () => {
+  it("excludes scratchpad, secrets, history, and asset links by default", () => {
     const bundle = bundleFixture();
     const outline = addOutlineItem(
       addOutlineItem(createOutline(), {
@@ -236,12 +272,15 @@ describe("sharing preview", () => {
     expect(preview.included.some((entry) => entry.filename !== undefined)).toBe(false);
     expect(preview.excluded.join("\n")).toContain("Scratchpad");
     expect(preview.excluded.join("\n")).toContain("history");
-    expect(preview.excluded.join("\n")).toContain("Raw artifact bytes excluded");
+    expect(preview.excluded.join("\n")).toContain("asset links excluded");
+    expect(preview.excluded.join("\n")).toContain("never embedded");
+    // The toggle changes the Markdown itself, so preview and file agree.
+    expect(preview.markdown).not.toContain("./assets/");
     // Preview and export are the same string.
     expect(exportSharingMarkdown(preview)).toBe(preview.markdown);
   });
 
-  it("includes raw artifacts only when explicit", () => {
+  it("links evidence assets only when explicit", () => {
     const bundle = bundleFixture();
     const outline = addOutlineItem(createOutline(), {
       kind: "evidence",
@@ -251,10 +290,11 @@ describe("sharing preview", () => {
     const preview = buildSharingPreview({
       bundle,
       outline,
-      options: { includeRawArtifacts: true },
+      options: { includeAssetLinks: true },
     });
     expect(preview.included[0]?.filename).toBe("assets/nmap-xml-1");
-    expect(preview.excluded.join("\n")).not.toContain("Raw artifact bytes excluded");
+    expect(preview.markdown).toContain("(./assets/nmap-xml-1)");
+    expect(preview.excluded.join("\n")).not.toContain("asset links excluded");
   });
 
   it("builds a portable bundle distinct from the client report", () => {

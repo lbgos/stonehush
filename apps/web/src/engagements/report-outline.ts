@@ -101,13 +101,17 @@ function findingById(
   return findings.find((finding) => finding.id === refId);
 }
 
-// Deterministic outline Markdown with relative asset links. Selected
-// evidence links as ./assets/<artifactId>; the export bundle places raw
-// bytes there only when raw artifacts are explicitly included.
+// Deterministic outline Markdown. Selected evidence links as
+// ./assets/<artifactId> when asset links are enabled; with links off the
+// entries stay as digest-only text. Raw artifact bytes are never embedded
+// in the Markdown either way: links point at the export bundle layout,
+// where bytes land only through an explicit separate step.
 export function renderOutlineMarkdown(
   material: OutlineMaterial,
   outline: ReportOutline,
+  options?: { assetLinks?: boolean },
 ): string {
+  const assetLinks = options?.assetLinks ?? true;
   const lines: string[] = [];
   const findings = outline.items.filter((item) => item.kind === "finding");
   const leads = outline.items.filter((item) => item.kind === "lead");
@@ -167,8 +171,11 @@ export function renderOutlineMarkdown(
         const digest = material.evidence.find(
           (entry) => entry.artifactId === item.refId,
         )?.digest;
+        const suffix = digest === undefined ? "" : ` ${digest}`;
         lines.push(
-          `- [${item.caption}](./assets/${item.refId})${digest === undefined ? "" : ` ${digest}`}`,
+          assetLinks
+            ? `- [${item.caption}](./assets/${item.refId})${suffix}`
+            : `- ${item.caption} (digest-only${suffix})`,
         );
       }
       if (evidence.length > 0) lines.push("");

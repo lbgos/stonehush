@@ -106,21 +106,41 @@ describe("technique repository", () => {
     expect(listed.ok && listed.value.length).toBe(0);
   });
 
-  it("hides foreign rows as technique_not_found", () => {
-    const first = createFixture();
-    const second = createFixture();
-    const created = first.techniques.createTechnique(
-      first.engagementId,
+  it("hides foreign rows as technique_not_found in the same database", () => {
+    const fixture = createFixture();
+    const secondEngagement = fixture.engagements.createEngagement({
+      name: "Second lab",
+      kind: "lab",
+      description: null,
+      authorizationContext: null,
+      autoContinueWarnings: false,
+    });
+    if (!secondEngagement.ok) throw new Error("second engagement fixture failed");
+    const created = fixture.techniques.createTechnique(
+      fixture.engagementId,
       validInput(),
     );
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    const foreign = second.techniques.getTechniqueForEngagement(
-      second.engagementId,
+    // Same database, row owned by another engagement: no existence oracle.
+    const foreign = fixture.techniques.getTechniqueForEngagement(
+      secondEngagement.value.id,
       created.value.id,
     );
     expect(foreign.ok).toBe(false);
     if (!foreign.ok) expect(foreign.error.code).toBe("technique_not_found");
+    // The other engagement sees an empty list, not the foreign row.
+    const listed = fixture.techniques.listTechniques(secondEngagement.value.id);
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value).toEqual([]);
+    // Unknown technique ids in the right engagement read the same way.
+    const missing = fixture.techniques.getTechniqueForEngagement(
+      fixture.engagementId,
+      "10000000-0000-4000-8000-000000000098",
+    );
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error.code).toBe("technique_not_found");
   });
 
   it("reads stay available on archived engagements", () => {

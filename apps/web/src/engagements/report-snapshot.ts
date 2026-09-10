@@ -49,11 +49,23 @@ export interface Staleness {
   readonly reason: string;
 }
 
+export interface SnapshotLiveState {
+  readonly bundleGeneratedAt: string;
+  readonly template: string;
+  readonly itemKeys: readonly string[];
+}
+
+function sameKeys(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((key, index) => key === right[index]);
+}
+
 // A snapshot goes stale when the live bundle regenerated after the export
-// (a later edit, finding, or run changed the underlying data).
+// (a later edit, finding, or run changed the underlying data) or when the
+// outline itself drifted (reselected, reordered, or retemplated): the
+// snapshot markdown would no longer match a fresh export.
 export function describeSnapshotStaleness(
   snapshot: ExportSnapshot | null,
-  live: { bundleGeneratedAt: string },
+  live: SnapshotLiveState,
 ): Staleness {
   if (snapshot === null) {
     return { stale: false, reason: "No export yet." };
@@ -62,6 +74,18 @@ export function describeSnapshotStaleness(
     return {
       stale: true,
       reason: `Stale: engagement data changed after this export (export ${snapshot.createdAt}). Re-export for a current snapshot.`,
+    };
+  }
+  if (live.template !== snapshot.template) {
+    return {
+      stale: true,
+      reason: `Stale: outline template changed to ${live.template} after this export. Re-export for a current snapshot.`,
+    };
+  }
+  if (!sameKeys(live.itemKeys, snapshot.itemKeys)) {
+    return {
+      stale: true,
+      reason: "Stale: outline selection or order changed after this export. Re-export for a current snapshot.",
     };
   }
   return { stale: false, reason: `Current as of ${snapshot.createdAt}.` };

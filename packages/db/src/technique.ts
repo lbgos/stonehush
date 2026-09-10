@@ -5,8 +5,7 @@ import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
   CreateTechniqueRequestSchema,
   TECHNIQUE_CONTRACT_VERSION,
-  TechniquePrerequisiteSchema,
-  TechniqueStepSchema,
+  TechniqueSchema,
   type Technique,
 } from "@blackglass/contracts";
 
@@ -64,28 +63,24 @@ function techniqueFromRow(row: typeof techniques.$inferSelect): TechniqueResult<
   } catch {
     return failed("invalid_persisted_data");
   }
-  if (
-    TechniquePrerequisiteSchema.array().max(8).safeParse(prerequisites).success === false ||
-    TechniqueStepSchema.array().min(1).max(16).safeParse(procedure).success === false
-  ) {
-    return failed("invalid_persisted_data");
-  }
-  return {
-    ok: true,
-    value: {
-      contractVersion: TECHNIQUE_CONTRACT_VERSION,
-      id: row.id,
-      engagementId: row.engagementId,
-      name: row.name,
-      whenUseful: row.whenUseful,
-      prerequisites: prerequisites as Technique["prerequisites"],
-      question: row.question,
-      procedure: procedure as Technique["procedure"],
-      meaning: row.meaning,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    },
-  };
+  // Full contract validation on every read: names, questions, meanings,
+  // timestamps, and array bounds rechecked, so corrupt rows surface as
+  // invalid_persisted_data instead of leaking.
+  const parsed = TechniqueSchema.safeParse({
+    contractVersion: TECHNIQUE_CONTRACT_VERSION,
+    id: row.id,
+    engagementId: row.engagementId,
+    name: row.name,
+    whenUseful: row.whenUseful,
+    prerequisites,
+    question: row.question,
+    procedure,
+    meaning: row.meaning,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  });
+  if (!parsed.success) return failed("invalid_persisted_data");
+  return { ok: true, value: parsed.data };
 }
 
 export class TechniqueRepository {

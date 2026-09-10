@@ -116,6 +116,7 @@ async function renderStonePanel(history: unknown[] = []) {
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   Object.defineProperty(window, "requestAnimationFrame", {
     configurable: true,
     value: vi.fn((callback: FrameRequestCallback) => {
@@ -197,6 +198,27 @@ describe("advisor stone-7 panel", () => {
     const panel = screen.getByRole("dialog");
     expect(
       await within(panel).findByRole("button", { name: /Use: nmap/ }),
+    ).toBeDefined();
+  });
+
+  it("marks a suggested check ruled out and retries with a new reason", async () => {
+    await renderStonePanel([succeededTurn()]);
+    const panel = screen.getByRole("dialog");
+    expect(await within(panel).findByText("Tried checks")).toBeDefined();
+    fireEvent.click(await within(panel).findByRole("button", { name: "Mark ruled out" }));
+    expect(
+      await within(panel).findByText(/Already ruled out under the same conditions/),
+    ).toBeDefined();
+    fireEvent.click(
+      within(panel).getByRole("button", { name: "Retry with new reason" }),
+    );
+    const input = within(panel).getByLabelText(
+      /New reason to retry/,
+    ) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "new firmware" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Retry" }));
+    expect(
+      await within(panel).findByText(/new reason to retry: new firmware/),
     ).toBeDefined();
   });
 });

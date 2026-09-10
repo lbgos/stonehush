@@ -27,6 +27,10 @@ export function reportPrintFilename(engagementId: string, template: string): str
   return `engagement-${engagementId}-report-${template}.html`;
 }
 
+export function reportOutlineFilename(engagementId: string, template: string): string {
+  return `engagement-${engagementId}-report-${template}-outline.md`;
+}
+
 export function reportPortableFilename(engagementId: string): string {
   return `engagement-${engagementId}-workspace-bundle.json`;
 }

@@ -56,7 +56,12 @@ export function filterRuledOutSuggestions(
     return {
       verdict: "drop",
       id: suggestion.id,
-      reason: `Already ruled out under the same conditions (${suggestion.conditions.trim()}): moving on.`,
+      reason: `Already ruled out under the same conditions (${conditionsLabel(suggestion.conditions)}): moving on.`,
     };
   });
+}
+
+function conditionsLabel(conditions: string): string {
+  const trimmed = conditions.trim();
+  return trimmed.length > 0 ? trimmed : "unstated conditions";
 }

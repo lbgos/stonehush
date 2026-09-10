@@ -18,14 +18,14 @@ import {
 
 export interface SharingOptions {
   readonly maskSecrets: boolean;
-  readonly includeRawArtifacts: boolean;
+  readonly includeAssetLinks: boolean;
   readonly includeNoteHistory: boolean;
   readonly includeScratchpad: boolean;
 }
 
 export const DEFAULT_SHARING_OPTIONS: SharingOptions = {
   maskSecrets: true,
-  includeRawArtifacts: false,
+  includeAssetLinks: false,
   includeNoteHistory: false,
   includeScratchpad: false,
 };
@@ -59,13 +59,17 @@ function toMaterial(bundle: ReportBundle): OutlineMaterial {
   };
 }
 
-// One builder feeds the on-screen preview and the downloaded artifact, so
-// the preview always matches the file exactly.
+// One builder feeds the on-screen preview and every outline-based
+// download, so the preview always matches the file exactly. The asset-link
+// toggle changes the rendered Markdown itself (links vs digest-only lines),
+// never just the captions, so the two cannot drift.
 export function buildSharingPreview(input: SharingInput): SharingPreview {
   const options: SharingOptions = { ...DEFAULT_SHARING_OPTIONS, ...input.options };
   const masked = options.maskSecrets ? maskReportBundle(input.bundle) : null;
   const view = masked?.bundle ?? input.bundle;
-  const markdown = renderOutlineMarkdown(toMaterial(view), input.outline);
+  const markdown = renderOutlineMarkdown(toMaterial(view), input.outline, {
+    assetLinks: options.includeAssetLinks,
+  });
   const included: SharingEntry[] = [];
   for (const item of input.outline.items) {
     if (item.kind === "finding") {
@@ -77,9 +81,9 @@ export function buildSharingPreview(input: SharingInput): SharingPreview {
       included.push({ caption: `Lead: ${item.caption}` });
     } else if (item.kind === "evidence") {
       included.push(
-        options.includeRawArtifacts
-          ? { caption: `Raw artifact ${item.refId}`, filename: `assets/${item.refId}` }
-          : { caption: `Evidence digest for ${item.refId} (bytes excluded)` },
+        options.includeAssetLinks
+          ? { caption: `Evidence ${item.refId}`, filename: `assets/${item.refId}` }
+          : { caption: `Evidence digest for ${item.refId} (asset link excluded)` },
       );
     } else {
       included.push({ caption: "Engagement notes excerpt" });
@@ -91,9 +95,10 @@ export function buildSharingPreview(input: SharingInput): SharingPreview {
       ? `Secret-shaped values masked (${masked?.maskedFields ?? 0} fields). Heuristic only.`
       : "Secret masking OFF: the export contains original stored text.",
     "Note history is never exported; only the current notes text.",
+    "Raw artifact bytes are never embedded in the export; it carries digests and optional asset links only.",
   ];
-  if (!options.includeRawArtifacts) {
-    excluded.push("Raw artifact bytes excluded; enable explicitly to include them.");
+  if (!options.includeAssetLinks) {
+    excluded.push("Evidence asset links excluded; enable explicitly to reference ./assets/<id>.");
   }
   if (!options.includeNoteHistory) {
     excluded.push("Note history excluded.");

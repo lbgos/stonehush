@@ -25,6 +25,7 @@ import {
   type AdvisorEntryPoint,
 } from "./advisor-entry-points.js";
 import { ParagraphActions } from "./advisor-paragraph-actions.js";
+import { TriedChecksSection } from "./advisor-tried-checks.js";
 import { citationPassageHref } from "./citations.js";
 import {
   buildContextPreview,
@@ -670,6 +671,18 @@ export function AdvisorPanel({
               </Button>
             </div>
           ) : null}
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="m-0 text-[12px] font-semibold">Tried checks</h3>
+          </div>
+          <TriedChecksSection
+            engagementId={engagementId}
+            archived={archived}
+            turns={turns}
+            storage={typeof localStorage === "undefined" ? undefined : localStorage}
+          />
         </div>
 
         <div>
