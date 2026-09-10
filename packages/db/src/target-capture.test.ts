@@ -133,12 +133,95 @@ describe("stone target capture repository", () => {
     expect(second.ok).toBe(true);
     if (!first.ok || !second.ok) return;
     expect(first.value.deduplicated).toBe(false);
+    expect(first.value.capture.provenanceExistingId).toBeNull();
     expect(second.value.deduplicated).toBe(true);
     expect(second.value.capture.id).toBe(first.value.capture.id);
+    expect(second.value.capture.provenanceExistingId).toBe(first.value.capture.id);
     const listed = fixture.targets.listCaptures(engagementId);
     expect(listed.ok).toBe(true);
     if (!listed.ok) return;
     expect(listed.value).toHaveLength(1);
+  });
+
+  it("rejects asserted digests that mismatch presented content", () => {
+    const fixture = createFixture();
+    const engagementId = createEngagement(fixture);
+    const foreignDigest =
+      "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    const mismatched = fixture.targets.createCapture({
+      engagementId,
+      targetId: null,
+      leadId: null,
+      kind: "pasted_terminal",
+      title: "pasted output",
+      contentText: "output",
+      contentDigest: foreignDigest,
+    });
+    expect(mismatched.ok).toBe(false);
+    const first = fixture.targets.createCapture({
+      engagementId,
+      targetId: null,
+      leadId: null,
+      kind: "pasted_terminal",
+      title: "first",
+      contentText: "first output",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+    const collapsed = fixture.targets.createCapture({
+      engagementId,
+      targetId: null,
+      leadId: null,
+      kind: "pasted_terminal",
+      title: "second",
+      contentText: "second output",
+      contentDigest: first.value.capture.contentDigest,
+    });
+    expect(collapsed.ok).toBe(false);
+  });
+
+  it("rejects captures with neither content nor digest", () => {
+    const fixture = createFixture();
+    const engagementId = createEngagement(fixture);
+    const result = fixture.targets.createCapture({
+      engagementId,
+      targetId: null,
+      leadId: null,
+      kind: "pasted_terminal",
+      title: "title-only",
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("scopes binding reads to the owning engagement", () => {
+    const fixture = createFixture();
+    const engagementId = createEngagement(fixture);
+    const otherEngagementId = createEngagement(fixture);
+    const target = fixture.targets.createTarget({
+      engagementId,
+      label: "web01",
+      initialAddress: "10.0.0.5",
+    });
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    const scoped = fixture.targets.listBindings({
+      engagementId,
+      targetId: target.value.id,
+    });
+    expect(scoped.ok).toBe(true);
+    if (!scoped.ok) return;
+    expect(scoped.value.bindings).toHaveLength(1);
+    expect(scoped.value.bindings[0]?.engagementId).toBe(engagementId);
+    const foreign = fixture.targets.listBindings({
+      engagementId: otherEngagementId,
+      targetId: target.value.id,
+    });
+    expect(foreign.ok).toBe(false);
+    const unknown = fixture.targets.listBindings({
+      engagementId,
+      targetId: "10000000-0000-4000-8000-000000000099",
+    });
+    expect(unknown.ok).toBe(false);
   });
 
   it("rejects invented execution facts on capture creation", () => {

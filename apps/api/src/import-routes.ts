@@ -1,10 +1,12 @@
 import {
+  FFUF_MAX_JSON_BYTES,
   StoneCaptureSchema,
   StoneEngagementIdParamsSchema,
   StoneImportBodySchema,
   findInventedExecutionFacts,
 } from "@blackglass/contracts";
 import type { StoneTargetRepository } from "@blackglass/db";
+import { countFfufJsonResults, countNmapXmlServices } from "@blackglass/domain";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type Imports = Pick<StoneTargetRepository, "createCapture">;
@@ -48,6 +50,18 @@ export function registerStoneImportRoutes(
     }
     if (body.data.contentText === undefined && body.data.contentDigest === undefined) {
       return sendError(reply, 400, "invalid_request");
+    }
+    // Presented import content is parsed with the matching typed parser before
+    // anything is stored, so malformed uploads are never labeled as Nmap or
+    // ffuf evidence. Digest-only imports carry no bytes to validate.
+    if (body.data.contentText !== undefined) {
+      const bytes = new TextEncoder().encode(body.data.contentText);
+      if (kind === "ffuf_json" && bytes.length > FFUF_MAX_JSON_BYTES) {
+        return sendError(reply, 400, "invalid_request");
+      }
+      const parsed =
+        kind === "nmap_xml" ? countNmapXmlServices(bytes) : countFfufJsonResults(bytes);
+      if (!parsed.ok) return sendError(reply, 400, "invalid_request");
     }
     const title = (body.data.title ?? fallbackTitle).trim();
     if (title.length === 0) return sendError(reply, 400, "invalid_request");

@@ -81,6 +81,24 @@ export function digestStoneCaptureContent(content: string | Uint8Array): string 
   return `sha256:${hash.digest("hex")}`;
 }
 
+// Digest resolution for captures. Presented content is always the digest
+// source of truth: an asserted digest that mismatches recomputed content is
+// rejected, so identical bytes cannot bypass dedupe under a second digest and
+// foreign bytes cannot collapse onto another item digest. Asserted digests
+// are honored only for digest-only imports whose bytes the server never saw.
+// Captures with neither content nor digest are rejected: metadata-only
+// digests would collide unrelated items sharing a title.
+function resolveStoneCaptureDigest(input: CreateStoneCaptureInput): string | null {
+  if (input.contentText !== undefined) {
+    const computed = digestStoneCaptureContent(input.contentText);
+    if (input.contentDigest !== undefined && input.contentDigest !== computed) {
+      return null;
+    }
+    return computed;
+  }
+  return input.contentDigest ?? null;
+}
+
 function toTarget(row: typeof stoneTargets.$inferSelect): StoneTarget {
   return {
     contractVersion: STONE_TARGET_CONTRACT_VERSION,
@@ -180,10 +198,15 @@ export class StoneTargetRepository {
     }
   }
 
-  listBindings(targetId: string): StoneTargetCaptureResult<
+  listBindings(input: {
+    engagementId: string;
+    targetId: string;
+  }): StoneTargetCaptureResult<
     {
-      current: {
+      bindings: {
         id: string;
+        engagementId: string;
+        targetId: string;
         bindingKind: "ip" | "hostname";
         addressText: string;
         status: "current" | "historical";
@@ -193,17 +216,35 @@ export class StoneTargetRepository {
     }
   > {
     try {
+      if (!this.requireEngagement(input.engagementId)) {
+        return { ok: false, error: { code: "engagement_not_found" } };
+      }
+      const target = this.db
+        .select()
+        .from(stoneTargets)
+        .where(eq(stoneTargets.id, input.targetId))
+        .get();
+      if (target === undefined || target.engagementId !== input.engagementId) {
+        return { ok: false, error: { code: "target_not_found" } };
+      }
       const rows = this.db
         .select()
         .from(stoneAddressBindings)
-        .where(eq(stoneAddressBindings.targetId, targetId))
+        .where(
+          and(
+            eq(stoneAddressBindings.targetId, input.targetId),
+            eq(stoneAddressBindings.engagementId, input.engagementId),
+          ),
+        )
         .orderBy(asc(stoneAddressBindings.createdAt))
         .all();
       return {
         ok: true,
         value: {
-          current: rows.map((row) => ({
+          bindings: rows.map((row) => ({
             id: row.id,
+            engagementId: row.engagementId,
+            targetId: row.targetId,
             bindingKind: row.bindingKind,
             addressText: row.addressText,
             status: row.status,
@@ -442,11 +483,10 @@ export class StoneTargetRepository {
       ) {
         return { ok: false, error: { code: "invalid_request" } };
       }
-      const digest =
-        input.contentDigest ??
-        digestStoneCaptureContent(
-          input.contentText ?? `${input.kind}:${title}:${input.fileName ?? ""}`,
-        );
+      const digest = resolveStoneCaptureDigest(input);
+      if (digest === null) {
+        return { ok: false, error: { code: "invalid_request" } };
+      }
       const existing = this.db
         .select()
         .from(stoneCaptures)
@@ -458,15 +498,26 @@ export class StoneTargetRepository {
         )
         .get();
       if (existing !== undefined) {
+        // Dedupe: the same content resolves to the existing capture. The
+        // returned provenance pointer is the existing item id itself; the
+        // stored original keeps a null pointer. No facts double.
         return {
           ok: true,
-          value: { capture: toCapture(existing), deduplicated: true },
+          value: {
+            capture: { ...toCapture(existing), provenanceExistingId: existing.id },
+            deduplicated: true,
+          },
         };
       }
       const now = this.providers.now().toISOString();
       const id = this.providers.createId();
+      // byteSize is recomputed from presented content whenever content is
+      // present; a client assertion is honored only for digest-only imports
+      // whose bytes the server never saw.
       const byteSize =
-        input.byteSize ?? new TextEncoder().encode(input.contentText ?? title).length;
+        input.contentText !== undefined
+          ? new TextEncoder().encode(input.contentText).length
+          : (input.byteSize ?? 0);
       this.db
         .insert(stoneCaptures)
         .values({
@@ -501,8 +552,9 @@ export class StoneTargetRepository {
   }
 
   // Second import of identical content resolves to a provenance pointer at
-  // the existing capture without doubling facts. A synthetic second row is
-  // recorded only as a pointer when callers need an explicit import event.
+  // the existing capture without doubling facts. No pointer row is written:
+  // the returned capture carries provenanceExistingId set to the existing
+  // item id, which is the reference the acceptance check requires.
   recordImportProvenance(input: {
     engagementId: string;
     existingCaptureId: string;
@@ -521,7 +573,10 @@ export class StoneTargetRepository {
       }
       return {
         ok: true,
-        value: { capture: toCapture(existing), deduplicated: true },
+        value: {
+          capture: { ...toCapture(existing), provenanceExistingId: existing.id },
+          deduplicated: true,
+        },
       };
     } catch (error) {
       return busyOrCorrupt(error);

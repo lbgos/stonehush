@@ -93,17 +93,27 @@ export function registerStoneTargetRoutes(
       if (!params.success) return sendError(reply, 400, "invalid_request");
       let result: ReturnType<Targets["listBindings"]>;
       try {
-        result = deps.targets.listBindings(params.data.targetId);
+        result = deps.targets.listBindings({
+          engagementId: params.data.engagementId,
+          targetId: params.data.targetId,
+        });
       } catch {
         return sendError(reply, 500, "invalid_persisted_data");
       }
       if (!result.ok) return mapError(reply, result.error.code);
+      // Rows are scoped to the requested engagement above and carry their own
+      // engagement and target ids, so the response never relabels foreign rows.
       const bindings = StoneAddressBindingListSchema.safeParse(
-        result.value.current.map((binding) => ({
+        result.value.bindings.map((binding) => ({
           contractVersion: 1,
-          engagementId: params.data.engagementId,
-          targetId: params.data.targetId,
-          ...binding,
+          engagementId: binding.engagementId,
+          targetId: binding.targetId,
+          id: binding.id,
+          bindingKind: binding.bindingKind,
+          addressText: binding.addressText,
+          status: binding.status,
+          createdAt: binding.createdAt,
+          supersededAt: binding.supersededAt,
         })),
       );
       if (!bindings.success) return sendError(reply, 500, "invalid_persisted_data");
