@@ -39,3 +39,6 @@ export {
 } from "./advisor-status.js";
 export * from "./advisor-chat.js";
 export * from "./advisor-turns.js";
+export * from "./leads.js";
+export * from "./objectives.js";
+export * from "./secrets.js";

@@ -1364,6 +1364,304 @@ export const settings = sqliteTable(
   ],
 );
 
+// STONE-4 leads. One row per bookmark-effort question. The single quiet
+// revisit suggestion lives inline (revisit_* columns) so the schema admits at
+// most one outstanding suggestion per lead; it never reopens the lead.
+export const leads = sqliteTable(
+  "leads",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    title: text("title").notNull(),
+    target: text("target"),
+    serviceRef: text("service_ref"),
+    sourceKind: text("source_kind").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    sourceLabel: text("source_label"),
+    nextStep: text("next_step"),
+    disposition: text("disposition", {
+      enum: ["open", "parked", "closed"],
+    }).notNull(),
+    parkReason: text("park_reason"),
+    testedConditions: text("tested_conditions"),
+    closedNote: text("closed_note"),
+    revisitTrigger: text("revisit_trigger"),
+    revisitReason: text("revisit_reason"),
+    revisitCreatedAt: text("revisit_created_at"),
+    revisitDismissed: integer("revisit_dismissed", {
+      mode: "boolean",
+    }).notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("lead_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "lead_title_length",
+      sql`length(${table.title}) between 1 and 120 and ${table.title} = trim(${table.title})`,
+    ),
+    check(
+      "lead_target_length",
+      sql`${table.target} is null or (length(${table.target}) between 1 and 253 and ${table.target} = trim(${table.target}))`,
+    ),
+    check(
+      "lead_service_ref_length",
+      sql`${table.serviceRef} is null or (length(${table.serviceRef}) between 1 and 253 and ${table.serviceRef} = trim(${table.serviceRef}))`,
+    ),
+    check(
+      "lead_source_kind",
+      sql`${table.sourceKind} in ('nmap_service', 'http_probe', 'ffuf_result', 'run_output', 'manual')`,
+    ),
+    check(
+      "lead_source_ref_length",
+      sql`length(${table.sourceRef}) between 1 and 2048`,
+    ),
+    check(
+      "lead_source_label_length",
+      sql`${table.sourceLabel} is null or length(${table.sourceLabel}) between 1 and 120`,
+    ),
+    check(
+      "lead_next_step_length",
+      sql`${table.nextStep} is null or length(${table.nextStep}) between 1 and 500`,
+    ),
+    check(
+      "lead_disposition",
+      sql`${table.disposition} in ('open', 'parked', 'closed')`,
+    ),
+    check(
+      "lead_park_reason_present",
+      sql`(${table.disposition} = 'parked' and ${table.parkReason} is not null and length(${table.parkReason}) between 1 and 500) or (${table.disposition} <> 'parked' and ${table.parkReason} is null)`,
+    ),
+    check(
+      "lead_tested_conditions_length",
+      sql`${table.testedConditions} is null or length(${table.testedConditions}) between 1 and 500`,
+    ),
+    check(
+      "lead_closed_note_present",
+      sql`${table.closedNote} is null or (${table.disposition} = 'closed' and length(${table.closedNote}) between 1 and 500)`,
+    ),
+    check(
+      "lead_revisit_tuple",
+      sql`(${table.revisitTrigger} is null and ${table.revisitReason} is null and ${table.revisitCreatedAt} is null) or (${table.revisitTrigger} in ('new_access', 'hostname_change', 'service_change') and ${table.revisitReason} is not null and length(${table.revisitReason}) between 1 and 500 and ${table.revisitCreatedAt} is not null and length(${table.revisitCreatedAt}) >= 20)`,
+    ),
+    check(
+      "lead_revisit_parked_only",
+      sql`${table.revisitTrigger} is null or ${table.disposition} = 'parked'`,
+    ),
+    check("lead_revisit_dismissed_boolean", sql`${table.revisitDismissed} in (0, 1)`),
+    check("lead_created_at", sql`length(${table.createdAt}) >= 20`),
+    check("lead_updated_at", sql`length(${table.updatedAt}) >= 20`),
+    index("lead_engagement_created_idx").on(
+      table.engagementId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
+// Ordered attempts inside a lead. Evidence ids are a plain JSON list with no
+// foreign key so one capture supports many leads without duplication.
+export const leadAttempts = sqliteTable(
+  "lead_attempts",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    leadId: text("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "restrict" }),
+    sequence: integer("sequence").notNull(),
+    summary: text("summary").notNull(),
+    outcome: text("outcome", {
+      enum: ["observed", "ruled_out", "inconclusive", "interrupted"],
+    }).notNull(),
+    conditions: text("conditions"),
+    evidenceArtifactIdsJson: text("evidence_artifact_ids_json").notNull(),
+    linkedFindingId: text("linked_finding_id"),
+    linkedObjectiveId: text("linked_objective_id"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("lead_attempt_contract_version", sql`${table.contractVersion} = 1`),
+    check("lead_attempt_sequence", sql`${table.sequence} >= 1`),
+    check(
+      "lead_attempt_summary_length",
+      sql`length(${table.summary}) between 1 and 2000 and ${table.summary} = trim(${table.summary})`,
+    ),
+    check(
+      "lead_attempt_outcome",
+      sql`${table.outcome} in ('observed', 'ruled_out', 'inconclusive', 'interrupted')`,
+    ),
+    check(
+      "lead_attempt_conditions_length",
+      sql`${table.conditions} is null or length(${table.conditions}) between 1 and 500`,
+    ),
+    check(
+      "lead_attempt_evidence_json",
+      sql`json_valid(${table.evidenceArtifactIdsJson}) and length(cast(${table.evidenceArtifactIdsJson} as blob)) <= 8192`,
+    ),
+    check("lead_attempt_created_at", sql`length(${table.createdAt}) >= 20`),
+    uniqueIndex("lead_attempt_lead_sequence_unique").on(table.leadId, table.sequence),
+    uniqueIndex("lead_attempt_engagement_id_unique").on(table.engagementId, table.id),
+    index("lead_attempt_lead_created_idx").on(table.leadId, table.createdAt, table.id),
+  ],
+);
+
+// Named goals. Captured and Submitted stay distinct; proof values are never
+// stored, only a digest plus a short masked hint.
+export const objectives = sqliteTable(
+  "objectives",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    kind: text("kind", {
+      enum: ["user_flag", "root_flag", "single_proof", "custom"],
+    }).notNull(),
+    state: text("state", {
+      enum: ["open", "captured", "submitted"],
+    }).notNull(),
+    proofHint: text("proof_hint"),
+    proofDigest: text("proof_digest"),
+    capturedAt: text("captured_at"),
+    submittedAt: text("submitted_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("objective_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "objective_name_length",
+      sql`length(${table.name}) between 1 and 120 and ${table.name} = trim(${table.name})`,
+    ),
+    check(
+      "objective_kind",
+      sql`${table.kind} in ('user_flag', 'root_flag', 'single_proof', 'custom')`,
+    ),
+    check(
+      "objective_state",
+      sql`${table.state} in ('open', 'captured', 'submitted')`,
+    ),
+    check(
+      "objective_proof_tuple",
+      sql`(${table.state} = 'open' and ${table.proofHint} is null and ${table.proofDigest} is null and ${table.capturedAt} is null and ${table.submittedAt} is null) or (${table.state} = 'captured' and ${table.proofHint} is not null and ${table.proofDigest} is not null and ${table.capturedAt} is not null and ${table.submittedAt} is null) or (${table.state} = 'submitted' and ${table.proofHint} is not null and ${table.proofDigest} is not null and ${table.capturedAt} is not null and ${table.submittedAt} is not null)`,
+    ),
+    check(
+      "objective_proof_digest",
+      sql`${table.proofDigest} is null or (${table.proofDigest} glob 'sha256:[0-9a-f]*' and length(${table.proofDigest}) = 71)`,
+    ),
+    check("objective_created_at", sql`length(${table.createdAt}) >= 20`),
+    check("objective_updated_at", sql`length(${table.updatedAt}) >= 20`),
+    index("objective_engagement_created_idx").on(
+      table.engagementId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
+// Explicit sensitive records. No plaintext value column exists by design:
+// secretRef points at the operator vault or environment, hint is a short
+// masked reminder, and verification history records outcomes, never values.
+export const secrets = sqliteTable(
+  "secrets",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    label: text("label").notNull(),
+    username: text("username"),
+    serviceRef: text("service_ref").notNull(),
+    secretRef: text("secret_ref").notNull(),
+    hint: text("hint"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("secret_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "secret_label_length",
+      sql`length(${table.label}) between 1 and 120 and ${table.label} = trim(${table.label})`,
+    ),
+    check(
+      "secret_username_length",
+      sql`${table.username} is null or length(${table.username}) between 1 and 253`,
+    ),
+    check(
+      "secret_service_ref_length",
+      sql`length(${table.serviceRef}) between 1 and 253 and ${table.serviceRef} = trim(${table.serviceRef})`,
+    ),
+    check(
+      "secret_ref_length",
+      sql`length(${table.secretRef}) between 1 and 253 and ${table.secretRef} = trim(${table.secretRef})`,
+    ),
+    check(
+      "secret_hint_length",
+      sql`${table.hint} is null or length(${table.hint}) between 1 and 64`,
+    ),
+    check("secret_created_at", sql`length(${table.createdAt}) >= 20`),
+    check("secret_updated_at", sql`length(${table.updatedAt}) >= 20`),
+    index("secret_engagement_created_idx").on(
+      table.engagementId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
+export const secretVerifications = sqliteTable(
+  "secret_verifications",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    secretId: text("secret_id")
+      .notNull()
+      .references(() => secrets.id, { onDelete: "restrict" }),
+    result: text("result", { enum: ["verified", "failed"] }).notNull(),
+    method: text("method").notNull(),
+    note: text("note"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("secret_verification_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "secret_verification_result",
+      sql`${table.result} in ('verified', 'failed')`,
+    ),
+    check(
+      "secret_verification_method_length",
+      sql`length(${table.method}) between 1 and 120 and ${table.method} = trim(${table.method})`,
+    ),
+    check(
+      "secret_verification_note_length",
+      sql`${table.note} is null or length(${table.note}) between 1 and 500`,
+    ),
+    check("secret_verification_created_at", sql`length(${table.createdAt}) >= 20`),
+    uniqueIndex("secret_verification_engagement_id_unique").on(
+      table.engagementId,
+      table.id,
+    ),
+    index("secret_verification_secret_created_idx").on(
+      table.secretId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
 export type RunRow = typeof runs.$inferSelect;
 export type RunLeaseRow = typeof runLeases.$inferSelect;
 export type RunEventRow = typeof runEvents.$inferSelect;
@@ -1377,5 +1675,10 @@ export type NmapServiceRow = typeof nmapServices.$inferSelect;
 export type HttpProbeResultRow = typeof httpProbeResults.$inferSelect;
 export type FfufResultRow = typeof ffufResults.$inferSelect;
 export type FindingRow = typeof findings.$inferSelect;
+export type LeadRow = typeof leads.$inferSelect;
+export type LeadAttemptRow = typeof leadAttempts.$inferSelect;
+export type ObjectiveRow = typeof objectives.$inferSelect;
+export type SecretRow = typeof secrets.$inferSelect;
+export type SecretVerificationRow = typeof secretVerifications.$inferSelect;
 export type AdvisorTurnRow = typeof advisorTurns.$inferSelect;
 export type SettingsRow = typeof settings.$inferSelect;
