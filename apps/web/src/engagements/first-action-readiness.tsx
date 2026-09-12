@@ -87,11 +87,14 @@ export function FirstActionReadiness({
   lines.push(advisorLine(advisor));
 
   // Manual retry only, shown only while something failed, so an unreachable
-  // control plane never strands the summary without recourse.
+  // control plane never strands the summary without recourse. Advisor probe
+  // failures count even when the status request itself succeeds.
   const failed =
     system.isError ||
     system.data?.overall === "not_ready" ||
     advisor.isError ||
+    advisor.data?.reason === "unreachable" ||
+    advisor.data?.reason === "probe_failed" ||
     (engagementId !== undefined && history.isError);
   const retryStatus = () => {
     void system.refetch();

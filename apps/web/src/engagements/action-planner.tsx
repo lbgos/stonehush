@@ -1,4 +1,5 @@
 import type { PersistedAction, SavedScopeRule } from "@stonehush/contracts";
+import { normalizeTarget } from "@stonehush/domain";
 import { Button, LoadingRegion, Skeleton, cn } from "@stonehush/ui";
 import {
   useEffect,
@@ -45,6 +46,7 @@ import { FirstActionReadiness } from "./first-action-readiness.js";
 import { engagementMutationMessage, isRevisionConflict } from "./errors.js";
 import { engagementHttpProbesQueryKey, engagementServicesQueryKey, engagementFfufResultsQueryKey, useEngagementDetailQuery } from "./query.js";
 import { reportQueryKey } from "./report-query.js";
+import { runHistoryQueryKey } from "./run-history-query.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
 
 export function ActionPlanner({
@@ -184,6 +186,9 @@ function PlannerBody({
     void queryClient.invalidateQueries({ queryKey: engagementHttpProbesQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: engagementFfufResultsQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
+    // The readiness summary reads run history, so a finished run must refresh
+    // it instead of leaving the queued copy.
+    void queryClient.invalidateQueries({ queryKey: runHistoryQueryKey(engagementId) });
   }, [engagementId, polledActionQuery.data, queryClient, trackedActionId]);
 
   useEffect(() => {
@@ -212,11 +217,31 @@ function PlannerBody({
     // labels above stay truthful about what runs.
     const parsedPorts =
       profile === "fuller" ? parseDeclaredPorts(fullerPorts) : { ok: true as const, declaredPorts: null };
+    let webError: string | undefined;
+    if (parsed.ok && profile === "web") {
+      // Web-origin inspection keeps its no-Nmap promise by accepting only
+      // HTTP(S) URLs. Anything else runs Nmap, so reject it here instead of
+      // adding a new backend scan mode.
+      const nonUrl = parsed.targets.find((target) => {
+        const normalized = normalizeTarget(target);
+        return (
+          !normalized.ok ||
+          normalized.target.kind !== "url" ||
+          (!normalized.target.url.startsWith("http://") &&
+            !normalized.target.url.startsWith("https://"))
+        );
+      });
+      if (nonUrl !== undefined) {
+        webError =
+          "Web-origin inspection needs an HTTP(S) URL, for example https://host.test/. Use Quick or Fuller for IP, CIDR, or hostname targets.";
+      }
+    }
     if (!parsed.ok) setFieldError(parsed.message);
+    else if (webError !== undefined) setFieldError(webError);
     else setFieldError(undefined);
     if (!parsedPorts.ok) setPortsFieldError(parsedPorts.message);
     else setPortsFieldError(undefined);
-    if (!parsed.ok || !parsedPorts.ok) return;
+    if (!parsed.ok || !parsedPorts.ok || webError !== undefined) return;
     setPlannedTargets(parsed.targets);
     createAction.mutate(
       {

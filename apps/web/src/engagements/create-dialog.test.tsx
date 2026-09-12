@@ -466,4 +466,344 @@ describe("CreateEngagementDialog start", () => {
     ).toHaveLength(1);
     expect(actionCalls).toBe(2);
   });
+
+  it("reuses the action key when the action response is lost after commit", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    const committed = new Map<string, unknown>();
+    let actionCommits = 0;
+    let loseFirst = true;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        const key = String((init?.headers as Record<string, string>)["Idempotency-Key"]);
+        if (committed.has(key)) return response(committed.get(key), 201);
+        committed.set(key, queuedAction());
+        actionCommits += 1;
+        if (loseFirst) {
+          loseFirst = false;
+          throw new Error("offline");
+        }
+        return response(queuedAction(), 201);
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(actionCommits).toBe(1);
+    const keys = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/actions") && init?.method === "POST")
+      .map(([, init]) => String((init?.headers as Record<string, string>)["Idempotency-Key"]));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("reuses the scope key when the scope response is lost after commit", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    const committed = new Map<string, unknown>();
+    let scopeCommits = 0;
+    let loseFirst = true;
+    const fetchMock = stubFetch((url, init) => {
+      if (
+        url === `/api/v1/engagements/${ENGAGEMENT_ID}/scope-revisions` &&
+        init?.method === "POST"
+      ) {
+        const key = String((init?.headers as Record<string, string>)["Idempotency-Key"]);
+        if (committed.has(key)) return response(committed.get(key), 201);
+        const body = JSON.parse(String(init?.body)) as { rules: unknown[] };
+        const revision = {
+          contractVersion: 1,
+          id: SCOPE_ID,
+          engagementId: ENGAGEMENT_ID,
+          version: 1,
+          rules: body.rules,
+          createdAt: "2026-08-12T12:06:00.000Z",
+        };
+        committed.set(key, revision);
+        scopeCommits += 1;
+        if (loseFirst) {
+          loseFirst = false;
+          throw new Error("offline");
+        }
+        return response(revision, 201);
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.click(screen.getByLabelText("Also save these targets as scope"));
+    submitStart();
+
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(scopeCommits).toBe(1);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    const scopeKeys = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/scope-revisions") && init?.method === "POST")
+      .map(([, init]) => String((init?.headers as Record<string, string>)["Idempotency-Key"]));
+    expect(scopeKeys).toHaveLength(2);
+    expect(scopeKeys[0]).toBe(scopeKeys[1]);
+  });
+
+  it("retries a failed scope append on the same engagement", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let scopeCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (
+        url === `/api/v1/engagements/${ENGAGEMENT_ID}/scope-revisions` &&
+        init?.method === "POST"
+      ) {
+        scopeCalls += 1;
+        if (scopeCalls === 1) return response({ code: "storage_busy" }, 503);
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.click(screen.getByLabelText("Also save these targets as scope"));
+    submitStart();
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(scopeCalls).toBe(2);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("uses a new action key when retry targets change", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let actionCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) return response({ code: "storage_busy" }, 503);
+        return fallback(url, init);
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "198.51.100.25" } });
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    const actionCallsList = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).endsWith("/actions") && init?.method === "POST",
+    );
+    expect(actionCallsList).toHaveLength(2);
+    const keys = actionCallsList.map(([, init]) =>
+      String((init?.headers as Record<string, string>)["Idempotency-Key"]),
+    );
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("blocks a second submit while the first start is in flight", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let engagementPosts = 0;
+    let release!: (value: Response) => void;
+    stubFetch((url, init) => {
+      if (url === "/api/v1/engagements" && init?.method === "POST") {
+        engagementPosts += 1;
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return fallback(url, init);
+    });
+    await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    const startingForm = await screen.findByRole("button", { name: "Starting" }).then((button) => button.closest("form"));
+    if (!startingForm) throw new Error("Starting form is missing.");
+    fireEvent.submit(startingForm);
+    expect(engagementPosts).toBe(1);
+    release(response(createdEngagement("Lab 192-0-2-10"), 201));
+    await waitFor(() => expect(engagementPosts).toBe(1));
+  });
+
+  it("locks persisted metadata after partial creation with recovery", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let actionCalls = 0;
+    stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) return response({ code: "storage_busy" }, 503);
+        return fallback(url, init);
+      }
+      return fallback(url, init);
+    });
+    await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    expect((screen.getByLabelText(/Name/) as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText(/Type/) as HTMLSelectElement).disabled).toBe(true);
+    expect(await screen.findByText(/is created/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open engagement" })).toBeTruthy();
+  });
+
+  it("locks scope inputs after the scope revision is saved", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let actionCalls = 0;
+    stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) return response({ code: "storage_busy" }, 503);
+        return fallback(url, init);
+      }
+      return fallback(url, init);
+    });
+    await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.click(screen.getByLabelText("Also save these targets as scope"));
+    submitStart();
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    // Scope succeeded on attempt one, so the scope inputs stay fixed for retry.
+    expect((screen.getByLabelText(/Targets/) as HTMLTextAreaElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Also save these targets as scope") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("carries a paused first scan into the planner through the action search", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        const queued = queuedAction();
+        return response(
+          {
+            ...queued,
+            action: {
+              ...queued.action,
+              state: "paused_for_warning",
+              queuedSnapshotVersion: null,
+              pendingWarning: {
+                reasonCodes: ["outside_scope"],
+                knownAdditions: [],
+                pendingEventId: null,
+              },
+            },
+          },
+          201,
+        );
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(router.state.location.search).toMatchObject({ action: ACTION_ID });
+  });
+
+  it("refreshes revision and scope together after a scan conflict", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let actionCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) {
+          return response(
+            {
+              code: "revision_conflict",
+              resourceType: "engagement",
+              resourceId: ENGAGEMENT_ID,
+              currentRevision: 5,
+            },
+            409,
+          );
+        }
+        return fallback(url, init);
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}` && init?.method !== "POST") {
+        return response({
+          engagement: {
+            ...createdEngagement("Lab 192-0-2-10"),
+            revision: 5,
+            activeScopeRevisionId: SCOPE_ID,
+            updatedAt: "2026-08-12T12:07:00.000Z",
+          },
+          activeScopeRevision: {
+            contractVersion: 1,
+            id: SCOPE_ID,
+            engagementId: ENGAGEMENT_ID,
+            version: 2,
+            rules: [],
+            createdAt: "2026-08-12T12:07:00.000Z",
+          },
+        });
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    expect(await screen.findByText("This engagement changed. Showing the latest revision.")).toBeTruthy();
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    const bodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/actions") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]).toMatchObject({
+      expectedEngagementRevision: 5,
+      expectedActiveScopeRevisionId: SCOPE_ID,
+    });
+  });
+
+  it("reveals More options when a nested field fails validation", async () => {
+    stubFetch(engagementHandler("Lab 192-0-2-10"));
+    await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.change(screen.getByLabelText(/Platform URL/), { target: { value: "not a url" } });
+    submitStart();
+
+    expect(await screen.findByText(/Enter a valid URL/)).toBeTruthy();
+    const details = screen.getByText("More options").closest("details");
+    expect(details?.open).toBe(true);
+  });
 });

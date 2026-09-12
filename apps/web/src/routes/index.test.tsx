@@ -15,6 +15,7 @@ const OTHER_ID = "10000000-0000-4000-8000-000000000002";
 const ACTION_ID = "40000000-0000-4000-8000-000000000001";
 const SNAPSHOT_ID = "40000000-0000-4000-8000-000000000002";
 const BINDING = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const SCOPE_ID = "20000000-0000-4000-8000-000000000010";
 
 const ipv4Target = {
   kind: "ip" as const,
@@ -382,6 +383,26 @@ describe("opening screen", () => {
         }
         return response(queuedAction(), 201);
       }
+      // The conflict refresh refetches detail for both revision and scope.
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}` && init?.method !== "POST") {
+        const first = listedEngagement(ENGAGEMENT_ID, "First lab", "2026-08-12T12:00:00.000Z");
+        return response({
+          engagement: {
+            ...first,
+            revision: 5,
+            activeScopeRevisionId: SCOPE_ID,
+            updatedAt: "2026-08-12T12:07:00.000Z",
+          },
+          activeScopeRevision: {
+            contractVersion: 1,
+            id: SCOPE_ID,
+            engagementId: ENGAGEMENT_ID,
+            version: 2,
+            rules: [],
+            createdAt: "2026-08-12T12:07:00.000Z",
+          },
+        });
+      }
       return base(url, init);
     });
     const { router } = await renderOpening();
@@ -403,7 +424,10 @@ describe("opening screen", () => {
       .filter(([url, init]) => String(url).endsWith("/actions") && init?.method === "POST")
       .map(([, init]) => JSON.parse(String(init?.body)));
     expect(actionBodies).toHaveLength(2);
-    expect(actionBodies[1]).toMatchObject({ expectedEngagementRevision: 5 });
+    expect(actionBodies[1]).toMatchObject({
+      expectedEngagementRevision: 5,
+      expectedActiveScopeRevisionId: SCOPE_ID,
+    });
     expect(
       fetchMock.mock.calls.filter(
         ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
@@ -428,5 +452,212 @@ describe("opening screen", () => {
       await screen.findByText("Control plane: storage not ready. Queued work waits."),
     ).toBeTruthy();
     expect(await screen.findByRole("button", { name: "Retry status" })).toBeTruthy();
+  });
+
+  it("reuses the engagement key when the first response is lost after commit", async () => {
+    const base = openingHandler();
+    const committed = new Map<string, unknown>();
+    let engagementCommits = 0;
+    let loseFirst = true;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === "/api/v1/engagements" && init?.method === "POST") {
+        const key = String((init.headers as Record<string, string>)["Idempotency-Key"]);
+        if (committed.has(key)) return response(committed.get(key), 201);
+        const body = JSON.parse(String(init.body)) as { name: string; kind: string };
+        const first = listedEngagement(ENGAGEMENT_ID, body.name, "2026-08-12T12:00:00.000Z");
+        committed.set(key, { ...first, kind: body.kind });
+        engagementCommits += 1;
+        // Server committed but the response never arrived.
+        if (loseFirst) {
+          loseFirst = false;
+          throw new Error("offline");
+        }
+        return response(committed.get(key), 201);
+      }
+      return base(url, init);
+    });
+    const { router } = await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(engagementCommits).toBe(1);
+    const keys = fetchMock.mock.calls
+      .filter(([url, init]) => url === "/api/v1/engagements" && init?.method === "POST")
+      .map(([, init]) => String((init?.headers as Record<string, string>)["Idempotency-Key"]));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("reuses the action key when the action response is lost after commit", async () => {
+    const base = openingHandler();
+    const committed = new Map<string, unknown>();
+    let actionCommits = 0;
+    let loseFirst = true;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        const key = String((init.headers as Record<string, string>)["Idempotency-Key"]);
+        if (committed.has(key)) return response(committed.get(key), 201);
+        committed.set(key, queuedAction());
+        actionCommits += 1;
+        if (loseFirst) {
+          loseFirst = false;
+          throw new Error("offline");
+        }
+        return response(queuedAction(), 201);
+      }
+      return base(url, init);
+    });
+    const { router } = await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/");
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(actionCommits).toBe(1);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    const keys = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/actions") && init?.method === "POST")
+      .map(([, init]) => String((init?.headers as Record<string, string>)["Idempotency-Key"]));
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("uses a new action key when the retry targets change", async () => {
+    const base = openingHandler();
+    let actionCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) return response({ code: "storage_busy" }, 503);
+        return response(queuedAction(), 201);
+      }
+      return base(url, init);
+    });
+    const { router } = await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Target"), {
+      target: { value: "198.51.100.25" },
+    });
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    const actionCallsList = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).endsWith("/actions") && init?.method === "POST",
+    );
+    expect(actionCallsList).toHaveLength(2);
+    const keys = actionCallsList.map(([, init]) =>
+      String((init?.headers as Record<string, string>)["Idempotency-Key"]),
+    );
+    expect(keys[0]).not.toBe(keys[1]);
+    const bodies = actionCallsList.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[1]).toMatchObject({ targets: ["198.51.100.25"] });
+  });
+
+  it("blocks a second submit while the first start is in flight", async () => {
+    const base = openingHandler();
+    let engagementPosts = 0;
+    let release!: (value: Response) => void;
+    stubFetch((url, init) => {
+      if (url === "/api/v1/engagements" && init?.method === "POST") {
+        engagementPosts += 1;
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return base(url, init);
+    });
+    await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByRole("button", { name: "Starting" })).toBeTruthy();
+    fireEvent.submit(form);
+    expect(engagementPosts).toBe(1);
+    release(response(listedEngagement(ENGAGEMENT_ID, "Lab 192-0-2-10", "2026-08-12T12:00:00.000Z"), 201));
+    await waitFor(() => expect(engagementPosts).toBe(1));
+  });
+
+  it("locks persisted name and type after partial creation with a recovery link", async () => {
+    const base = openingHandler();
+    let actionCalls = 0;
+    stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) return response({ code: "storage_busy" }, 503);
+        return response(queuedAction(), 201);
+      }
+      return base(url, init);
+    });
+    await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    expect((screen.getByLabelText("Name") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Type") as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Target") as HTMLTextAreaElement).disabled).toBe(false);
+    expect(await screen.findByText(/is created/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open engagement" })).toBeTruthy();
+  });
+
+  it("shows Retry status for advisor probe failures", async () => {
+    const base = openingHandler();
+    for (const reason of ["unreachable", "probe_failed"] as const) {
+      cleanup();
+      stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) {
+          return response({ ...unconfiguredAdvisor, reason });
+        }
+        return base(url, init);
+      });
+      await renderOpening();
+      expect(await screen.findByText("Advisor: endpoint not answering. Manual work is unaffected.")).toBeTruthy();
+      expect(await screen.findByRole("button", { name: "Retry status" })).toBeTruthy();
+    }
   });
 });

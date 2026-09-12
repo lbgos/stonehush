@@ -7,7 +7,7 @@ import {
 import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 
 import { createActionRequest } from "../engagements/action-mutations.js";
 import { parsePlannedTargets } from "../engagements/action-targets.js";
@@ -26,9 +26,16 @@ import {
 } from "../engagements/first-action.js";
 import { FirstActionReadiness } from "../engagements/first-action-readiness.js";
 import { ENGAGEMENT_KIND_LABELS } from "../engagements/format.js";
-import { createIdempotencyKey } from "../engagements/idempotency.js";
-import { createEngagementRequest, upsertEngagementInCache } from "../engagements/mutations.js";
-import { partitionEngagements, useEngagementsQuery } from "../engagements/query.js";
+import { createIntentKeyHolder, requestFingerprint } from "../engagements/idempotency.js";
+import {
+  createEngagementRequest,
+  upsertEngagementInCache,
+} from "../engagements/mutations.js";
+import {
+  fetchEngagementDetail,
+  partitionEngagements,
+  useEngagementsQuery,
+} from "../engagements/query.js";
 import { runHistoryQueryKey } from "../engagements/run-history-query.js";
 import { useEngagementWorkspace } from "../engagements/workspace-context.js";
 
@@ -51,8 +58,14 @@ function OpeningScreen() {
   const [starting, setStarting] = useState(false);
   // Creation and the follow-up scan are separate phases. Once the engagement
   // exists, retries reuse it so a failed scan never leaves duplicate
-  // engagements behind. Cleared on success; inputs stay editable throughout.
+  // engagements behind. Cleared on success; inputs stay editable throughout
+  // except for already-persisted identity, which is disabled below.
   const [started, setStarted] = useState<Engagement | null>(null);
+  // One idempotency key per request intent. An unchanged retry reuses the key
+  // so a committed operation with a lost response replays instead of
+  // duplicating; a changed body gets a new key. Reset only after success.
+  const engagementKeys = useRef(createIntentKeyHolder());
+  const actionKeys = useRef(createIntentKeyHolder());
 
   const records = engagements.data ?? [];
   const { active } = partitionEngagements(records);
@@ -86,27 +99,47 @@ function OpeningScreen() {
     }
     setStartError(undefined);
     setStarting(true);
+    // Fingerprints for this attempt. The holders return the same key for an
+    // unchanged body, so a lost response replays instead of duplicating.
+    const engagementIntent = requestFingerprint(validated.data);
+    let attempted: Engagement | null = started;
     try {
       let engagement = started;
       if (engagement === null) {
-        engagement = await createEngagementRequest(validated.data, createIdempotencyKey());
+        engagement = await createEngagementRequest(
+          validated.data,
+          engagementKeys.current.keyFor(engagementIntent),
+        );
+        engagementKeys.current.reset(engagementIntent);
         upsertEngagementInCache(queryClient, engagement);
         storeLastEngagementId(browserStorage(), engagement.id);
         setLastId(engagement.id);
         setStarted(engagement);
       }
+      attempted = engagement;
+      const actionBody = {
+        expectedEngagementRevision: engagement.revision,
+        expectedActiveScopeRevisionId: engagement.activeScopeRevisionId,
+        targets: parsedTargets.targets,
+        declaredPorts: null,
+      } as const;
+      const actionIntent = requestFingerprint({
+        engagementId: engagement.id,
+        ...actionBody,
+      });
       const action = await createActionRequest(
         engagement.id,
         {
-          expectedEngagementRevision: engagement.revision,
-          expectedActiveScopeRevisionId: engagement.activeScopeRevisionId,
-          targets: parsedTargets.targets,
-          declaredPorts: null,
+          expectedEngagementRevision: actionBody.expectedEngagementRevision,
+          expectedActiveScopeRevisionId: actionBody.expectedActiveScopeRevisionId,
+          targets: [...actionBody.targets],
+          declaredPorts: actionBody.declaredPorts,
         },
-        createIdempotencyKey(),
+        actionKeys.current.keyFor(actionIntent),
       );
-      // The readiness summary reads run history, so refresh it now instead
-      // of leaving "no runs yet" until a remount.
+      actionKeys.current.reset(actionIntent);
+      // The readiness summary reads run history, so refresh it after the
+      // action is persisted instead of leaving "no runs yet" until a remount.
       void queryClient.invalidateQueries({ queryKey: runHistoryQueryKey(engagement.id) });
       const paused = action.action.state === "paused_for_warning";
       if (paused) {
@@ -132,8 +165,31 @@ function OpeningScreen() {
           // The retained engagement is gone; the next submit starts over.
           setStarted(null);
         } else if (isRevisionConflict(error)) {
-          const revision = error.currentRevision;
-          setStarted((current) => (current === null ? current : { ...current, revision }));
+          // Refresh both concurrency values together. A revision-only update
+          // can pair a fresh revision with a stale scope id and stay blocked.
+          const retained = attempted;
+          if (retained !== null) {
+            try {
+              const detail = await fetchEngagementDetail(retained.id);
+              if (detail.engagement.status === "archived") {
+                setStarted(null);
+              } else {
+                const fresh: Engagement = {
+                  ...retained,
+                  revision: detail.engagement.revision,
+                  activeScopeRevisionId: detail.engagement.activeScopeRevisionId,
+                  updatedAt: detail.engagement.updatedAt,
+                };
+                setStarted(fresh);
+                upsertEngagementInCache(queryClient, fresh);
+              }
+            } catch {
+              // Refresh failed. Keep the retained values so a transient
+              // failure does not discard the engagement or pair mismatched
+              // values. The next retry refetches again; a gone engagement
+              // surfaces as not_found on that attempt and then clears.
+            }
+          }
         }
       }
       setStartError(engagementMutationMessage(error));
@@ -238,7 +294,7 @@ function OpeningScreen() {
                       maxLength={120}
                       placeholder={suggestedName}
                       autoComplete="off"
-                      disabled={starting}
+                      disabled={starting || started !== null}
                       className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
                       onChange={(event) => setStartName(event.target.value)}
                     />
@@ -252,7 +308,7 @@ function OpeningScreen() {
                       id="opening-kind"
                       name="kind"
                       value={startKind}
-                      disabled={starting}
+                      disabled={starting || started !== null}
                       className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
                       onChange={(event) => setStartKind(event.target.value as EngagementKind)}
                     >
@@ -269,6 +325,26 @@ function OpeningScreen() {
                     {startError}
                   </p>
                 )}
+                {started !== null ? (
+                  <p className="m-0 text-[12px] leading-5 text-muted-foreground">
+                    Engagement {started.name} is created. Retry continues on it, so name and
+                    type stay fixed here.{" "}
+                    <Link
+                      to="/engagements/$engagementId"
+                      params={{ engagementId: started.id }}
+                      className="text-foreground underline outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      Open engagement
+                    </Link>{" "}
+                    <button
+                      type="button"
+                      className="cursor-pointer text-foreground underline outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => setStarted(null)}
+                    >
+                      Discard and start over
+                    </button>
+                  </p>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   <Button type="submit" disabled={starting}>
                     {starting ? "Starting" : "Start scan"}

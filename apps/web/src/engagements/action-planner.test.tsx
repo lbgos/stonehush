@@ -926,5 +926,147 @@ describe("action planner", () => {
         await screen.findByText(/Nmap is not available to the runner/),
       ).toBeTruthy();
     });
+
+    it("rejects non-URL targets in web-origin inspection without posting", async () => {
+      const fetchMock = stubWithHistory([]);
+      await renderPlanner();
+
+      fireEvent.click(await screen.findByRole("radio", { name: /Web-origin inspection/ }));
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "192.0.2.10" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(
+        await screen.findByText(/Web-origin inspection needs an HTTP\(S\) URL/),
+      ).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => String(url).endsWith("/actions") && init?.method === "POST",
+        ),
+      ).toHaveLength(0);
+    });
+
+    it("queues a web-origin URL target without Nmap ports", async () => {
+      const queued = persistedAction("queued");
+      const fetchMock = stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs")) return response({ runs: [], nextCursor: null });
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          expect(JSON.parse(String(init.body))).toMatchObject({
+            targets: ["https://host.test/"],
+            declaredPorts: null,
+          });
+          return response(queued, 201);
+        }
+        return readResponse(url, { ...activeEngagement, revision: 1, activeScopeRevisionId: null }, null) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
+      fireEvent.click(await screen.findByRole("radio", { name: /Web-origin inspection/ }));
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "https://host.test/" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(await screen.findByText(/Action queued/)).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => String(url).endsWith("/actions") && init?.method === "POST",
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("refreshes run history statefully after a queued creation", async () => {
+      const queued = persistedAction("queued");
+      let runs: unknown[] = [];
+      const fetchMock = stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs") && (!init || init.method === undefined || init.method === "GET")) {
+          return response({ runs, nextCursor: null });
+        }
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          runs = [
+            historyRow({ state: "queued", id: "run-00000000-0000-4000-8000-000000000002" }),
+          ];
+          return response(queued, 201);
+        }
+        return readResponse(url, { ...activeEngagement, revision: 1, activeScopeRevisionId: null }, null) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
+      expect(
+        await screen.findByText("Runner: no runs yet. The first scan appears here."),
+      ).toBeTruthy();
+
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "192.0.2.10" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(await screen.findByText(/Action queued/)).toBeTruthy();
+      // Invalidation after persistence refetches history; the new queued run appears.
+      await waitFor(() =>
+        expect(screen.queryByText("Runner: no runs yet. The first scan appears here.")).toBeNull(),
+      );
+      expect(
+        fetchMock.mock.calls.some(([called]) => String(called).includes("/runs")),
+      ).toBe(true);
+    });
+
+    it("shows completion freshness after the tracked action succeeds", async () => {
+      const noScope = { ...activeEngagement, revision: 1, activeScopeRevisionId: null };
+      const queued = persistedAction("queued");
+      const succeeded = persistedAction("succeeded", { queuedSnapshotVersion: 1, runState: null });
+      let runs: unknown[] = [];
+      stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs") && (!init || init.method === undefined || init.method === "GET")) {
+          return response({ runs, nextCursor: null });
+        }
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          runs = [
+            historyRow({ state: "queued", id: "run-00000000-0000-4000-8000-000000000002" }),
+          ];
+          return response(queued, 201);
+        }
+        if (url.includes(`/actions/${ACTION_ID}`) && (init?.method === undefined || init?.method === "GET")) {
+          runs = [historyRow({ state: "succeeded", terminalKind: "succeeded", terminalReason: null })];
+          return response(succeeded);
+        }
+        if (url.includes("/services") || url.includes("/http-probes")) return response([]);
+        return readResponse(url, noScope, null) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner(noScope);
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "192.0.2.10" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(await screen.findByText(/Action succeeded/)).toBeTruthy();
+      // Terminal invalidation refetches history; the final copy replaces queued.
+      expect(
+        await screen.findByText(/No new services means the target did not answer/),
+      ).toBeTruthy();
+    });
+
+    it("offers Retry status for advisor probe failures", async () => {
+      for (const reason of ["unreachable", "probe_failed"] as const) {
+        cleanup();
+        stubFetch((url) => {
+          if (url.includes("/api/v1/advisor/status")) {
+            return response({ ...unconfiguredAdvisor, reason });
+          }
+          if (url.includes("/runs")) return response({ runs: [], nextCursor: null });
+          return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+        });
+        await renderPlanner();
+        expect(
+          await screen.findByText("Advisor: endpoint not answering. Manual work is unaffected."),
+        ).toBeTruthy();
+        expect(await screen.findByRole("button", { name: "Retry status" })).toBeTruthy();
+      }
+    });
   });
 });

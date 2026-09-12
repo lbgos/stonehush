@@ -41,12 +41,13 @@ import {
   suggestEngagementName,
 } from "./first-action.js";
 import { ENGAGEMENT_KIND_LABELS } from "./format.js";
-import { createIdempotencyKey } from "./idempotency.js";
+import { createIntentKeyHolder, requestFingerprint } from "./idempotency.js";
 import {
   appendScopeRevisionRequest,
   upsertEngagementInCache,
   useCreateEngagementMutation,
 } from "./mutations.js";
+import { fetchEngagementDetail } from "./query.js";
 import { fetchEngagementNotes, saveEngagementNotesRequest } from "./notes-query.js";
 import { runHistoryQueryKey } from "./run-history-query.js";
 import { createDraftScopeRule } from "./scope-rules.js";
@@ -156,10 +157,27 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
   const [submitError, setSubmitError] = useState<string | undefined>(undefined);
   const [starting, setStarting] = useState(false);
   const [started, setStarted] = useState<StartedProgress | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const createEngagement = useCreateEngagementMutation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { announce } = useEngagementWorkspace();
+  // One key per scope and action intent. Unchanged retries reuse the key so a
+  // committed operation with a lost response replays; a changed body gets a
+  // new key. Engagement creation already uses its holder inside the mutation.
+  const scopeKeys = useRef(createIntentKeyHolder());
+  const actionKeys = useRef(createIntentKeyHolder());
+  const retained = started !== null;
+  const scopeLocked = started?.scopeDone === true;
+  const hasOptionErrors =
+    fieldErrors.platformUrl !== undefined ||
+    fieldErrors.deadline !== undefined ||
+    fieldErrors.description !== undefined ||
+    fieldErrors.authorizationContext !== undefined;
+
+  useEffect(() => {
+    if (hasOptionErrors) setOptionsOpen(true);
+  }, [hasOptionErrors]);
 
   useEffect(() => {
     if (!open) {
@@ -171,6 +189,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
       setSubmitError(undefined);
       setStarting(false);
       setStarted(null);
+      setOptionsOpen(false);
       // Invalidate any in-flight file read so a late completion cannot
       // repopulate the attachment after the reset.
       challengeReadRef.current += 1;
@@ -309,6 +328,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
 
     setSubmitError(undefined);
     setStarting(true);
+    let attempted: StartedProgress | null = started;
     try {
       // Creation, scope save, and the first scan are separate phases. Once
       // the engagement exists, retries resume the follow-up phases on it
@@ -325,6 +345,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
         };
         setStarted(progress);
       }
+      attempted = progress;
 
       if (fields.saveAsScope && targets.length > 0 && !progress.scopeDone) {
         const rules: SavedScopeRule[] = [];
@@ -337,11 +358,21 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
           if (!drafted.ok) throw new Error(drafted.message);
           rules.push(drafted.rule);
         }
+        const scopeBody = { expectedRevision: progress.revision, rules };
+        // Fingerprint the stable scope intent (targets), not the rule ids:
+        // createDraftScopeRule mints a fresh id per build, so fingerprinting
+        // rules would give every retry a new key and defeat replay.
+        const scopeIntent = requestFingerprint({
+          engagementId: progress.engagement.id,
+          expectedRevision: scopeBody.expectedRevision,
+          targets,
+        });
         const scopeRevision = await appendScopeRevisionRequest(
           progress.engagement.id,
-          { expectedRevision: progress.revision, rules },
-          createIdempotencyKey(),
+          scopeBody,
+          scopeKeys.current.keyFor(scopeIntent),
         );
+        scopeKeys.current.reset(scopeIntent);
         progress = {
           ...progress,
           revision: progress.revision + 1,
@@ -355,21 +386,33 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
           activeScopeRevisionId: progress.scopeId,
           updatedAt: scopeRevision.createdAt,
         });
+        attempted = progress;
       }
 
       if (targets.length > 0) {
+        const actionBody = {
+          expectedEngagementRevision: progress.revision,
+          expectedActiveScopeRevisionId: progress.scopeId,
+          targets,
+          declaredPorts: null,
+        } as const;
+        const actionIntent = requestFingerprint({
+          engagementId: progress.engagement.id,
+          ...actionBody,
+        });
         const action = await createActionRequest(
           progress.engagement.id,
           {
-            expectedEngagementRevision: progress.revision,
-            expectedActiveScopeRevisionId: progress.scopeId,
-            targets,
-            declaredPorts: null,
+            expectedEngagementRevision: actionBody.expectedEngagementRevision,
+            expectedActiveScopeRevisionId: actionBody.expectedActiveScopeRevisionId,
+            targets: [...actionBody.targets],
+            declaredPorts: actionBody.declaredPorts,
           },
-          createIdempotencyKey(),
+          actionKeys.current.keyFor(actionIntent),
         );
-        // The readiness summary reads run history, so refresh it now instead
-        // of leaving "no runs yet" until a remount.
+        actionKeys.current.reset(actionIntent);
+        // The readiness summary reads run history, so refresh it after the
+        // action is persisted instead of leaving "no runs yet" until a remount.
         void queryClient.invalidateQueries({
           queryKey: runHistoryQueryKey(progress.engagement.id),
         });
@@ -421,8 +464,42 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
           // The retained engagement is gone; the next submit starts over.
           setStarted(null);
         } else if (isRevisionConflict(error)) {
-          const revision = error.currentRevision;
-          setStarted((current) => (current === null ? current : { ...current, revision }));
+          // Refresh both concurrency values together from the server. Keeping
+          // a fresh revision with a stale scope id stays blocked.
+          const retainedProgress = attempted;
+          if (retainedProgress !== null) {
+            try {
+              const detail = await fetchEngagementDetail(retainedProgress.engagement.id);
+              if (detail.engagement.status === "archived") {
+                setStarted(null);
+              } else {
+                setStarted((current) =>
+                  current === null
+                    ? current
+                    : {
+                        ...current,
+                        engagement: {
+                          ...current.engagement,
+                          revision: detail.engagement.revision,
+                          activeScopeRevisionId: detail.engagement.activeScopeRevisionId,
+                          updatedAt: detail.engagement.updatedAt,
+                        },
+                        revision: detail.engagement.revision,
+                        scopeId: detail.engagement.activeScopeRevisionId,
+                      },
+                );
+                upsertEngagementInCache(queryClient, {
+                  ...retainedProgress.engagement,
+                  revision: detail.engagement.revision,
+                  activeScopeRevisionId: detail.engagement.activeScopeRevisionId,
+                  updatedAt: detail.engagement.updatedAt,
+                });
+              }
+            } catch {
+              // Keep retained values on refresh failure. The next retry
+              // refetches again; a gone engagement clears via not_found above.
+            }
+          }
         }
       }
     } finally {
@@ -504,6 +581,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
               value={fields.name}
               maxLength={120}
               placeholder={suggestedName}
+              disabled={pending || retained}
               className={fieldClassName(fieldErrors.name !== undefined)}
               onChange={(event) => setFields((current) => ({ ...current, name: event.target.value }))}
             />
@@ -517,6 +595,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                 id={`${nameId}-kind`}
                 name="kind"
                 value={fields.kind}
+                disabled={pending || retained}
                 className={fieldClassName(false)}
                 onChange={(event) =>
                   setFields((current) => ({
@@ -578,13 +657,17 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
               placeholder={"192.0.2.10\n198.51.100.10"}
               autoComplete="off"
               spellCheck={false}
+              disabled={pending || scopeLocked}
               className={cn(fieldClassName(fieldErrors.targetInput !== undefined), "min-h-20 py-2 font-mono")}
               onChange={(event) =>
                 setFields((current) => ({ ...current, targetInput: event.target.value }))
               }
             />
           </Field>
-          <details>
+          <details
+            open={optionsOpen}
+            onToggle={(event) => setOptionsOpen(event.currentTarget.open)}
+          >
             <summary className="min-h-11 cursor-pointer text-[12px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8">
               More options
             </summary>
@@ -602,6 +685,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   placeholder="https://host.test/challenge"
                   autoComplete="off"
                   spellCheck={false}
+                  disabled={pending || retained}
                   className={cn(fieldClassName(fieldErrors.platformUrl !== undefined), "font-mono")}
                   onChange={(event) =>
                     setFields((current) => ({ ...current, platformUrl: event.target.value }))
@@ -619,6 +703,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   name="deadline"
                   type="datetime-local"
                   value={fields.deadline}
+                  disabled={pending || retained}
                   className={fieldClassName(fieldErrors.deadline !== undefined)}
                   onChange={(event) =>
                     setFields((current) => ({ ...current, deadline: event.target.value }))
@@ -636,6 +721,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   value={fields.description}
                   rows={3}
                   placeholder="Optional context for this engagement"
+                  disabled={pending || retained}
                   className={cn(fieldClassName(fieldErrors.description !== undefined), "min-h-20 py-2")}
                   onChange={(event) =>
                     setFields((current) => ({ ...current, description: event.target.value }))
@@ -655,6 +741,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   value={fields.authorizationContext}
                   rows={3}
                   placeholder="Optional authorization notes"
+                  disabled={pending || retained}
                   className={cn(
                     fieldClassName(fieldErrors.authorizationContext !== undefined),
                     "min-h-20 py-2",
@@ -672,6 +759,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   type="checkbox"
                   name="saveAsScope"
                   checked={fields.saveAsScope}
+                  disabled={pending || scopeLocked}
                   className="mt-1 size-4 accent-primary"
                   onChange={(event) =>
                     setFields((current) => ({ ...current, saveAsScope: event.target.checked }))
@@ -684,6 +772,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   type="checkbox"
                   name="autoContinueWarnings"
                   checked={fields.autoContinueWarnings}
+                  disabled={pending || retained}
                   className="mt-1 size-4 accent-primary"
                   onChange={(event) =>
                     setFields((current) => ({
@@ -706,6 +795,32 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
               {submitError}
             </p>
           )}
+          {started !== null ? (
+            <p className="m-0 text-[12px] leading-5 text-muted-foreground">
+              Engagement {started.engagement.name} is created. Retry continues on it, so
+              name, type, and saved options stay fixed here.{" "}
+              <button
+                type="button"
+                className="cursor-pointer text-foreground underline outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => {
+                  onOpenChange(false);
+                  void navigate({
+                    to: "/engagements/$engagementId",
+                    params: { engagementId: started.engagement.id },
+                  });
+                }}
+              >
+                Open engagement
+              </button>{" "}
+              <button
+                type="button"
+                className="cursor-pointer text-foreground underline outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setStarted(null)}
+              >
+                Discard and start over
+              </button>
+            </p>
+          ) : null}
           <div className="mt-1 flex flex-wrap gap-2">
             <Button disabled={pending} type="submit">
               {pending ? "Starting" : "Start engagement"}
