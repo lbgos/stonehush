@@ -77,6 +77,14 @@ export { HttpProbeRepository } from "./http-probe.js";
 export { FfufRepository } from "./ffuf.js";
 export { RunOutputRepository } from "./run-output.js";
 export {
+  ExcerptRepository,
+  type CreateAttachmentInput,
+  type CreateExcerptInput,
+  type ExcerptRepositoryError,
+  type ExcerptRepositoryProviders,
+  type ExcerptResult,
+} from "./excerpts.js";
+export {
   ADVISOR_TURN_EXPIRY_CLEANUP_LIMIT,
   ADVISOR_TURN_EXPIRY_MS,
   ADVISOR_TURN_LIST_MAX,
@@ -103,6 +111,8 @@ export {
   engagementNotes,
   engagements,
   evidenceArtifacts,
+  evidenceAttachments,
+  evidenceExcerpts,
   evidenceGrants,
   ffufResults,
   findings,

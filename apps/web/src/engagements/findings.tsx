@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import type { Finding } from "@stonehush/contracts";
+import type { Excerpt, Finding } from "@stonehush/contracts";
+import { buildFindingPrefillBody, formatExcerptSourceLabel } from "@stonehush/domain";
 import {
   Button,
   LoadingRegion,
@@ -19,15 +20,16 @@ import {
   findingsQueryKey,
 } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
+import { takePendingFindingExcerpt, useExcerptsQuery } from "./run-output-query.js";
 
 const SEVERITY_OPTIONS = ["info", "low", "medium", "high", "critical"] as const;
 
-function parseEvidenceInput(value: string): string[] {
-  return value
-    .split(/[\s,]+/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-}
+// STONE-3 creation-from-excerpt (additive; STONE-4 appends lead prefill on
+// the creation path and wins conflicts there). The ordinary flow carries no
+// artifact-ID field: evidence linkage comes from a kept excerpt staged in
+// Raw output or picked below, and its artifact id is attached silently on
+// submit. Prefill inherits the operator target note, the stable source
+// reference, and the masked excerpt text.
 
 export function EngagementFindingsSection({
   archived,
@@ -110,8 +112,23 @@ function FindingsBody({
   const [severity, setSeverity] =
     useState<(typeof SEVERITY_OPTIONS)[number]>("medium");
   const [body, setBody] = useState("");
-  const [evidence, setEvidence] = useState("");
+  const [linkedExcerpt, setLinkedExcerpt] = useState<Excerpt | null>(null);
   const [formError, setFormError] = useState<string | undefined>(undefined);
+  const savedExcerpts = useExcerptsQuery(engagementId);
+
+  // One-shot handoff from Raw output: a staged excerpt prefills the draft
+  // once, then clears so later edits are never overwritten.
+  useEffect(() => {
+    const staged = takePendingFindingExcerpt(engagementId);
+    if (staged === undefined) return;
+    setLinkedExcerpt(staged);
+    setBody((current) => {
+      const prefill = buildFindingPrefillBody(staged);
+      if (current.includes(prefill)) return current;
+      return current.length === 0 ? prefill : `${current}\n\n${prefill}`;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engagementId]);
 
   const records = findings.data ?? [];
   const openCount = records.filter((finding) => finding.status === "open").length;
@@ -138,17 +155,27 @@ function FindingsBody({
         title: trimmedTitle,
         severity,
         body,
-        evidenceArtifactIds: parseEvidenceInput(evidence),
+        evidenceArtifactIds: linkedExcerpt === null ? [] : [linkedExcerpt.artifactId],
       },
       {
         onSuccess: () => {
           setTitle("");
           setBody("");
-          setEvidence("");
+          setLinkedExcerpt(null);
           setSeverity("medium");
         },
       },
     );
+  };
+
+  const linkExcerpt = (excerpt: Excerpt | null) => {
+    setLinkedExcerpt(excerpt);
+    if (excerpt === null) return;
+    setBody((current) => {
+      const prefill = buildFindingPrefillBody(excerpt);
+      if (current.includes(prefill)) return current;
+      return current.length === 0 ? prefill : `${current}\n\n${prefill}`;
+    });
   };
 
   return (
@@ -240,19 +267,47 @@ function FindingsBody({
                 ))}
               </select>
             </label>
-            <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor="finding-evidence">
-              <span>Evidence artifact ids, comma separated</span>
-              <input
-                id="finding-evidence"
-                value={evidence}
+            <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor="finding-excerpt">
+              <span>Linked excerpt</span>
+              <select
+                id="finding-excerpt"
+                value={linkedExcerpt?.id ?? ""}
                 disabled={archived || create.isPending}
-                placeholder="nmap-xml-1"
-                spellCheck={false}
-                className="w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onChange={(event) => setEvidence(event.target.value)}
-              />
+                className="w-full rounded-md border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onChange={(event) => {
+                  const next = (savedExcerpts.data ?? []).find(
+                    (excerpt) => excerpt.id === event.target.value,
+                  );
+                  linkExcerpt(next ?? null);
+                }}
+              >
+                <option value="">No excerpt</option>
+                {(savedExcerpts.data ?? []).map((excerpt) => (
+                  <option key={excerpt.id} value={excerpt.id}>
+                    {formatExcerptSourceLabel(excerpt)}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
+          {linkedExcerpt !== null ? (
+            <div className="rounded-md border border-border px-2.5 py-2" aria-live="polite">
+              <p className="m-0 font-mono text-[11px] text-muted-foreground">
+                {formatExcerptSourceLabel(linkedExcerpt)}
+              </p>
+              <div className="mt-2 flex justify-end">
+                <Button
+                  type="button"
+                  variant="quiet"
+                  className="h-7 px-2 text-[12px]"
+                  disabled={archived || create.isPending}
+                  onClick={() => linkExcerpt(null)}
+                >
+                  Unlink excerpt
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor="finding-body">
             <span>Notes Markdown</span>
             <textarea

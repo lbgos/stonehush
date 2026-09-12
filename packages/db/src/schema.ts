@@ -1364,6 +1364,139 @@ export const settings = sqliteTable(
   ],
 );
 
+// STONE-3 evidence excerpts: masked, bounded selections of preserved run
+// output with a server-verified stable reference (run, artifact, digest,
+// byte range). Content is masked at creation; raw bytes live only in the
+// managed evidence store.
+export const evidenceExcerpts = sqliteTable(
+  "evidence_excerpts",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    runId: text("run_id").notNull(),
+    artifactId: text("artifact_id").notNull(),
+    artifactDigest: text("artifact_digest").notNull(),
+    stream: text("stream", { enum: ["stdout", "stderr"] }).notNull(),
+    byteOffset: integer("byte_offset").notNull(),
+    byteLength: integer("byte_length").notNull(),
+    content: text("content").notNull(),
+    redactions: integer("redactions").notNull(),
+    targetNote: text("target_note"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("evidence_excerpt_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "evidence_excerpt_artifact_id",
+      sql`length(${table.artifactId}) between 1 and 127 and substr(${table.artifactId}, 1, 1) glob '[a-z0-9]' and ${table.artifactId} not glob '*[^a-z0-9-]*'`,
+    ),
+    check(
+      "evidence_excerpt_artifact_digest",
+      sql`length(${table.artifactDigest}) = 71 and ${table.artifactDigest} glob 'sha256:[0-9a-f]*' and ${table.artifactDigest} not glob 'sha256:*[^0-9a-f]*'`,
+    ),
+    check("evidence_excerpt_stream", sql`${table.stream} in ('stdout', 'stderr')`),
+    check(
+      "evidence_excerpt_range",
+      sql`${table.byteOffset} >= 0 and ${table.byteLength} between 1 and 8192 and ${table.byteOffset} + ${table.byteLength} <= 1073741824`,
+    ),
+    check(
+      "evidence_excerpt_content_bytes",
+      sql`length(cast(${table.content} as blob)) <= 16384`,
+    ),
+    check("evidence_excerpt_redactions", sql`${table.redactions} >= 0`),
+    check(
+      "evidence_excerpt_target_note",
+      sql`${table.targetNote} is null or length(${table.targetNote}) between 1 and 120`,
+    ),
+    check("evidence_excerpt_created_at", sql`length(${table.createdAt}) >= 20`),
+    index("evidence_excerpt_engagement_created_idx").on(
+      table.engagementId,
+      table.createdAt,
+      table.id,
+    ),
+    index("evidence_excerpt_run_idx").on(table.engagementId, table.runId),
+  ],
+);
+
+// STONE-3 note attachments: pasted or dropped images with a caption, an
+// optional operator target label, and derivation lineage. Derived crops and
+// annotations reference the kept original through parentAttachmentId;
+// originals are never mutated by derivation.
+// Bound note: content_base64 is capped at 2000000 chars while size_bytes
+// allows 2000000 raw bytes, so base64 inflation makes the content CHECK bite
+// first: the effective raw cap through the API is about 1.5M bytes.
+export const evidenceAttachments = sqliteTable(
+  "evidence_attachments",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    mime: text("mime", {
+      enum: ["image/png", "image/jpeg", "image/gif", "image/webp"],
+    }).notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    digest: text("digest").notNull(),
+    caption: text("caption").notNull(),
+    targetLabel: text("target_label"),
+    parentAttachmentId: text("parent_attachment_id"),
+    cropRectJson: text("crop_rect_json"),
+    contentBase64: text("content_base64").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check("evidence_attachment_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "evidence_attachment_filename",
+      sql`length(${table.filename}) between 1 and 128 and ${table.filename} not glob '*[^a-z0-9-]*'`,
+    ),
+    check(
+      "evidence_attachment_mime",
+      sql`${table.mime} in ('image/png', 'image/jpeg', 'image/gif', 'image/webp')`,
+    ),
+    check(
+      "evidence_attachment_size_bytes",
+      sql`${table.sizeBytes} between 1 and 2000000`,
+    ),
+    check(
+      "evidence_attachment_digest",
+      sql`length(${table.digest}) = 71 and ${table.digest} glob 'sha256:[0-9a-f]*' and ${table.digest} not glob 'sha256:*[^0-9a-f]*'`,
+    ),
+    check(
+      "evidence_attachment_caption",
+      sql`length(${table.caption}) <= 280`,
+    ),
+    check(
+      "evidence_attachment_target_label",
+      sql`${table.targetLabel} is null or length(${table.targetLabel}) between 1 and 120`,
+    ),
+    check(
+      "evidence_attachment_crop_json",
+      sql`${table.cropRectJson} is null or (json_valid(${table.cropRectJson}) and length(cast(${table.cropRectJson} as blob)) <= 1024)`,
+    ),
+    check(
+      "evidence_attachment_content_bytes",
+      sql`length(cast(${table.contentBase64} as blob)) between 1 and 2000000`,
+    ),
+    check("evidence_attachment_created_at", sql`length(${table.createdAt}) >= 20`),
+    foreignKey({
+      columns: [table.parentAttachmentId],
+      foreignColumns: [table.id],
+      name: "evidence_attachment_parent_fk",
+    }).onDelete("restrict"),
+    index("evidence_attachment_engagement_created_idx").on(
+      table.engagementId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
 export type RunRow = typeof runs.$inferSelect;
 export type RunLeaseRow = typeof runLeases.$inferSelect;
 export type RunEventRow = typeof runEvents.$inferSelect;
@@ -1377,5 +1510,7 @@ export type NmapServiceRow = typeof nmapServices.$inferSelect;
 export type HttpProbeResultRow = typeof httpProbeResults.$inferSelect;
 export type FfufResultRow = typeof ffufResults.$inferSelect;
 export type FindingRow = typeof findings.$inferSelect;
+export type EvidenceExcerptRow = typeof evidenceExcerpts.$inferSelect;
+export type EvidenceAttachmentRow = typeof evidenceAttachments.$inferSelect;
 export type AdvisorTurnRow = typeof advisorTurns.$inferSelect;
 export type SettingsRow = typeof settings.$inferSelect;

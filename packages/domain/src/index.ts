@@ -59,6 +59,25 @@ export {
   type AdvisorCitationPartition,
 } from "./advisor-citations.js";
 export {
+  buildFindingPrefillBody,
+  byteOffsetOfCharOffset,
+  deriveAttachmentName,
+  findTextMatches,
+  formatExcerptSourceLabel,
+  isCropRectValid,
+  maskExcerptText,
+  selectionBytesFromText,
+  utf8ByteLength as excerptUtf8ByteLength,
+  validateExcerptRange,
+  windowSnippetFromChars,
+  EXCERPT_RANGE_MAX_BYTES,
+  EXCERPT_SNIPPET_RADIUS_CHARS,
+  type CropRect,
+  type MaskedExcerptText,
+  type TextMatch,
+  type TextSnippet,
+} from "./excerpts.js";
+export {
   ADVISOR_EXPLANATION_PROMPT_VERSION,
   ADVISOR_EXPLANATION_SYSTEM_PROMPT,
   ADVISOR_HISTORY_ENTRY_MAX_BYTES,

@@ -733,6 +733,96 @@ export class EvidenceStore {
     }
   }
 
+  // Verified positioned range for evidence excerpts: same fail-closed
+  // verification as an excerpt, then a bounded read of exactly byteLength
+  // bytes at byteOffset. Lets long output be excerpted without rendering or
+  // transferring the whole file. Ranges past the verified size fail closed.
+  async verifiedByteRange(input: {
+    readonly artifactId: string;
+    readonly expectedSizeBytes: number;
+    readonly expectedDigest: string;
+    readonly byteOffset: number;
+    readonly byteLength: number;
+  }): Promise<VerifiedExcerptResult> {
+    const { artifactId, expectedSizeBytes, expectedDigest, byteOffset, byteLength } = input;
+    if (
+      !OPAQUE_EVIDENCE_ID_PATTERN.test(artifactId) ||
+      !Number.isSafeInteger(expectedSizeBytes) ||
+      expectedSizeBytes < 0 ||
+      !VERIFIED_DOWNLOAD_DIGEST_PATTERN.test(expectedDigest) ||
+      !Number.isSafeInteger(byteOffset) ||
+      byteOffset < 0 ||
+      !Number.isSafeInteger(byteLength) ||
+      byteLength <= 0 ||
+      byteLength > VERIFIED_EXCERPT_MAX_BYTES ||
+      byteOffset + byteLength > expectedSizeBytes
+    ) {
+      return { status: "corrupt", code: "invalid_download_request" };
+    }
+    if (!this.onTreeDirectoryMatches(this.published)) {
+      return { status: "missing" };
+    }
+    const opened = this.binding.openAt(this.published.fd, artifactId, READ_FLAGS, 0);
+    if (!opened.ok) {
+      if (opened.errno === ERRNO.ENOENT) return { status: "missing" };
+      if (opened.errno === ERRNO.ELOOP) {
+        return { status: "corrupt", code: "artifact_symlink_rejected" };
+      }
+      return { status: "corrupt", code: mapOpenErrno(opened.errno) };
+    }
+    const fd = opened.fd;
+    try {
+      const stats = fstatOf(fd);
+      if (stats === undefined) {
+        return { status: "corrupt", code: "evidence_io_error" };
+      }
+      if (!stats.isFile()) {
+        return { status: "corrupt", code: "artifact_not_regular_file" };
+      }
+      if (stats.nlink !== 1) {
+        return { status: "corrupt", code: "artifact_hardlink_rejected" };
+      }
+      if (stats.dev !== this.rootDev) {
+        return { status: "corrupt", code: "cross_filesystem_staging" };
+      }
+      if (stats.uid !== this.uid || (stats.mode & 0o777) !== 0o600) {
+        return { status: "corrupt", code: "evidence_storage_invalid" };
+      }
+      if (stats.size !== expectedSizeBytes) {
+        return { status: "corrupt", code: "size_mismatch" };
+      }
+      let hashed: { sizeBytes: number; digest: string };
+      try {
+        hashed = await hashDescriptor(fd);
+      } catch {
+        return { status: "corrupt", code: "evidence_io_error" };
+      }
+      if (hashed.sizeBytes !== expectedSizeBytes) {
+        return { status: "corrupt", code: "size_mismatch" };
+      }
+      if (hashed.digest !== expectedDigest) {
+        return { status: "corrupt", code: "digest_mismatch" };
+      }
+      const content = Buffer.allocUnsafe(byteLength);
+      let position = 0;
+      while (position < byteLength) {
+        const read = await fdRead(fd, content, position, byteLength - position, byteOffset + position);
+        if (read.bytesRead === 0) {
+          return { status: "corrupt", code: "evidence_io_error" };
+        }
+        position += read.bytesRead;
+      }
+      return {
+        status: "ready",
+        totalBytes: hashed.sizeBytes,
+        truncated: byteOffset + byteLength < hashed.sizeBytes,
+        content: Buffer.from(content),
+      };
+    } finally {
+      closeQuietly(fd);
+    }
+  }
+
   // Re-opens the on-tree managed directory through the evidence descriptor
   // and compares it to the held startup identity. A replaced directory fails
   // closed: the rename keeps targeting the verified inode, never the tree.

@@ -19,6 +19,7 @@ export {
   type SystemStatusResponse,
 } from "./system-status.js";
 export * from "./evidence.js";
+export * from "./excerpts.js";
 export * from "./run-output.js";
 export * from "./run-history.js";
 export * from "./saved-scope.js";
