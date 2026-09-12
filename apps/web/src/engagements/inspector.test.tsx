@@ -381,10 +381,14 @@ describe("origin helpers", () => {
     // would submit a different endpoint than the operator typed.
     const invalid = [
       "http://host:bad",
+      "http://example.test:oops",
+      "example.test:8080x",
       "host:80abc",
       "host:99999",
       "http://[2001:db8::1]:bad",
+      "http://[2001:db8::1]:oops",
       "[2001:db8::1]:80abc",
+      "[2001:db8::1]:8080x",
       "[2001:db8::1]junk",
       "http://host:0",
       "http://host:",

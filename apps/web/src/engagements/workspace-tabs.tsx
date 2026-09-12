@@ -119,10 +119,29 @@ export function ExecutionTray({ engagementId, onOpenRun }: ExecutionTrayProps) {
     void history.fetchNextPage();
   };
   const baselineTerminal = baseline === undefined ? undefined : new Set(baseline.terminalIds);
+  // Terminals on pages appended after the baseline snapshot are history, not
+  // newly finished work: exclude them until the baseline effect folds them
+  // in, so the live region never announces an old run as new. Active runs on
+  // those pages stay tracked, so a later completion still surfaces once the
+  // baseline covers the page.
+  const watchedIds =
+    baseline === undefined || history.data === undefined
+      ? new Set<string>()
+      : new Set(
+          history.data.pages
+            .slice(0, baseline.pageCount)
+            .flatMap((page) => page.runs)
+            .map((run) => run.id),
+        );
   const finished =
     baselineTerminal === undefined
       ? []
-      : runs.filter((run) => isTerminalRunState(run.state) && !baselineTerminal.has(run.id));
+      : runs.filter(
+          (run) =>
+            isTerminalRunState(run.state) &&
+            !baselineTerminal.has(run.id) &&
+            watchedIds.has(run.id),
+        );
 
   const refetchRef = useRef(history.refetch);
   useEffect(() => {

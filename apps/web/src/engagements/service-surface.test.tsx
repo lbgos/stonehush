@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
@@ -60,6 +60,25 @@ function ffufPath(url: string, artifactId = "artifact-9") {
     runId: "run-1",
     artifactId,
     artifactDigest: `sha256:${"c".repeat(64)}`,
+    observedAt: "2026-08-13T12:00:00.000Z",
+  };
+}
+
+function httpProbe(url: string, artifactId = "artifact-7") {
+  return {
+    parserVersion: "http-probe-raw-v1" as const,
+    url,
+    fetchedAt: "2026-08-13T12:00:00.000Z",
+    finalUrl: url,
+    status: 200,
+    title: "lab",
+    selectedHeaders: { contentType: "text/html", server: null, poweredBy: null },
+    hops: [],
+    error: null,
+    source: "http-probe" as const,
+    runId: "run-1",
+    artifactId,
+    artifactDigest: `sha256:${"d".repeat(64)}`,
     observedAt: "2026-08-13T12:00:00.000Z",
   };
 }
@@ -266,22 +285,7 @@ describe("EngagementServicesSection", () => {
   });
 
   it("keeps the probe scheme when probes and paths disagree on one origin", async () => {
-    const probe = {
-      parserVersion: "http-probe-raw-v1" as const,
-      url: "http://192.0.2.10:8080/",
-      fetchedAt: "2026-08-13T12:00:00.000Z",
-      finalUrl: "http://192.0.2.10:8080/",
-      status: 200,
-      title: "lab",
-      selectedHeaders: { contentType: "text/html", server: null, poweredBy: null },
-      hops: [],
-      error: null,
-      source: "http-probe" as const,
-      runId: "run-1",
-      artifactId: "artifact-7",
-      artifactDigest: `sha256:${"d".repeat(64)}`,
-      observedAt: "2026-08-13T12:00:00.000Z",
-    };
+    const probe = httpProbe("http://192.0.2.10:8080/");
     vi.stubGlobal(
       "fetch",
       routeSurfaceResponses([], [probe], [ffufPath("https://192.0.2.10:8080/admin")]),
@@ -289,5 +293,47 @@ describe("EngagementServicesSection", () => {
     renderSurface();
     const browserLink = await screen.findByRole("link", { name: "Open in browser" });
     expect(browserLink.getAttribute("href")).toBe("http://192.0.2.10:8080");
+  });
+
+  it("renders a shared-hostname observation once under its own target", async () => {
+    const first = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: "shared.test",
+      artifactId: "artifact-1",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const second = {
+      ...serviceA,
+      address: "192.0.2.20",
+      port: 80,
+      serviceName: "http",
+      hostname: "shared.test",
+      artifactId: "artifact-2",
+      artifactDigest: `sha256:${"b".repeat(64)}`,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([first, second], [httpProbe("https://shared.test:80/")], []),
+    );
+    const { container } = renderSurface();
+    const targets = await screen.findByRole("group", { name: "Targets" });
+    const targetButton = (pattern: RegExp) => within(targets).getByRole("button", { name: pattern });
+    expect(targetButton(/192\.0\.2\.10/)).toBeTruthy();
+    const sharedOrigin = 'a[href="https://shared.test:80"]';
+    expect(container.querySelector(sharedOrigin)).toBeNull();
+    expect(screen.getByText(/Not probed yet/)).toBeTruthy();
+
+    fireEvent.click(targetButton(/shared\.test/));
+    await waitFor(() => {
+      expect(container.querySelectorAll(sharedOrigin)).toHaveLength(1);
+    });
+
+    fireEvent.click(targetButton(/192\.0\.2\.20/));
+    await waitFor(() => {
+      expect(container.querySelector(sharedOrigin)).toBeNull();
+    });
   });
 });

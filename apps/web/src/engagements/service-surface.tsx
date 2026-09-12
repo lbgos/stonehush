@@ -299,6 +299,7 @@ export function EngagementServicesSection({
         />
         {activeTarget === undefined ? null : (
           <TargetGroup
+            allServices={sorted}
             belowOrigin={belowOrigin}
             engagementId={engagementId}
             extraRowActions={extraRowActions}
@@ -512,6 +513,7 @@ function TargetSelector({
 }
 
 function TargetGroup({
+  allServices,
   belowOrigin,
   engagementId,
   extraRowActions,
@@ -527,6 +529,7 @@ function TargetGroup({
   setSchemes,
   target,
 }: {
+  allServices: readonly NmapProjectedService[];
   belowOrigin: BelowOrigin | undefined;
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
@@ -584,14 +587,14 @@ function TargetGroup({
                   return (
                     parts !== undefined &&
                     parts.port === service.port &&
-                    hostMatchesService(parts.host, service)
+                    hostMatchesService(parts.host, service, allServices)
                   );
                 })}
                 port={service.port}
-                probes={(probes ?? []).filter((probe) => probeMatchesService(probe, service))}
+                probes={(probes ?? []).filter((probe) => probeMatchesService(probe, service, allServices))}
                 scheme={
                   schemes[`${service.address}:${String(service.port)}`] ??
-                  defaultSchemeForService(service, probes, ffufResults)
+                  defaultSchemeForService(service, probes, ffufResults, allServices)
                 }
                 selectedKey={selectedKey}
                 setScheme={(scheme) =>
@@ -607,6 +610,7 @@ function TargetGroup({
         ))}
       </div>
       <UnmatchedOrigins
+        allServices={allServices}
         belowOrigin={belowOrigin}
         engagementId={engagementId}
         extraRowActions={extraRowActions}
@@ -618,7 +622,6 @@ function TargetGroup({
         probes={probes}
         schemes={schemes}
         selectedKey={selectedKey}
-        services={services}
         setSchemes={setSchemes}
         target={target}
       />
@@ -626,25 +629,39 @@ function TargetGroup({
   );
 }
 
-function hostMatchesService(host: string, service: NmapProjectedService): boolean {
+function hostMatchesService(
+  host: string,
+  service: NmapProjectedService,
+  allServices: readonly NmapProjectedService[],
+): boolean {
   const normalized = host.replace(/^\[|\]$/g, "").toLowerCase();
   const serviceAddr = service.address.replace(/^\[|\]$/g, "").toLowerCase();
   if (normalized === serviceAddr) return true;
-  return service.hostname !== null && normalized === service.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (service.hostname === null) return false;
+  if (normalized !== service.hostname.replace(/^\[|\]$/g, "").toLowerCase()) return false;
+  // A hostname shared by several addresses must not associate the observation
+  // with every one of them. Reuse the target canonicalization: only an
+  // unambiguous hostname-to-address mapping matches.
+  return canonicalTargetForHost(host, allServices) === service.address;
 }
 
-function probeMatchesService(probe: HttpProbeProjected, service: NmapProjectedService): boolean {
+function probeMatchesService(
+  probe: HttpProbeProjected,
+  service: NmapProjectedService,
+  allServices: readonly NmapProjectedService[],
+): boolean {
   const parts = splitOriginUrl(probe.url);
   if (parts === undefined || parts.port !== service.port) return false;
-  return hostMatchesService(parts.host, service);
+  return hostMatchesService(parts.host, service, allServices);
 }
 
 function defaultSchemeForService(
   service: NmapProjectedService,
   probes: readonly HttpProbeProjected[] | undefined,
   ffufResults: readonly FfufProjected[] | undefined,
+  allServices: readonly NmapProjectedService[],
 ): OriginScheme {
-  const matched = (probes ?? []).filter((probe) => probeMatchesService(probe, service));
+  const matched = (probes ?? []).filter((probe) => probeMatchesService(probe, service, allServices));
   if (matched.length === 1) {
     const scheme = splitOriginUrl(matched[0]?.url ?? "")?.scheme;
     if (scheme !== undefined) return scheme;
@@ -654,7 +671,7 @@ function defaultSchemeForService(
     return (
       parts !== undefined &&
       parts.port === service.port &&
-      hostMatchesService(parts.host, service)
+      hostMatchesService(parts.host, service, allServices)
     );
   });
   const pathScheme = unanimousObservedScheme(matchedPaths.map((result) => result.url));
@@ -700,6 +717,7 @@ function defaultSchemeForUnmatchedEntry(
 }
 
 function UnmatchedOrigins({
+  allServices,
   belowOrigin,
   engagementId,
   extraRowActions,
@@ -711,10 +729,10 @@ function UnmatchedOrigins({
   probes,
   schemes,
   selectedKey,
-  services,
   setSchemes,
   target,
 }: {
+  allServices: readonly NmapProjectedService[];
   belowOrigin: BelowOrigin | undefined;
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
@@ -726,7 +744,6 @@ function UnmatchedOrigins({
   probes: readonly HttpProbeProjected[] | undefined;
   schemes: Readonly<Record<string, OriginScheme>>;
   selectedKey: string | undefined;
-  services: readonly NmapProjectedService[];
   setSchemes: (next: Readonly<Record<string, OriginScheme>>) => void;
   target: string;
 }) {
@@ -734,10 +751,10 @@ function UnmatchedOrigins({
   for (const probe of probes ?? []) {
     const parts = splitOriginUrl(probe.url);
     if (parts === undefined) continue;
-    const probeTarget = canonicalTargetForHost(parts.host, services);
+    const probeTarget = canonicalTargetForHost(parts.host, allServices);
     if (probeTarget !== target && probeTarget.toLowerCase() !== target.toLowerCase()) continue;
     if (
-      services.some((service) => isWebServiceCandidate(service) && probeMatchesService(probe, service))
+      allServices.some((service) => isWebServiceCandidate(service) && probeMatchesService(probe, service, allServices))
     )
       continue;
     const key = `${parts.host}:${String(parts.port)}`;
@@ -751,14 +768,14 @@ function UnmatchedOrigins({
   for (const result of ffufResults ?? []) {
     const parts = splitOriginUrl(result.url);
     if (parts === undefined) continue;
-    const pathTarget = canonicalTargetForHost(parts.host, services);
+    const pathTarget = canonicalTargetForHost(parts.host, allServices);
     if (pathTarget !== target && pathTarget.toLowerCase() !== target.toLowerCase()) continue;
     if (
-      services.some(
+      allServices.some(
         (service) =>
           isWebServiceCandidate(service) &&
           parts.port === service.port &&
-          hostMatchesService(parts.host, service),
+          hostMatchesService(parts.host, service, allServices),
       )
     )
       continue;
