@@ -204,6 +204,46 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe("run history panel empty baseline", () => {
+  it("keeps Show new results reachable when arrivals follow an empty baseline", async () => {
+    let historyCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/runs?")) {
+        historyCalls += 1;
+        if (historyCalls === 1) return response({ runs: [], nextCursor: null });
+        return response({
+          runs: [runSummary("run-late", "2026-08-10T12:01:00.000Z", "running")],
+          nextCursor: null,
+        });
+      }
+      if (url.endsWith("/output")) return response(outputFor("run-late", "late-bytes", "running"));
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { queryClient } = renderPanel({ selectedRunId: undefined });
+
+    await waitFor(() => {
+      expect(screen.getByText("No runs yet")).toBeTruthy();
+    });
+    await act(async () => {
+      await queryClient.refetchQueries();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Show new results" })).toBeTruthy();
+    });
+    expect(screen.getByText(/1 new run arrived/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /run-late/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show new results" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run-late/ })).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: "Show new results" })).toBeNull();
+    assertReadOnly(fetchMock);
+  });
+});
+
 describe("run history panel", () => {
   it("keeps caller selection stable and loads exact output for the selected run", async () => {
     const historyPage = {

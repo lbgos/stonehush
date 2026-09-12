@@ -226,7 +226,10 @@ describe("console raw output panel", () => {
     });
     const text = screen.getByTestId("raw-output-stdout").textContent ?? "";
     expect(text).not.toContain("—");
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    // Scope to the console panel: the surface tab also renders its stale-data
+    // retry under the same accessible name when probe/path queries fail.
+    const consolePanel = screen.getByRole("tabpanel", { name: "Raw output" });
+    fireEvent.click(within(consolePanel).getByRole("button", { name: "Refresh" }));
     expect(screen.getByTestId("raw-output-stdout")).toBeTruthy();
   });
 

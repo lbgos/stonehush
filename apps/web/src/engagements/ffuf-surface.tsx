@@ -3,6 +3,7 @@ import {
   FFUF_RATE_DEFAULT,
   FFUF_THREADS_DEFAULT,
   FFUF_TIMEOUT_SECONDS_DEFAULT,
+  type FfufProjected,
   type PersistedAction,
   type SavedScopeRule,
 } from "@stonehush/contracts";
@@ -18,11 +19,13 @@ import { latestActionSnapshot } from "./action-targets.js";
 import { engagementMutationMessage } from "./errors.js";
 import { type FfufDiscoveryInput, useLaunchFfufDiscoveryMutation } from "./ffuf-mutations.js";
 import { formatEngagementTimestamp } from "./format.js";
+import { isLauncherStoppable, isPathRowSelected, pathInspectorRecord, pathSelectionKey, PausedRunWarning, type ExtraRowActions } from "./inspector.js";
 import {
   engagementFfufResultsQueryKey,
   useEngagementDetailQuery,
   useEngagementFfufResultsQuery,
 } from "./query.js";
+import { copyTextToClipboard } from "./report-query.js";
 import { reportQueryKey } from "./report-query.js";
 
 const DEFAULT_MATCH_CODES = "200, 204, 301, 302, 307, 308, 401, 403";
@@ -53,9 +56,15 @@ function parseMatchCodes(raw: string): { ok: true; value: number[] } | { ok: fal
 export function EngagementFfufSection({
   archived,
   engagementId,
+  extraRowActions,
+  onSelectKey,
+  selectedKey,
 }: {
   archived: boolean;
   engagementId: string;
+  extraRowActions?: ExtraRowActions | undefined;
+  onSelectKey?: ((key: string) => void) | undefined;
+  selectedKey?: string | undefined;
 }) {
   const detail = useEngagementDetailQuery(engagementId);
   const hasDetail = detail.data !== undefined;
@@ -87,7 +96,12 @@ export function EngagementFfufSection({
             scopeRules={detail.data.activeScopeRevision?.rules ?? []}
           />
         ) : null}
-        <FfufResultsList engagementId={engagementId} />
+        <FfufResultsList
+          engagementId={engagementId}
+          extraRowActions={extraRowActions}
+          onSelectKey={onSelectKey}
+          selectedKey={selectedKey}
+        />
       </div>
     </section>
   );
@@ -178,7 +192,9 @@ function FfufDiscoveryBody({
 
   const trackLaunched = (action: PersistedAction) => {
     setResult(action);
-    setTrackedActionId(action.action.state === "queued" ? action.action.actionId : undefined);
+    setTrackedActionId(
+      isTerminalActionState(action.action.state) ? undefined : action.action.actionId,
+    );
   };
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -251,10 +267,7 @@ function FfufDiscoveryBody({
 
   const snapshot = displayAction !== undefined ? latestActionSnapshot(displayAction) : undefined;
   const terminal = displayAction !== undefined && isTerminalActionState(displayAction.action.state);
-  const stoppable =
-    displayAction !== undefined &&
-    !terminal &&
-    (displayAction.action.state === "queued" || displayAction.action.state === "active");
+  const stoppable = isLauncherStoppable(displayAction);
 
   const numericFields = [
     { id: `${formId}-rate`, label: "Rate", value: rate, onChange: setRate, field: "rate" },
@@ -358,9 +371,9 @@ function FfufDiscoveryBody({
         </div>
       </form>
 
-      {result?.action.state === "paused_for_warning" ? (
+      {displayAction?.action.state === "paused_for_warning" ? (
         <WarningCard
-          action={result}
+          action={displayAction}
           engagementId={engagementId}
           expectedEngagementRevision={expectedEngagementRevision}
           plannedTargets={[lastInputs?.origin ?? origin.trim()]}
@@ -371,7 +384,17 @@ function FfufDiscoveryBody({
         />
       ) : null}
 
-      {displayAction !== undefined && displayAction.action.state !== "paused_for_warning" ? (
+      {displayAction?.action.state === "active_paused_for_warning" ? (
+        <PausedRunWarning
+          action={displayAction}
+          engagementId={engagementId}
+          onContinued={trackLaunched}
+        />
+      ) : null}
+
+      {displayAction !== undefined &&
+      displayAction.action.state !== "paused_for_warning" &&
+      displayAction.action.state !== "active_paused_for_warning" ? (
         <p className="mt-4 mb-0 text-[13px] text-foreground" role="status">
           {actionLifecycleStatusCopy(displayAction.action)}{" "}
           <span className="font-mono text-[12px] text-muted-foreground">
@@ -384,7 +407,17 @@ function FfufDiscoveryBody({
   );
 }
 
-function FfufResultsList({ engagementId }: { engagementId: string }) {
+function FfufResultsList({
+  engagementId,
+  extraRowActions,
+  onSelectKey,
+  selectedKey,
+}: {
+  engagementId: string;
+  extraRowActions: ExtraRowActions | undefined;
+  onSelectKey: ((key: string) => void) | undefined;
+  selectedKey: string | undefined;
+}) {
   const resultsQuery = useEngagementFfufResultsQuery(engagementId);
   const hasData = resultsQuery.data !== undefined;
   const retry = () => void resultsQuery.refetch();
@@ -424,34 +457,104 @@ function FfufResultsList({ engagementId }: { engagementId: string }) {
   return (
     <ul className="m-0 grid list-none gap-2 p-0">
       {results.map((result) => (
-        <li
+        <FfufResultRow
           key={`${result.url}:${result.artifactId}`}
-          className="min-w-0 rounded-md border border-border px-3 py-2"
-        >
-          <div className="truncate font-mono text-[13px] font-semibold tracking-[-0.02em]" title={result.url}>
-            {result.url}
-          </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
-            <span>{result.status}</span>
-            <span>{result.length} bytes</span>
-            <span>{result.words} words</span>
-            <span>{result.lines} lines</span>
-            <span className="truncate" title={result.fuzz}>
-              {result.fuzz}
-            </span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-            <span className="font-mono">{formatEngagementTimestamp(result.observedAt)}</span>
-            <a
-              className="inline-flex min-h-11 items-center text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-              href={`/api/v1/engagements/${engagementId}/artifacts/${result.artifactId}/content`}
-              download
-            >
-              Raw evidence
-            </a>
-          </div>
-        </li>
+          engagementId={engagementId}
+          extraRowActions={extraRowActions}
+          onSelectKey={onSelectKey}
+          result={result}
+          selected={isPathRowSelected(result, selectedKey, results)}
+        />
       ))}
     </ul>
+  );
+}
+
+function FfufResultRow({
+  engagementId,
+  extraRowActions,
+  onSelectKey,
+  result,
+  selected,
+}: {
+  engagementId: string;
+  extraRowActions: ExtraRowActions | undefined;
+  onSelectKey: ((key: string) => void) | undefined;
+  result: FfufProjected;
+  selected: boolean;
+}) {
+  const [copied, setCopied] = useState<string | undefined>(undefined);
+  const key = pathSelectionKey(result.url, result.artifactId);
+  const copyValue = (label: string, value: string) => {
+    void copyTextToClipboard(value).then((ok) => {
+      if (ok) setCopied(label);
+    });
+  };
+  return (
+    <li
+      data-surface-row={key}
+      className="min-w-0 rounded-md border border-border px-3 py-2"
+    >
+      {onSelectKey === undefined ? (
+        <div className="truncate font-mono text-[13px] font-semibold tracking-[-0.02em]" title={result.url}>
+          {result.url}
+        </div>
+      ) : (
+        <button
+          type="button"
+          aria-current={selected ? "true" : undefined}
+          onClick={() => onSelectKey(key)}
+          className="block w-full truncate text-left font-mono text-[13px] font-semibold tracking-[-0.02em] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+          title={result.url}
+        >
+          {result.url}
+        </button>
+      )}
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-[11px] text-muted-foreground">
+        <span>{result.status}</span>
+        <span>{result.length} bytes</span>
+        <span>{result.words} words</span>
+        <span>{result.lines} lines</span>
+        <span className="truncate" title={result.fuzz}>
+          {result.fuzz}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+        <span className="font-mono">{formatEngagementTimestamp(result.observedAt)}</span>
+        <a
+          className="inline-flex min-h-11 items-center text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+          href={`/api/v1/engagements/${engagementId}/artifacts/${result.artifactId}/content`}
+          download
+        >
+          Raw evidence
+        </a>
+        {onSelectKey === undefined ? null : (
+          <button
+            type="button"
+            onClick={() => onSelectKey(key)}
+            className="inline-flex min-h-11 items-center text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+          >
+            Inspect
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={() => copyValue("copy", result.url)}
+          className="inline-flex min-h-11 items-center text-[12px] font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+        >
+          {copied === "copy" ? "Copied" : "Copy"}
+        </button>
+        <button
+          type="button"
+          onClick={() => copyValue("note", pathInspectorRecord(result, engagementId).noteReference)}
+          className="inline-flex min-h-11 items-center text-[12px] font-medium outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+        >
+          {copied === "note" ? "Copied" : "Copy note reference"}
+        </button>
+        {extraRowActions === undefined ? null : (
+          <span>{extraRowActions({ kind: "path", key, title: result.url, target: result.url })}</span>
+        )}
+      </div>
+    </li>
   );
 }
