@@ -24,11 +24,16 @@ import type {
   RunOutputRepository,
 } from "@stonehush/db";
 import {
+  ADVISOR_REDACTION_TOKEN,
   byteOffsetOfCharOffset,
   deriveAttachmentName,
+  EXCERPT_REDACTION_CONTEXT_BYTES,
+  EXCERPT_REDACTION_CONTEXT_CHARS,
+  EXCERPT_SNIPPET_RADIUS_CHARS,
   findTextMatches,
   isCropRectValid,
-  maskExcerptText,
+  projectMaskedSelection,
+  selectionStartsMidToken,
   validateExcerptRange,
   windowSnippetFromChars,
 } from "@stonehush/domain";
@@ -106,6 +111,32 @@ async function engagementWriteGate(
 const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
 const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true });
 
+// Longest strict-UTF-8 prefix of a bounded scan cut. A budget cut can land
+// mid-code-point; the trailing partial sequence is an incomplete read edge,
+// not malformed source, so drop up to 3 trailing bytes (the longest
+// possible incomplete sequence) instead of discarding valid matches.
+// Genuinely invalid bytes match no trim and yield an empty prefix, which
+// callers skip with scanCapped set.
+export function completeUtf8Prefix(bytes: Buffer): Buffer {
+  if (bytes.length === 0) return bytes;
+  try {
+    utf8StrictDecoder.decode(bytes);
+    return bytes;
+  } catch {
+    // Fall through to trailing trims below.
+  }
+  for (let drop = 1; drop <= 3 && drop <= bytes.length; drop += 1) {
+    const candidate = bytes.subarray(0, bytes.length - drop);
+    try {
+      utf8StrictDecoder.decode(candidate);
+      return candidate;
+    } catch {
+      // Try a shorter prefix.
+    }
+  }
+  return Buffer.alloc(0);
+}
+
 function sha256Digest(bytes: Buffer): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -166,36 +197,57 @@ export function registerExcerptRoutes(
     );
     if (!range.ok) return sendExcerptError(reply, 400, "range_rejected");
 
-    let bytes: Awaited<ReturnType<EvidenceStore["verifiedByteRange"]>>;
+    // Redaction sees a bounded window around the requested slice, never just
+    // the slice. Masking `supersecret` alone cannot recognize it as part of
+    // `flag{supersecret}`; the wrappers live in the surrounding bytes. One
+    // verified read covers prefix, selection, and suffix, so no extra
+    // verification cost and no bytes reach the client beyond the masked
+    // slice. The window stays server side; provenance still records exactly
+    // the requested offsets.
+    const contextStart = Math.max(0, body.data.byteOffset - EXCERPT_REDACTION_CONTEXT_BYTES);
+    const contextEnd = Math.min(
+      artifact.sizeBytes,
+      body.data.byteOffset + body.data.byteLength + EXCERPT_REDACTION_CONTEXT_BYTES,
+    );
+    let expanded: Awaited<ReturnType<EvidenceStore["verifiedByteRange"]>>;
     try {
-      bytes = await store.verifiedByteRange({
+      expanded = await store.verifiedByteRange({
         artifactId: artifact.artifactId,
         expectedSizeBytes: artifact.sizeBytes,
         expectedDigest: artifact.digest,
-        byteOffset: body.data.byteOffset,
-        byteLength: body.data.byteLength,
+        byteOffset: contextStart,
+        byteLength: contextEnd - contextStart,
       });
     } catch {
       return sendExcerptError(reply, 409, "corrupt_artifact");
     }
-    if (bytes.status === "missing") return sendExcerptError(reply, 409, "missing_artifact");
-    if (bytes.status === "corrupt") return sendExcerptError(reply, 409, "corrupt_artifact");
+    if (expanded.status === "missing") return sendExcerptError(reply, 409, "missing_artifact");
+    if (expanded.status === "corrupt") return sendExcerptError(reply, 409, "corrupt_artifact");
 
-    // The write gate must hold at commit time, not just at request start. The
-    // verified byte read above awaits I/O, so an archive could land in
-    // between. Re-check synchronously here; the insert below is synchronous
-    // with no await in between, so no interleave remains in this process.
-    const commitGate = await engagementWriteGate(
-      reply,
-      engagements,
-      params.data.engagementId,
-      sendExcerptError,
+    // Decode pieces separately so the requested char range needs no byte
+    // map: concatenating the three decodes keeps requested coordinates
+    // exact even beside malformed input, where re-encoding would drift.
+    const relativeOffset = body.data.byteOffset - contextStart;
+    const prefixText = utf8Decoder.decode(expanded.content.subarray(0, relativeOffset));
+    const requestedText = utf8Decoder.decode(
+      expanded.content.subarray(relativeOffset, relativeOffset + body.data.byteLength),
     );
-    if (!commitGate.ok) return reply;
-
-    // Mask before persistence. The stored excerpt never carries raw secret
-    // values, and the response carries the same masked text.
-    const masked = maskExcerptText(utf8Decoder.decode(bytes.content));
+    const suffixText = utf8Decoder.decode(
+      expanded.content.subarray(relativeOffset + body.data.byteLength),
+    );
+    const expandedText = prefixText + requestedText + suffixText;
+    const requestedStartChars = Array.from(prefixText).length;
+    const requestedLengthChars = Array.from(requestedText).length;
+    // A cut lookback that ends mid-token cannot prove the selection starts
+    // at a safe boundary: a secret prefix may sit beyond the window. Reject
+    // instead of persisting a possible inner secret slice.
+    if (contextStart > 0 && selectionStartsMidToken(prefixText, requestedText)) {
+      return sendExcerptError(reply, 400, "range_rejected");
+    }
+    // Mask before persistence. Spans found in the expanded context project
+    // onto the selection, so inner secret bytes stay masked. Selections with
+    // no overlap come back identical to narrow masking.
+    const masked = projectMaskedSelection(expandedText, requestedStartChars, requestedLengthChars);
     const created = excerpts.createExcerpt({
       engagementId: params.data.engagementId,
       runId: body.data.runId,
@@ -211,6 +263,9 @@ export function registerExcerptRoutes(
     if (!created.ok) {
       if (created.error.code === "engagement_not_found") {
         return sendExcerptError(reply, 404, "engagement_not_found");
+      }
+      if (created.error.code === "engagement_archived") {
+        return sendExcerptError(reply, 409, "engagement_archived");
       }
       return sendExcerptError(
         reply,
@@ -406,28 +461,57 @@ export function registerExcerptRoutes(
           // leaving the stream suspended.
           await download.stream.return?.(undefined);
         }
-        searchedBytes += taken;
         if (taken < download.sizeBytes) scanCapped = true;
-        const prefix = Buffer.concat(chunks);
-        // Byte offsets are computed by re-encoding decoded text. When the
-        // source bytes are not valid UTF-8, a replacement character occupies
-        // one source byte but three re-encoded bytes, so offsets would point
-        // at other evidence. Reject the unsafe mapping: count the bytes,
-        // mark the scan incomplete so absence is never misread as proof of
-        // absence, and return no matches for this artifact. Original bytes
-        // are preserved untouched.
-        try {
-          utf8StrictDecoder.decode(prefix);
-        } catch {
-          scanCapped = true;
-          continue;
-        }
+        const rawPrefix = Buffer.concat(chunks);
+        // A budget cut can end mid-code-point; keep the complete prefix
+        // searchable instead of discarding the whole artifact. Only the
+        // complete bytes count as searched.
+        const prefix = completeUtf8Prefix(rawPrefix);
+        if (prefix.length < rawPrefix.length) scanCapped = true;
+        if (prefix.length === 0) continue;
+        searchedBytes += prefix.length;
         const text = utf8Decoder.decode(prefix);
         const hits = findTextMatches(text, query.data.q, query.data.limit - matches.length);
         const points = Array.from(text);
         for (const hit of hits) {
-          const window = windowSnippetFromChars(text, hit.charOffset, hit.charLength);
-          const masked = maskExcerptText(window.snippet);
+          // Snippets reuse the excerpt projection over surrounding scanned
+          // text, never narrow masking: a window cut can strip the same
+          // wrappers an excerpt selection would lose.
+          const winStart = Math.max(0, hit.charOffset - EXCERPT_SNIPPET_RADIUS_CHARS);
+          const winEnd = Math.min(
+            points.length,
+            hit.charOffset + hit.charLength + EXCERPT_SNIPPET_RADIUS_CHARS,
+          );
+          const ctxStart = Math.max(0, winStart - EXCERPT_REDACTION_CONTEXT_CHARS);
+          const ctxEnd = Math.min(points.length, winEnd + EXCERPT_REDACTION_CONTEXT_CHARS);
+          const ctxText = points.slice(ctxStart, ctxEnd).join("");
+          const cutLeft = ctxStart > 0;
+          const cutRight = ctxEnd < points.length || taken < download.sizeBytes;
+          const edgeLeft =
+            cutLeft &&
+            selectionStartsMidToken(
+              points[ctxStart - 1] ?? "",
+              points[ctxStart] ?? "",
+            );
+          const edgeRight =
+            cutRight &&
+            selectionStartsMidToken(
+              points[ctxEnd - 1] ?? "",
+              points[ctxEnd] ?? "",
+            );
+          let snippet: string;
+          let redactions: number;
+          if (edgeLeft || edgeRight) {
+            // A secret value may continue past the visible context edge.
+            // Mask the whole snippet rather than risk a partial leak.
+            snippet = `${winStart > 0 ? "..." : ""}${ADVISOR_REDACTION_TOKEN}${winEnd < points.length ? "..." : ""}`;
+            redactions = 1;
+          } else {
+            const window = windowSnippetFromChars(text, hit.charOffset, hit.charLength);
+            const projected = projectMaskedSelection(ctxText, winStart - ctxStart, winEnd - winStart);
+            snippet = `${window.truncatedBefore ? "..." : ""}${projected.text}${window.truncatedAfter ? "..." : ""}`;
+            redactions = projected.redactions;
+          }
           matches.push({
             artifactId: candidate.artifactId,
             stream: candidate.kind as "stdout" | "stderr",
@@ -436,8 +520,8 @@ export function registerExcerptRoutes(
               points.slice(hit.charOffset, hit.charOffset + hit.charLength).join(""),
               "utf8",
             ),
-            snippet: masked.text,
-            redactions: masked.redactions,
+            snippet,
+            redactions,
           });
         }
       }

@@ -35,6 +35,11 @@ export interface AdvisorRedaction {
   readonly redactions: number;
 }
 
+export interface AdvisorSecretSpan {
+  readonly start: number;
+  readonly end: number;
+}
+
 function countMatches(pattern: RegExp, value: string): number {
   pattern.lastIndex = 0;
   const matches = value.match(pattern);
@@ -70,6 +75,52 @@ export function redactAdvisorText(value: string): AdvisorRedaction {
     (_match: string, name: string) => `${name}: ${ADVISOR_REDACTION_TOKEN}`,
   );
   return { text, redactions };
+}
+
+// Secret span locations for the same policy above, in UTF-16 offsets.
+// Masking a narrow slice alone misses secrets whose wrappers fall outside
+// the slice (for example keeping only `supersecret` out of
+// `flag{supersecret}`). Callers redact a bounded expanded context, locate
+// spans with this helper, and project the overlapping spans onto the
+// requested range, so inner selections stay masked. Spans merge when they
+// touch, so one contiguous secret region counts once. Fresh RegExp objects
+// keep the shared module patterns free of lastIndex races.
+export function findAdvisorSecretSpans(value: string): AdvisorSecretSpan[] {
+  const sources: RegExp[] = [
+    PRIVATE_KEY_BLOCK_PATTERN,
+    PRIVATE_KEY_BEGIN_PATTERN,
+    FLAG_PATTERN,
+    SECRET_KEY_PATTERN,
+    BEARER_PATTERN,
+    CREDENTIAL_ASSIGNMENT_PATTERN,
+    URL_USERINFO_PATTERN,
+  ];
+  const spans: { start: number; end: number }[] = [];
+  for (const source of sources) {
+    const pattern = new RegExp(source.source, source.flags);
+    for (;;) {
+      const found = pattern.exec(value);
+      if (found === null) break;
+      if (found[0].length === 0) {
+        pattern.lastIndex += 1;
+        continue;
+      }
+      spans.push({ start: found.index, end: found.index + found[0].length });
+    }
+  }
+  spans.sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: AdvisorSecretSpan[] = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && span.start <= last.end) {
+      if (span.end > last.end) {
+        merged[merged.length - 1] = { start: last.start, end: span.end };
+      }
+    } else {
+      merged.push({ start: span.start, end: span.end });
+    }
+  }
+  return merged;
 }
 
 // Strip userinfo (credentials) from every http(s) URL occurrence, embedded or

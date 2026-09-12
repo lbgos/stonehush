@@ -15,6 +15,7 @@ type Database = BetterSQLite3Database<typeof schema>;
 
 export type ExcerptRepositoryError =
   | { code: "engagement_not_found" }
+  | { code: "engagement_archived" }
   | { code: "excerpt_not_found" }
   | { code: "attachment_not_found" }
   | { code: "invalid_repository_input" }
@@ -150,35 +151,49 @@ export class ExcerptRepository {
   }
 
   createExcerpt(input: CreateExcerptInput): ExcerptResult<Excerpt> {
+    const row = {
+      id: this.createId(),
+      contractVersion: 1,
+      engagementId: input.engagementId,
+      runId: input.runId,
+      artifactId: input.artifactId,
+      artifactDigest: input.artifactDigest,
+      stream: input.stream,
+      byteOffset: input.byteOffset,
+      byteLength: input.byteLength,
+      content: input.content,
+      redactions: input.redactions,
+      targetNote: input.targetNote,
+      createdAt: this.now().toISOString(),
+    } as const;
+    // Validate before inserting so contract-invalid values (for example an
+    // empty runId) fail closed instead of persisting a row that later list
+    // and get calls reject as invalid data.
+    if (!ExcerptSchema.safeParse({ ...row }).success) {
+      return { ok: false, error: { code: "invalid_repository_input" } };
+    }
+    // The archived check and the insert run in one immediate transaction so
+    // an archive racing this write cannot slip between a separate gate read
+    // and the insert, on any connection. Reads stay available on archived
+    // engagements; only this insert path refuses them.
     try {
-      if (!this.engagementExists(input.engagementId)) {
-        return { ok: false, error: { code: "engagement_not_found" } };
-      }
-      const row = {
-        id: this.createId(),
-        contractVersion: 1,
-        engagementId: input.engagementId,
-        runId: input.runId,
-        artifactId: input.artifactId,
-        artifactDigest: input.artifactDigest,
-        stream: input.stream,
-        byteOffset: input.byteOffset,
-        byteLength: input.byteLength,
-        content: input.content,
-        redactions: input.redactions,
-        targetNote: input.targetNote,
-        createdAt: this.now().toISOString(),
-      } as const;
-      // Validate before inserting so contract-invalid values (for example an
-      // empty runId) fail closed instead of persisting a row that later list
-      // and get calls reject as invalid data.
-      if (!ExcerptSchema.safeParse({ ...row }).success) {
-        return { ok: false, error: { code: "invalid_repository_input" } };
-      }
-      this.db.insert(evidenceExcerpts).values(row).run();
-      const excerpt = excerptFromRow({ ...row });
-      if (excerpt === undefined) return { ok: false, error: { code: "invalid_repository_input" } };
-      return { ok: true, value: excerpt };
+      return this.db.transaction((client) => {
+        const engagement = client
+          .select({ status: engagements.status })
+          .from(engagements)
+          .where(eq(engagements.id, input.engagementId))
+          .get();
+        if (engagement === undefined) {
+          return { ok: false as const, error: { code: "engagement_not_found" as const } };
+        }
+        if (engagement.status === "archived") {
+          return { ok: false as const, error: { code: "engagement_archived" as const } };
+        }
+        client.insert(evidenceExcerpts).values(row).run();
+        const excerpt = excerptFromRow({ ...row });
+        if (excerpt === undefined) return { ok: false as const, error: { code: "invalid_repository_input" as const } };
+        return { ok: true as const, value: excerpt };
+      }, { behavior: "immediate" });
     } catch (error) {
       return { ok: false, error: storageError(error) };
     }

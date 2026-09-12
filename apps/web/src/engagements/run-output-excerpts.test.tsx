@@ -240,6 +240,88 @@ describe("run output fast capture", () => {
     });
   });
 
+  it("resolves the latest failed run across history pages instead of guessing", async () => {
+    // The 409 from the latest-output endpoint carries no run id. History is
+    // newest-created first, so the first page holds only queued runs plus an
+    // older completed decoy; the true latest terminal run sits on page two.
+    // Picking the first terminal row would show the decoy's reference.
+    const queued = (id: string) => ({
+      id,
+      actionId: "action-1",
+      state: "queued",
+      terminalKind: null,
+      terminalReason: null,
+      updatedAt: "2026-08-14T12:00:00.000Z",
+      createdAt: "2026-08-14T12:00:00.000Z",
+      attempt: 1,
+    });
+    const decoy = {
+      id: "run-decoy",
+      actionId: "action-1",
+      state: "succeeded",
+      terminalKind: "succeeded",
+      terminalReason: null,
+      updatedAt: "2026-08-10T12:00:00.000Z",
+      createdAt: "2026-08-13T12:00:00.000Z",
+      attempt: 1,
+    };
+    const latest = {
+      id: "run-old",
+      actionId: "action-1",
+      state: "failed",
+      terminalKind: "failed",
+      terminalReason: null,
+      updatedAt: "2026-08-12T12:00:00.000Z",
+      createdAt: "2026-08-11T12:00:00.000Z",
+      attempt: 1,
+    };
+    stubFetch(async (url) => {
+      if (url === "/api/v1/engagements") return response(engagementList());
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
+      if (url.endsWith("/services")) return response([]);
+      if (url.endsWith("/runs/latest/output")) return response({ code: "missing_artifact" }, 409);
+      if (url.includes(`/api/v1/engagements/${ENGAGEMENT_ID}/runs?`)) {
+        if (url.includes("before=")) return response({ runs: [latest], nextCursor: null });
+        return response({ runs: [...Array.from({ length: 24 }, (_, index) => queued(`run-queued-${index}`)), decoy], nextCursor: "cursor-1" });
+      }
+      if (url.endsWith("/runs/run-old/excerpt-sources")) {
+        return response([
+          {
+            artifactId: "artifact-stdout",
+            kind: "stdout",
+            sizeBytes: 128,
+            digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            completeness: "complete",
+          },
+        ]);
+      }
+      if (url.endsWith("/runs/run-decoy/excerpt-sources")) {
+        return response([
+          {
+            artifactId: "artifact-decoy",
+            kind: "stdout",
+            sizeBytes: 64,
+            digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            completeness: "complete",
+          },
+        ]);
+      }
+      if (url === "/api/v1/system/status") {
+        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+
+    await renderAt(`/engagements/${ENGAGEMENT_ID}?tab=runs`);
+    fireEvent.click(screen.getByRole("tab", { name: "Raw output" }));
+    await waitFor(() => {
+      expect(screen.getByText("Raw output unavailable")).toBeTruthy();
+    });
+    // The panel shows the true latest terminal run, not the decoy.
+    expect(await screen.findByText(/artifact-stdout/)).toBeTruthy();
+    expect(screen.queryByText(/artifact-decoy/)).toBeNull();
+  });
+
   it("labels Add to lead as a future action until STONE-4", async () => {
     stubFetch(async (url, init) => {
       if (url === "/api/v1/engagements") return response(engagementList());

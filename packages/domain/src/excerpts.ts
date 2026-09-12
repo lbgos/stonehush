@@ -1,4 +1,4 @@
-import { redactAdvisorText } from "./advisor-redact.js";
+import { ADVISOR_REDACTION_TOKEN, findAdvisorSecretSpans, redactAdvisorText } from "./advisor-redact.js";
 import type { Excerpt } from "@stonehush/contracts";
 
 /**
@@ -11,6 +11,15 @@ import type { Excerpt } from "@stonehush/contracts";
 
 export const EXCERPT_RANGE_MAX_BYTES = 8_192 as const;
 export const EXCERPT_SNIPPET_RADIUS_CHARS = 160 as const;
+// Bytes of original evidence read on each side of a requested excerpt range
+// so redaction sees secret wrappers the selection alone would strip. 8192
+// covers the widest bounded policy shape (4096-char key blocks plus
+// markers) with margin; unbounded token values rely on the token-continuity
+// check below when this window is cut short of the artifact edge.
+export const EXCERPT_REDACTION_CONTEXT_BYTES = 8_192 as const;
+// Chars of already-scanned output kept on each side of a search snippet for
+// the same purpose. Snippets reuse this projection, never narrow masking.
+export const EXCERPT_REDACTION_CONTEXT_CHARS = 8_192 as const;
 
 export function validateExcerptRange(
   totalBytes: number,
@@ -86,6 +95,90 @@ export interface MaskedExcerptText {
 export function maskExcerptText(value: string): MaskedExcerptText {
   const result = redactAdvisorText(value);
   return { text: result.text, redactions: result.redactions };
+}
+
+// Characters that can continue a secret token value (bearer material, sk
+// values, base64 key bodies, long hashes). Pattern syntax such as braces,
+// quotes, whitespace, and replacement characters are not in this class, so
+// they always count as boundaries.
+const SECRET_CONTINUATION_PATTERN = /^[A-Za-z0-9\-_.~+/=]$/;
+
+export function isSecretContinuationChar(char: string): boolean {
+  return SECRET_CONTINUATION_PATTERN.test(char);
+}
+
+// True when a truncated lookback cannot prove the selection starts at a
+// safe boundary: the char before the selection and the first selected char
+// are both token characters, so a secret prefix (for example `bearer ` or
+// `sk-`) may sit beyond the visible window. Callers reject the range rather
+// than risk persisting an inner slice of a secret value.
+export function selectionStartsMidToken(prefixText: string, requestedText: string): boolean {
+  const prefixPoints = Array.from(prefixText);
+  const requestedPoints = Array.from(requestedText);
+  if (prefixPoints.length === 0 || requestedPoints.length === 0) return false;
+  const before = prefixPoints[prefixPoints.length - 1];
+  const first = requestedPoints[0];
+  if (before === undefined || first === undefined) return false;
+  return isSecretContinuationChar(before) && isSecretContinuationChar(first);
+}
+
+export interface SelectionMaskProjection {
+  readonly text: string;
+  readonly redactions: number;
+  readonly overlapped: boolean;
+}
+
+// Masks a requested char range using secret spans found in a wider expanded
+// context. Offsets are code points, matching findTextMatches and theSnippet
+// windowing. Non-overlapping selections come back byte-identical to narrow
+// masking; overlapping ones keep ordinary prefix and suffix text while each
+// contiguous secret overlap becomes one redaction token. Never invents
+// bytes: output derives only from the requested substring.
+export function projectMaskedSelection(
+  expandedText: string,
+  requestedStart: number,
+  requestedLength: number,
+): SelectionMaskProjection {
+  const points = Array.from(expandedText);
+  const start = Math.max(0, requestedStart);
+  const end = Math.min(points.length, start + Math.max(0, requestedLength));
+  const requestedPoints = points.slice(start, end);
+  const requestedText = requestedPoints.join("");
+  const toCodePoints = (utf16: number): number =>
+    Array.from(expandedText.slice(0, Math.max(0, utf16))).length;
+  const overlaps: { start: number; end: number }[] = [];
+  for (const span of findAdvisorSecretSpans(expandedText)) {
+    const spanStart = toCodePoints(span.start);
+    const spanEnd = toCodePoints(span.end);
+    const clipStart = Math.max(spanStart, start) - start;
+    const clipEnd = Math.min(spanEnd, end) - start;
+    if (clipEnd > clipStart) overlaps.push({ start: clipStart, end: clipEnd });
+  }
+  if (overlaps.length === 0) {
+    const narrow = redactAdvisorText(requestedText);
+    return { text: narrow.text, redactions: narrow.redactions, overlapped: false };
+  }
+  let text = "";
+  let redactions = 0;
+  let cursor = 0;
+  for (const region of overlaps) {
+    if (region.start > cursor) {
+      const plain = requestedPoints.slice(cursor, region.start).join("");
+      const masked = redactAdvisorText(plain);
+      text += masked.text;
+      redactions += masked.redactions;
+    }
+    text += ADVISOR_REDACTION_TOKEN;
+    redactions += 1;
+    cursor = region.end;
+  }
+  if (cursor < requestedPoints.length) {
+    const plain = requestedPoints.slice(cursor).join("");
+    const masked = redactAdvisorText(plain);
+    text += masked.text;
+    redactions += masked.redactions;
+  }
+  return { text, redactions, overlapped: true };
 }
 
 export interface TextMatch {

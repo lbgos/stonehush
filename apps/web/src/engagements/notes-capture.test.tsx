@@ -3,13 +3,14 @@
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
 
 const ENGAGEMENT_ID = "10000000-0000-4000-8000-000000000001";
+const ENGAGEMENT_B_ID = "10000000-0000-4000-8000-000000000002";
 
 const activeEngagement = {
   contractVersion: 1,
@@ -243,5 +244,268 @@ describe("notes image capture", () => {
     expect(
       (screen.getByLabelText("Caption for admin-login-as-sa") as HTMLInputElement).value,
     ).toBe("edited caption");
+  });
+
+  it("ignores a stale attachment reload after navigating engagements", async () => {
+    // Black-box isolation: the notes section remounts per engagement
+    // (keyed in the workspace), so React already discards A's late update;
+    // the reload engagement check pins the invariant even if that key ever
+    // goes away.
+    const engagementB = { ...activeEngagement, id: ENGAGEMENT_B_ID, name: "Second lab" };
+    const fileA = {
+      ...savedAttachment(),
+      id: "20000000-0000-4000-8000-0000000000a1",
+      engagementId: ENGAGEMENT_ID,
+      filename: "file-a",
+    };
+    const fileB = {
+      ...savedAttachment(),
+      id: "20000000-0000-4000-8000-0000000000b1",
+      engagementId: ENGAGEMENT_B_ID,
+      filename: "file-b",
+    };
+    let attachmentGetsA = 0;
+    let resolveReload: ((value: Response) => void) | undefined;
+    const reloadGate = new Promise<Response>((resolve) => {
+      resolveReload = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
+        if (url === "/api/v1/engagements") {
+          return Promise.resolve(response([activeEngagement, engagementB]));
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
+          return Promise.resolve(
+            response({ engagement: activeEngagement, activeScopeRevision: null }),
+          );
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}`) {
+          return Promise.resolve(response({ engagement: engagementB, activeScopeRevision: null }));
+        }
+        if (url.endsWith("/services")) return Promise.resolve(response([]));
+        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
+          return Promise.resolve(
+            response({
+              engagementId: url.includes(ENGAGEMENT_B_ID) ? ENGAGEMENT_B_ID : ENGAGEMENT_ID,
+              markdown: "",
+              updatedAt: "2026-08-12T12:00:00.000Z",
+              revision: 0,
+            }),
+          );
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments`) {
+          attachmentGetsA += 1;
+          // First load fails so the Retry button appears; the retry hangs.
+          if (attachmentGetsA === 1) return Promise.reject(new Error("offline"));
+          return reloadGate;
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}/attachments`) {
+          return Promise.resolve(response([fileB]));
+        }
+        return Promise.resolve(response([]));
+      }),
+    );
+
+    const history = createMemoryHistory({ initialEntries: [`/engagements/${ENGAGEMENT_ID}?tab=notes`] });
+    const router = createAppRouter(history);
+    await router.load();
+    const queryClient = createAppQueryClient();
+    testQueryClients.add(queryClient);
+    render(
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    await screen.findByLabelText("Markdown");
+    // Initial load failed; retry hangs until the test releases it. Scope to
+    // the attachment panel: other tabs render their own retry actions.
+    const loadFailure = await screen.findByText("Attached images could not be loaded.");
+    const retryButton = within(loadFailure.closest("div") as HTMLElement).getByRole("button", {
+      name: "Retry",
+    });
+    fireEvent.click(retryButton);
+    await waitFor(() => expect(attachmentGetsA).toBe(2));
+
+    // Navigate to B while A's retry is in flight, then let A resolve.
+    await act(async () => {
+      history.push(`/engagements/${ENGAGEMENT_B_ID}?tab=notes`);
+    });
+    expect(await screen.findByText(/file-b/)).toBeTruthy();
+    await act(async () => {
+      resolveReload?.(response([fileA]));
+    });
+
+    // B keeps its own rows; A's late rows never merge in.
+    expect(screen.queryByText(/file-a/)).toBeNull();
+    expect(screen.getByText(/file-b/)).toBeTruthy();
+  });
+
+  it("ignores a stale derived copy after navigating engagements", async () => {
+    // Same isolation contract as above, for caption saves and derived
+    // copies resolving after unmount.
+    const engagementB = { ...activeEngagement, id: ENGAGEMENT_B_ID, name: "Second lab" };
+    const fileA = {
+      ...savedAttachment(),
+      id: "20000000-0000-4000-8000-0000000000a1",
+      engagementId: ENGAGEMENT_ID,
+      filename: "file-a",
+    };
+    const childA = {
+      ...savedAttachment(),
+      id: "20000000-0000-4000-8000-0000000000a2",
+      engagementId: ENGAGEMENT_ID,
+      filename: "child-a",
+      parentAttachmentId: fileA.id,
+      crop: { x: 0, y: 0, width: 100, height: 60 },
+    };
+    let resolveDerive: ((value: Response) => void) | undefined;
+    const deriveGate = new Promise<Response>((resolve) => {
+      resolveDerive = resolve;
+    });
+    const attachmentGets: string[] = [];
+    const derivePosts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
+        if (url === "/api/v1/engagements") {
+          return Promise.resolve(response([activeEngagement, engagementB]));
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
+          return Promise.resolve(
+            response({ engagement: activeEngagement, activeScopeRevision: null }),
+          );
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}`) {
+          return Promise.resolve(response({ engagement: engagementB, activeScopeRevision: null }));
+        }
+        if (url.endsWith("/services")) return Promise.resolve(response([]));
+        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
+          return Promise.resolve(
+            response({
+              engagementId: url.includes(ENGAGEMENT_B_ID) ? ENGAGEMENT_B_ID : ENGAGEMENT_ID,
+              markdown: "",
+              updatedAt: "2026-08-12T12:00:00.000Z",
+              revision: 0,
+            }),
+          );
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments`) {
+          return Promise.resolve(response([fileA]));
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}/attachments`) {
+          attachmentGets.push(url);
+          return Promise.resolve(response([]));
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments/${fileA.id}/derived`) {
+          derivePosts.push(url);
+          return deriveGate;
+        }
+        return Promise.resolve(response([]));
+      }),
+    );
+
+    const history = createMemoryHistory({ initialEntries: [`/engagements/${ENGAGEMENT_ID}?tab=notes`] });
+    const router = createAppRouter(history);
+    await router.load();
+    const queryClient = createAppQueryClient();
+    testQueryClients.add(queryClient);
+    render(
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    await screen.findByLabelText("Markdown");
+    fireEvent.click(await screen.findByRole("button", { name: "Create cropped copy" }));
+    // The crop POST must actually be in flight before navigating, or the
+    // stale-completion assertions below prove nothing.
+    await waitFor(() => expect(derivePosts.length).toBe(1));
+    await act(async () => {
+      history.push(`/engagements/${ENGAGEMENT_B_ID}?tab=notes`);
+    });
+    // B's own list loaded empty; A's card is gone.
+    await waitFor(() => expect(attachmentGets.length).toBeGreaterThan(0));
+    expect(screen.queryByText(/file-a/)).toBeNull();
+    await act(async () => {
+      resolveDerive?.(response(childA, 201));
+    });
+    // A's late child never appears under B.
+    expect(screen.queryByText(/child-a/)).toBeNull();
+    expect(screen.queryByText(/file-a/)).toBeNull();
+  });
+
+  it("keeps a just-saved caption when a stale initial fetch resolves after it", async () => {
+    // Same engagement, no navigation: the initial list fetch starts first
+    // but resolves after an upload already saved a newer caption for the
+    // same row. Merging must not clobber the newer caption with the stale
+    // copy.
+    const fresh = { ...savedAttachment(), caption: "just saved" };
+    const stale = { ...savedAttachment(), caption: "old" };
+    let resolveInitial: ((value: Response) => void) | undefined;
+    const initialGate = new Promise<Response>((resolve) => {
+      resolveInitial = resolve;
+    });
+    let initialCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
+        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
+          return Promise.resolve(
+            response({ engagement: activeEngagement, activeScopeRevision: null }),
+          );
+        }
+        if (url.endsWith("/services")) return Promise.resolve(response([]));
+        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
+          return Promise.resolve(
+            response({
+              engagementId: ENGAGEMENT_ID,
+              markdown: "",
+              updatedAt: "2026-08-12T12:00:00.000Z",
+              revision: 0,
+            }),
+          );
+        }
+        if (url.endsWith("/attachments") && init?.method === "POST") {
+          return Promise.resolve(response(fresh, 201));
+        }
+        if (url.endsWith("/attachments")) {
+          initialCalls += 1;
+          return initialGate;
+        }
+        return Promise.resolve(response([]));
+      }),
+    );
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByLabelText("Markdown");
+
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [new File([PNG_BYTES], "login.png", { type: "image/png" })] } });
+    await screen.findByLabelText("Proves (names the file)");
+    fireEvent.change(screen.getByLabelText("Caption"), { target: { value: "just saved" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save image" }));
+    // The upload lands while the initial list fetch is still in flight.
+    await screen.findByLabelText("Caption for admin-login-as-sa");
+    expect(initialCalls).toBe(1);
+
+    await act(async () => {
+      resolveInitial?.(response([stale]));
+    });
+    // The newer caption survives the stale fetch. The card image alt comes
+    // straight from list state (unlike the caption input, which keeps local
+    // edits), so it observes the merge result directly.
+    expect(screen.getByAltText("just saved")).toBeTruthy();
+    expect(screen.queryByAltText("old")).toBeNull();
   });
 });

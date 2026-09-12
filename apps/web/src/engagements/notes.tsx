@@ -490,12 +490,15 @@ function NoteAttachmentsSection({
   const engagementIdRef = useRef(engagementId);
   engagementIdRef.current = engagementId;
 
-  // Union by id so a slow initial fetch never drops an attachment an upload
-  // just added. Server rows win on conflicts; order stays by creation.
+  // Union by id so a slow fetch never drops a row newer state already
+  // holds. Local rows win id conflicts: caption saves and uploads land
+  // through onChanged and onDerived with fresh server data, so a reload
+  // that started before them must not overwrite newer captions with stale
+  // copies. Order stays by creation.
   const mergeAttachmentRows = (current: Attachment[] | undefined, incoming: Attachment[]) => {
     const byId = new Map<string, Attachment>();
-    for (const row of current ?? []) byId.set(row.id, row);
     for (const row of incoming) byId.set(row.id, row);
+    for (const row of current ?? []) byId.set(row.id, row);
     return [...byId.values()].sort((left, right) =>
       left.createdAt === right.createdAt
         ? (left.id < right.id ? -1 : 1)
@@ -636,10 +639,20 @@ function NoteAttachmentsSection({
   };
 
   const reload = () => {
+    // Like the initial load, a manual retry belongs to the engagement that
+    // started it. Navigation (including A-B-A) before it resolves must not
+    // merge A's rows or errors into B.
+    const startedEngagementId = engagementIdRef.current;
     setLoadError(false);
-    void fetchAttachments(engagementId)
-      .then((rows) => setAttachments((current) => mergeAttachmentRows(current, rows)))
-      .catch(() => setLoadError(true));
+    void fetchAttachments(startedEngagementId)
+      .then((rows) => {
+        if (engagementIdRef.current !== startedEngagementId) return;
+        setAttachments((current) => mergeAttachmentRows(current, rows));
+      })
+      .catch(() => {
+        if (engagementIdRef.current !== startedEngagementId) return;
+        setLoadError(true);
+      });
   };
 
   return (
@@ -773,12 +786,21 @@ function NoteAttachmentsSection({
           archived={archived}
           engagementId={engagementId}
           attachment={attachment}
-          onChanged={(next) =>
+          onChanged={(next) => {
+            // Caption saves resolve after unmount when the operator
+            // navigates mid-request. The child carries its own engagement,
+            // so a late A completion never rewrites B rows.
+            if (next.engagementId !== engagementIdRef.current) return;
             setAttachments((current) =>
               (current ?? []).map((row) => (row.id === next.id ? next : row)),
-            )
-          }
-          onDerived={(child) => setAttachments((current) => [...(current ?? []), child])}
+            );
+          }}
+          onDerived={(child) => {
+            // Same guard for derived copies: A's child must not appear
+            // under B after navigation.
+            if (child.engagementId !== engagementIdRef.current) return;
+            setAttachments((current) => mergeAttachmentRows(current, [child]));
+          }}
           onInsert={onInsert}
         />
       ))}

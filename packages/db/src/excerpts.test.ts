@@ -155,6 +155,38 @@ describe("excerpt persistence", () => {
     if (!listed.ok) throw new Error(`Excerpt list failed: ${listed.error.code}`);
     expect(listed.value).toHaveLength(0);
   });
+
+  it("refuses excerpt inserts on archived engagements without persisting", () => {
+    const { engagements, excerpts } = createFixture();
+    const createdEngagement = engagements.createEngagement({
+      name: "Excerpt lab",
+      kind: "lab",
+      description: null,
+      authorizationContext: null,
+      autoContinueWarnings: false,
+    });
+    if (!createdEngagement.ok) throw new Error("Fixture create failed");
+    const archived = engagements.archive(createdEngagement.value.id, createdEngagement.value.revision);
+    if (!archived.ok) throw new Error("Fixture archive failed");
+    const created = excerpts.createExcerpt({
+      engagementId: createdEngagement.value.id,
+      runId: "run-1",
+      artifactId: "artifact-stdout",
+      artifactDigest: DIGEST,
+      stream: "stdout",
+      byteOffset: 0,
+      byteLength: 16,
+      content: "line",
+      redactions: 0,
+      targetNote: null,
+    });
+    expect(created).toEqual({ ok: false, error: { code: "engagement_archived" } });
+    // Reads stay available on archived engagements; the refused write left
+    // no row behind.
+    const listed = excerpts.listExcerpts(createdEngagement.value.id);
+    if (!listed.ok) throw new Error(`Excerpt list failed: ${listed.error.code}`);
+    expect(listed.value).toHaveLength(0);
+  });
 });
 
 describe("attachment persistence", () => {

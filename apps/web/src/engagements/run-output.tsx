@@ -211,9 +211,17 @@ function FailedDownloadPanel({
 }
 
 // Latest-run unavailable path: the 409 carries only the verification code,
-// so the run id comes from history. The newest terminal run by updatedAt is
-// the same row the latest-output endpoint used. While resolving, keep a
-// loading state; when unresolvable, fall back to the generic retry.
+// so the run id comes from history. History pages arrive newest-created
+// first while the server picks the latest terminal run by updatedAt, so one
+// page cannot identify it: queued runs can push the completed run out of
+// view, and an earlier-created run can complete later. Follow cursors to
+// the end and pick the max by updatedAt and id, mirroring the server
+// selection exactly. The panel renders only on an exhausted scan; a capped
+// scan or any error falls back to the generic retry instead of risking
+// another run's reference.
+const LATEST_RECOVERY_PAGE_LIMIT = 25;
+const LATEST_RECOVERY_MAX_PAGES = 8;
+
 function LatestUnavailablePanel({
   engagementId,
   reason,
@@ -229,22 +237,41 @@ function LatestUnavailablePanel({
     let cancelled = false;
     setRunId(undefined);
     setFailed(false);
-    void fetchRunHistoryPage(engagementId, { limit: 25 })
-      .then((page) => {
-        if (cancelled) return;
-        const terminal = page.runs
-          .filter((run) => run.state === "succeeded" || run.state === "failed" || run.state === "cancelled")
-          .sort((left, right) =>
-            left.updatedAt === right.updatedAt
-              ? (left.id < right.id ? 1 : -1)
-              : (left.updatedAt < right.updatedAt ? 1 : -1),
-          )[0];
-        if (terminal === undefined) setFailed(true);
-        else setRunId(terminal.id);
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
+    void (async () => {
+      let best: { id: string; updatedAt: string } | undefined;
+      let before: string | undefined;
+      for (let page = 0; page < LATEST_RECOVERY_MAX_PAGES; page += 1) {
+        const result = await fetchRunHistoryPage(
+          engagementId,
+          before === undefined
+            ? { limit: LATEST_RECOVERY_PAGE_LIMIT }
+            : { limit: LATEST_RECOVERY_PAGE_LIMIT, before },
+        );
+        for (const run of result.runs) {
+          if (run.state !== "succeeded" && run.state !== "failed" && run.state !== "cancelled") {
+            continue;
+          }
+          if (
+            best === undefined ||
+            run.updatedAt > best.updatedAt ||
+            (run.updatedAt === best.updatedAt && run.id > best.id)
+          ) {
+            best = { id: run.id, updatedAt: run.updatedAt };
+          }
+        }
+        if (result.nextCursor === null) {
+          if (cancelled) return;
+          if (best === undefined) setFailed(true);
+          else setRunId(best.id);
+          return;
+        }
+        before = result.nextCursor;
+      }
+      // Capped before exhaustion: no panel without proof this is latest.
+      if (!cancelled) setFailed(true);
+    })().catch(() => {
+      if (!cancelled) setFailed(true);
+    });
     return () => {
       cancelled = true;
     };

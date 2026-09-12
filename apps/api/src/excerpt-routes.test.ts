@@ -27,6 +27,7 @@ interface Harness {
   directory: string;
   database: ReturnType<typeof openEngagementDatabase>;
   excerpts: ExcerptRepository;
+  engagements: EngagementRepository;
   inject: (options: {
     method: "GET" | "POST" | "PATCH";
     url: string;
@@ -35,6 +36,7 @@ interface Harness {
   artifacts: Map<string, Buffer>;
   extraArtifacts: { artifactId: string; kind: string }[];
   archived: { current: boolean };
+  hooks: { onVerifiedByteRange: (() => void) | undefined };
 }
 
 const harnesses: Harness[] = [];
@@ -59,6 +61,9 @@ async function createHarness(): Promise<Harness> {
   const artifacts = new Map<string, Buffer>([[ARTIFACT_ID, STDOUT_BYTES]]);
   const extraArtifacts: { artifactId: string; kind: string }[] = [];
   const archived = { current: false };
+  const hooks: { onVerifiedByteRange: (() => void) | undefined } = {
+    onVerifiedByteRange: undefined,
+  };
   const app = Fastify({ logger: false });
   registerExcerptRoutes(app, {
     engagements: {
@@ -132,15 +137,32 @@ async function createHarness(): Promise<Harness> {
     },
     grants: {
       publishedArtifactForEngagement: (input: { engagementId: string; artifactId: string }) => {
-        if (input.engagementId !== ENGAGEMENT_ID || input.artifactId !== ARTIFACT_ID) {
+        if (input.engagementId !== ENGAGEMENT_ID) {
+          return undefined;
+        }
+        if (input.artifactId === ARTIFACT_ID) {
+          return {
+            artifactId: ARTIFACT_ID,
+            runId: RUN_ID,
+            kind: "stdout",
+            sizeBytes: STDOUT_BYTES.length,
+            digest: sha256(STDOUT_BYTES),
+            completeness: "complete",
+          } as unknown as ReturnType<
+            import("@stonehush/db").EvidenceGrantRepository["publishedArtifactForEngagement"]
+          >;
+        }
+        const extra = extraArtifacts.find((row) => row.artifactId === input.artifactId);
+        const bytes = extra === undefined ? undefined : artifacts.get(extra.artifactId);
+        if (extra === undefined || bytes === undefined) {
           return undefined;
         }
         return {
-          artifactId: ARTIFACT_ID,
+          artifactId: extra.artifactId,
           runId: RUN_ID,
-          kind: "stdout",
-          sizeBytes: STDOUT_BYTES.length,
-          digest: sha256(STDOUT_BYTES),
+          kind: extra.kind,
+          sizeBytes: bytes.length,
+          digest: sha256(bytes),
           completeness: "complete",
         } as unknown as ReturnType<
           import("@stonehush/db").EvidenceGrantRepository["publishedArtifactForEngagement"]
@@ -155,6 +177,7 @@ async function createHarness(): Promise<Harness> {
         byteOffset: number;
         byteLength: number;
       }) => {
+        hooks.onVerifiedByteRange?.();
         const bytes = artifacts.get(input.artifactId);
         if (bytes === undefined) return { status: "missing" as const };
         if (bytes.length !== input.expectedSizeBytes || sha256(bytes) !== input.expectedDigest) {
@@ -190,9 +213,11 @@ async function createHarness(): Promise<Harness> {
     directory,
     database,
     excerpts,
+    engagements: engagementRepository,
     artifacts,
     extraArtifacts,
     archived,
+    hooks,
     inject: async (options) => {
       const response = await app.inject(
         options.payload === undefined
@@ -269,6 +294,132 @@ describe("excerpt routes", () => {
     });
     expect(listed.statusCode).toBe(200);
     expect((listed.json() as unknown[]).length).toBe(2);
+  });
+
+  it("masks inner secret bytes using expanded context instead of persisting them raw", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-secret-inner";
+    const content = "login ok\nflag{syntheticsecret42}\npassword=hunter2\n";
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const keep = (byteOffset: number, byteLength: number) =>
+      harness.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+        payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
+      });
+
+    // Inner flag value without its wrapper. Narrow masking alone would keep
+    // it verbatim; the expanded context must mask it.
+    const innerStart = content.indexOf("syntheticsecret42");
+    const inner = await keep(innerStart, "syntheticsecret42".length);
+    expect(inner.statusCode).toBe(201);
+    const innerBody = inner.json() as {
+      content: string;
+      redactions: number;
+      byteOffset: number;
+      byteLength: number;
+    };
+    expect(innerBody.content).not.toContain("syntheticsecret42");
+    expect(innerBody.content).toBe("[redacted]");
+    expect(innerBody.redactions).toBe(1);
+    // Provenance still records exactly the requested bytes.
+    expect(innerBody.byteOffset).toBe(innerStart);
+    expect(innerBody.byteLength).toBe("syntheticsecret42".length);
+
+    // Inner credential value without its `password=` prefix.
+    const valueStart = content.indexOf("hunter2");
+    const value = await keep(valueStart, "hunter2".length);
+    expect(value.statusCode).toBe(201);
+    const valueBody = value.json() as { content: string; redactions: number };
+    expect(valueBody.content).not.toContain("hunter2");
+    expect(valueBody.redactions).toBeGreaterThan(0);
+
+    // Cutoff boundary starting inside the wrapper.
+    const cutStart = content.indexOf("lag{syntheticsecret42}");
+    const cut = await keep(cutStart, "lag{syntheticsecret42}".length);
+    expect(cut.statusCode).toBe(201);
+    expect((cut.json() as { content: string }).content).not.toContain("syntheticsecret42");
+
+    // Ordinary text beside secrets stays verbatim.
+    const ordinary = await keep(0, "login ok\n".length);
+    expect(ordinary.statusCode).toBe(201);
+    expect((ordinary.json() as { content: string }).content).toBe("login ok\n");
+  });
+
+  it("masks inner key block material spanning multiple lines", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-key-inner";
+    const keyBody = "MIIBOgIBAAJBAKcGx7VnZQIDAQAB";
+    const content = `note\n-----BEGIN RSA PRIVATE KEY-----\n${keyBody}\n-----END RSA PRIVATE KEY-----\nafter\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const kept = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: {
+        runId: RUN_ID,
+        artifactId,
+        stream: "stdout",
+        byteOffset: content.indexOf(keyBody),
+        byteLength: keyBody.length,
+      },
+    });
+    expect(kept.statusCode).toBe(201);
+    const body = kept.json() as { content: string; redactions: number };
+    expect(body.content).not.toContain(keyBody);
+    expect(body.redactions).toBeGreaterThan(0);
+  });
+
+  it("rejects mid-token selections whose lookback is cut instead of guessing", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-long-token";
+    const content = `${"x".repeat(9_000)}\nlogin ok\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    // 8500 sits inside a token run with the 8192-byte lookback cut short of
+    // the artifact start: no safe boundary is visible.
+    const rejected = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset: 8500, byteLength: 10 },
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(rejected.json()).toEqual({ code: "range_rejected" });
+
+    // The same artifact stays excerptable from a real boundary.
+    const boundaryStart = content.indexOf("login ok");
+    const allowed = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: {
+        runId: RUN_ID,
+        artifactId,
+        stream: "stdout",
+        byteOffset: boundaryStart,
+        byteLength: "login ok".length,
+      },
+    });
+    expect(allowed.statusCode).toBe(201);
+    expect((allowed.json() as { content: string }).content).toBe("login ok");
+  });
+
+  it("masks search snippets for inner secret matches", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-secret-search";
+    const content = "login ok\nflag{syntheticsecret42}\n";
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=syntheticsecret42`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as { matches: { snippet: string; artifactId: string }[] };
+    expect(body.matches.length).toBeGreaterThan(0);
+    for (const match of body.matches) {
+      expect(match.snippet).not.toContain("syntheticsecret42");
+    }
   });
 
   it("rejects invented artifacts, mismatched runs, and out-of-range offsets", async () => {
@@ -444,6 +595,33 @@ describe("excerpt routes", () => {
     expect(created.json()).toEqual({ code: "engagement_archived" });
   });
 
+  it("refuses the insert when archiving lands mid-read", async () => {
+    const harness = await createHarness();
+    // The request gate sees an active engagement; the archive lands in the
+    // real table while the verified byte read is in flight. The atomic
+    // insert check must still refuse instead of annotating the newly
+    // archived engagement.
+    harness.hooks.onVerifiedByteRange = () => {
+      const current = harness.engagements.getEngagement(ENGAGEMENT_ID);
+      if (!current.ok) throw new Error("fixture engagement missing");
+      const archived = harness.engagements.archive(ENGAGEMENT_ID, current.value.engagement.revision);
+      if (!archived.ok) throw new Error("fixture archive failed");
+    };
+    const created = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: {
+        runId: RUN_ID,
+        artifactId: ARTIFACT_ID,
+        stream: "stdout",
+        byteOffset: 0,
+        byteLength: 16,
+      },
+    });
+    expect(created.statusCode).toBe(409);
+    expect(created.json()).toEqual({ code: "engagement_archived" });
+  });
+
   it("never returns shifted offsets for malformed UTF-8 output", async () => {
     const harness = await createHarness();
     // 0xFF decodes to U+FFFD (three bytes on re-encode) while occupying one
@@ -464,7 +642,38 @@ describe("excerpt routes", () => {
       scanCapped: boolean;
     };
     expect(body.matches).toEqual([]);
-    expect(body.searchedBytes).toBeGreaterThan(0);
+    // No bytes were safely searchable, and the cap flag says coverage is
+    // incomplete rather than claiming absence.
+    expect(body.searchedBytes).toBe(0);
+    expect(body.scanCapped).toBe(true);
+  });
+
+  it("keeps searching the complete prefix when the budget cuts a code point", async () => {
+    const harness = await createHarness();
+    // `login` up front stays findable even though the 262144-byte scan
+    // budget ends mid-way through a trailing multibyte character.
+    const head = Buffer.from("login\n", "utf8");
+    const padLength = 262_144 - head.length - 1;
+    const bytes = Buffer.concat([
+      head,
+      Buffer.alloc(padLength, 0x41),
+      Buffer.from([0xc3, 0xa9]),
+      Buffer.from("tail", "utf8"),
+    ]);
+    harness.artifacts.set(ARTIFACT_ID, bytes);
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=login`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as {
+      matches: { byteOffset: number; byteLength: number }[];
+      searchedBytes: number;
+      scanCapped: boolean;
+    };
+    expect(body.matches).toHaveLength(1);
+    expect(body.matches[0]).toMatchObject({ byteOffset: 0, byteLength: 5 });
+    expect(body.searchedBytes).toBe(262_143);
     expect(body.scanCapped).toBe(true);
   });
 });

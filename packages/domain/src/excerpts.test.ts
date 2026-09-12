@@ -8,10 +8,13 @@ import {
   formatExcerptSourceLabel,
   isCropRectValid,
   maskExcerptText,
+  projectMaskedSelection,
   selectionBytesFromText,
+  selectionStartsMidToken,
   validateExcerptRange,
   windowSnippetFromChars,
 } from "./excerpts.js";
+import { findAdvisorSecretSpans } from "./advisor-redact.js";
 
 const DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -77,6 +80,81 @@ describe("secret masking for excerpts", () => {
 
   it("leaves ordinary output untouched", () => {
     expect(maskExcerptText("80/tcp open http").text).toBe("80/tcp open http");
+  });
+
+  it("locates secret spans for context projection", () => {
+    const text = "login ok\nflag{syntheticsecret}\npassword=hunter2\n";
+    const spans = findAdvisorSecretSpans(text);
+    expect(spans.length).toBeGreaterThanOrEqual(2);
+    for (const span of spans) {
+      expect(span.end).toBeGreaterThan(span.start);
+    }
+    expect(findAdvisorSecretSpans("80/tcp open http")).toEqual([]);
+  });
+
+  it("masks inner flag selections using surrounding context", () => {
+    const expanded = "login ok\nflag{syntheticsecret}\n";
+    const start = expanded.indexOf("syntheticsecret");
+    const charStart = Array.from(expanded.slice(0, start)).length;
+    const projected = projectMaskedSelection(expanded, charStart, Array.from("syntheticsecret").length);
+    expect(projected.overlapped).toBe(true);
+    expect(projected.text).toBe("[redacted]");
+    expect(projected.redactions).toBe(1);
+    // Narrow masking alone would leak the inner value.
+    expect(maskExcerptText("syntheticsecret").text).toBe("syntheticsecret");
+  });
+
+  it("keeps ordinary text around a partial secret overlap", () => {
+    const expanded = "prefix flag{abc} suffix";
+    const start = expanded.indexOf("prefix");
+    const projected = projectMaskedSelection(
+      expanded,
+      Array.from(expanded.slice(0, start)).length,
+      Array.from("prefix flag{a").length,
+    );
+    expect(projected.overlapped).toBe(true);
+    expect(projected.text).toBe("prefix [redacted]");
+    expect(projected.text).not.toContain("flag{a");
+  });
+
+  it("leaves non-overlapping selections byte-identical to narrow masking", () => {
+    const expanded = "flag{abc}\nordinary line here\npassword=hunter2\n";
+    const start = expanded.indexOf("ordinary");
+    const len = Array.from("ordinary line here").length;
+    const charStart = Array.from(expanded.slice(0, start)).length;
+    const projected = projectMaskedSelection(expanded, charStart, len);
+    expect(projected.overlapped).toBe(false);
+    expect(projected.text).toBe(maskExcerptText("ordinary line here").text);
+  });
+
+  it("detects mid-token continuation across a cut context", () => {
+    expect(selectionStartsMidToken("Bearer abcdefgh", "ijklmnop")).toBe(true);
+    expect(selectionStartsMidToken("login ok\n", "flag{abc}")).toBe(false);
+    expect(selectionStartsMidToken("", "abc")).toBe(false);
+    expect(selectionStartsMidToken("abc", "")).toBe(false);
+    expect(selectionStartsMidToken("target: ", "10.0.0.5")).toBe(false);
+  });
+
+  it("masks inner credential and bearer values from context", () => {
+    const credential = "auth password=hunter2 done";
+    const valueStart = Array.from(credential.slice(0, credential.indexOf("hunter2"))).length;
+    const projected = projectMaskedSelection(
+      credential,
+      valueStart,
+      Array.from("hunter2").length,
+    );
+    expect(projected.overlapped).toBe(true);
+    expect(projected.text).not.toContain("hunter2");
+
+    const bearer = "Authorization: Bearer abcdefghijklmnop end";
+    const tokenStart = Array.from(bearer.slice(0, bearer.indexOf("abcdefgh"))).length;
+    const tokenProjected = projectMaskedSelection(
+      bearer,
+      tokenStart,
+      Array.from("abcdefghijklmnop").length,
+    );
+    expect(tokenProjected.overlapped).toBe(true);
+    expect(tokenProjected.text).not.toContain("abcdefghijklmnop");
   });
 });
 
