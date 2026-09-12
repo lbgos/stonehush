@@ -54,10 +54,12 @@ export function resolveEngagementTab(raw: unknown): EngagementTabId {
 
 export function EngagementWorkspace({
   engagementId,
+  pendingActionId,
   selectedRunId,
   tab,
 }: {
   engagementId?: string | undefined;
+  pendingActionId?: string | undefined;
   selectedRunId?: string | undefined;
   tab?: string | undefined;
 }) {
@@ -127,7 +129,12 @@ export function EngagementWorkspace({
 
   const body =
     selected !== undefined ? (
-      <EngagementDetail engagement={selected} tab={tab} selectedRunId={selectedRunId} />
+      <EngagementDetail
+        engagement={selected}
+        pendingActionId={pendingActionId}
+        selectedRunId={selectedRunId}
+        tab={tab}
+      />
     ) : records.length === 0 ? (
       <div>
         <h1 className="mb-5 text-[26px] leading-none font-semibold tracking-[-0.04em]">Engagements</h1>
@@ -224,10 +231,12 @@ function selectDisplayedEngagement(listed: Engagement, detailed: Engagement | un
 
 function EngagementDetail({
   engagement,
+  pendingActionId,
   selectedRunId,
   tab,
 }: {
   engagement: Engagement;
+  pendingActionId?: string | undefined;
   selectedRunId?: string | undefined;
   tab?: string | undefined;
 }) {
@@ -365,7 +374,11 @@ function EngagementDetail({
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
-            <ActionPlanner archived={archived} engagementId={displayed.id} />
+            <ActionPlanner
+              archived={archived}
+              engagementId={displayed.id}
+              pendingActionId={pendingActionId}
+            />
             <SavedScopeEditor archived={archived} engagementId={displayed.id} />
           </div>
         </div>

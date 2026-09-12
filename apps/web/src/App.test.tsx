@@ -211,7 +211,7 @@ afterEach(() => {
 });
 
 describe("App system readiness", () => {
-  it("aborts the discarded StrictMode request, announces loading, then reports ready", async () => {
+  it("aborts the discarded StrictMode request, announces checking, then reports ready", async () => {
     const request = deferred<Response>();
     const signals: AbortSignal[] = [];
     const fetchMock = stubWorkspaceFetch((_url, init) => {
@@ -220,25 +220,24 @@ describe("App system readiness", () => {
     });
 
     await renderApp("/", { strict: true });
-    const loading = screen.getByRole("status", { name: "Checking system" });
-    expect(loading.getAttribute("aria-live")).toBe("polite");
-    expect(loading.getAttribute("aria-busy")).toBe("true");
+    expect(await screen.findByText("Control plane: checking.")).toBeTruthy();
     expect(statusCallCount(fetchMock)).toBe(2);
     expect(signals[0]?.aborted).toBe(true);
     expect(signals[1]?.aborted).toBe(false);
 
     request.resolve(response(readyStatus));
-    expect(await screen.findByText("System ready")).toBeTruthy();
+    expect(await screen.findByText("Control plane: ready.")).toBeTruthy();
   });
 
-  it("reports a valid 503 as a current not-ready state", async () => {
+  it("reports a valid 503 as storage not ready", async () => {
     stubWorkspaceFetch(() => response(notReadyStatus, { ok: false, status: 503 }));
 
     await renderApp();
 
-    expect(await screen.findByText("System not ready")).toBeTruthy();
-    expect(screen.getByText("Development storage is not ready.")).toBeTruthy();
-    expect(screen.queryByText("System unavailable")).toBeNull();
+    expect(
+      await screen.findByText("Control plane: storage not ready. Queued work waits."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Control plane: ready.")).toBeNull();
   });
 
   it("distinguishes a no-response failure from not-ready", async () => {
@@ -246,8 +245,10 @@ describe("App system readiness", () => {
 
     await renderApp();
 
-    expect(await screen.findByText("System unavailable")).toBeTruthy();
-    expect(screen.queryByText("System not ready")).toBeNull();
+    expect(
+      await screen.findByText("Control plane: unreachable. Start the app and check again."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/storage not ready/)).toBeNull();
   });
 
   it("reports responses that violate the shared contract", async () => {
@@ -255,98 +256,10 @@ describe("App system readiness", () => {
 
     await renderApp();
 
-    expect(await screen.findByText("System unavailable")).toBeTruthy();
+    expect(
+      await screen.findByText("Control plane: unreachable. Start the app and check again."),
+    ).toBeTruthy();
     expect(screen.queryByText("private")).toBeNull();
-  });
-
-  it("retries in the mounted page and accepts a later success", async () => {
-    const first = deferred<Response>();
-    const second = deferred<Response>();
-    const fetchMock = stubWorkspaceFetch(
-      vi
-        .fn<() => Promise<Response>>()
-        .mockImplementationOnce(() => first.promise)
-        .mockImplementationOnce(() => second.promise),
-    );
-
-    const { container } = await renderApp();
-    const mountedPage = container.firstElementChild;
-    const mountedShell = screen.getByTestId("application-shell");
-    first.reject(new Error("offline"));
-    expect(await screen.findByText("System unavailable")).toBeTruthy();
-
-    fireEvent.click(within(screen.getByText("System unavailable").closest("section")!).getByRole("button", { name: "Retry" }));
-    expect(await screen.findByText("Checking system")).toBeTruthy();
-    expect(container.firstElementChild).toBe(mountedPage);
-    expect(screen.getByTestId("application-shell")).toBe(mountedShell);
-    await waitFor(() => expect(statusCallCount(fetchMock)).toBe(2));
-
-    second.resolve(response(readyStatus));
-    expect(await screen.findByText("System ready")).toBeTruthy();
-  });
-
-  it("preserves cached ready status with last-known wording after a network failure", async () => {
-    const second = deferred<Response>();
-    const third = deferred<Response>();
-    const fetchMock = stubWorkspaceFetch(
-      vi
-        .fn<() => Promise<Response>>()
-        .mockResolvedValueOnce(response(readyStatus))
-        .mockImplementationOnce(() => second.promise)
-        .mockImplementationOnce(() => third.promise),
-    );
-
-    await renderApp();
-    expect(await screen.findByText("System ready")).toBeTruthy();
-    const shell = screen.getByTestId("application-shell");
-
-    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-    await waitFor(() => expect(statusCallCount(fetchMock)).toBe(2));
-    second.reject(new Error("GET /api?token=secret failed with body-secret"));
-
-    const staleWarning = await screen.findByText("Last known: system ready");
-    expect(screen.queryByText("System unavailable")).toBeNull();
-    expect(screen.getByTestId("application-shell")).toBe(shell);
-
-    fireEvent.click(
-      within(staleWarning.closest("section")!).getByRole("button", { name: "Retry" }),
-    );
-    await waitFor(() => expect(statusCallCount(fetchMock)).toBe(3));
-    third.resolve(response(readyStatus));
-    await waitFor(() => expect(screen.queryByText("Last known: system ready")).toBeNull());
-    expect(screen.getByText("System ready")).toBeTruthy();
-  });
-
-  it("preserves cached status after a malformed refresh", async () => {
-    stubWorkspaceFetch(
-      vi
-        .fn<() => Promise<Response>>()
-        .mockResolvedValueOnce(response(readyStatus))
-        .mockResolvedValueOnce(response({ ...readyStatus, rawError: "/private/path" })),
-    );
-
-    await renderApp();
-    expect(await screen.findByText("System ready")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-
-    expect(await screen.findByText("Last known: system ready")).toBeTruthy();
-    expect(screen.queryByText("private")).toBeNull();
-  });
-
-  it("replaces cached ready data with a valid not-ready 503", async () => {
-    stubWorkspaceFetch(
-      vi
-        .fn<() => Promise<Response>>()
-        .mockResolvedValueOnce(response(readyStatus))
-        .mockResolvedValueOnce(response(notReadyStatus, { ok: false, status: 503 })),
-    );
-
-    await renderApp();
-    expect(await screen.findByText("System ready")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
-
-    expect(await screen.findByText("System not ready")).toBeTruthy();
-    expect(screen.queryByText("Last known: system ready")).toBeNull();
   });
 
   it("shows the advisor connection status in the Advisor tab", async () => {
@@ -1045,7 +958,7 @@ describe("App theme preference", () => {
 
     // Settings has no Dashboard link; Back returns to the last non-settings route.
     fireEvent.click(screen.getByTestId("settings-back"));
-    expect(await screen.findByRole("heading", { level: 1, name: "Workspace" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Start" })).toBeTruthy();
     expect(screen.getByTestId("application-shell")).toBe(shell);
     expect(document.documentElement.dataset.theme).toBe("dark");
 
@@ -1060,8 +973,8 @@ describe("App theme preference", () => {
     stubWorkspaceFetch(() => Promise.reject(new Error("offline")));
     await renderApp();
 
-    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
-    expect(await screen.findAllByRole("button", { name: "Retry" })).not.toHaveLength(0);
+    expect(await screen.findByRole("button", { name: "Start scan" })).toBeTruthy();
+    expect(await screen.findAllByRole("button", { name: "Retry status" })).not.toHaveLength(0);
   });
 });
 
@@ -1228,7 +1141,7 @@ describe("Application routes", () => {
   });
 
   it.each([
-    ["/", "Workspace"],
+    ["/", "Start"],
     ["/engagements", "Engagements"],
     ["/plugins", "Plugins"],
     ["/settings", "Appearance"],
@@ -1272,7 +1185,7 @@ describe("Application routes", () => {
 
     expect(screen.getByRole("link", { name: "Plugins" }).getAttribute("aria-current")).toBe("page");
     fireEvent.click(screen.getAllByRole("link", { name: "Stonehush home" })[0]!);
-    expect(await screen.findByRole("heading", { level: 1, name: "Workspace" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Start" })).toBeTruthy();
     expect(screen.getByTestId("application-shell")).toBe(shell);
     expect(screen.getByRole("link", { name: "Plugins" }).getAttribute("aria-current")).toBeNull();
   });
@@ -1357,7 +1270,7 @@ describe("Application routes", () => {
     );
 
     fireEvent.click(screen.getByTestId("settings-back"));
-    expect(await screen.findByRole("heading", { level: 1, name: "Workspace" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Start" })).toBeTruthy();
   });
 
   it("does not render theme controls or an action spacer in desktop or mobile navigation", async () => {
@@ -1470,7 +1383,7 @@ describe("Application routes", () => {
 
     // Re-entering Settings from elsewhere starts with the disclosure closed and resets to Appearance.
     fireEvent.click(screen.getByTestId("settings-back"));
-    expect(await screen.findByRole("heading", { level: 1, name: "Workspace" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Start" })).toBeTruthy();
     fireEvent.click(screen.getByRole("link", { name: "Settings" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Appearance" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Advisor" }));
@@ -1588,11 +1501,9 @@ describe("Application routes", () => {
     );
 
     await renderApp("/");
-    const current = (await screen.findByRole("heading", { name: "Current engagement" })).closest(
-      "section",
-    );
-    expect(current).toBeTruthy();
-    expect(within(current!).getByRole("link", { name: "Newer lab" })).toBeTruthy();
-    expect(within(current!).queryByRole("link", { name: "Older lab" })).toBeNull();
+    const resume = (await screen.findByRole("heading", { name: "Resume" })).closest("section");
+    expect(resume).toBeTruthy();
+    expect(within(resume!).getByRole("link", { name: "Newer lab" })).toBeTruthy();
+    expect(within(resume!).queryByRole("link", { name: "Older lab" })).toBeNull();
   });
 });

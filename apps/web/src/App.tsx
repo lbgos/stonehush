@@ -1,4 +1,4 @@
-import { ApplicationShell, Button, Status, type ConsolePanel } from "@stonehush/ui";
+import { ApplicationShell, type ConsolePanel } from "@stonehush/ui";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
@@ -9,7 +9,6 @@ import {
   EngagementWorkspaceProvider,
   useEngagementWorkspace,
 } from "./engagements/workspace-context.js";
-import { partitionEngagements, useEngagementsQuery } from "./engagements/query.js";
 import { SettingsBackButton, SettingsNav } from "./settings/sidebar.js";
 import { SettingsViewProvider } from "./settings/settings-view.js";
 import { StageHeader } from "./stage-header.js";
@@ -272,129 +271,5 @@ export function ApplicationLayout() {
         <CreateEngagementDialog open={createOpen} onOpenChange={setCreateOpen} />
       </SettingsViewProvider>
     </EngagementWorkspaceProvider>
-  );
-}
-
-export function DashboardPage() {
-  const systemStatus = useSystemStatusQuery();
-  const { openCreate } = useEngagementWorkspace();
-  const engagements = useEngagementsQuery();
-  const hasSystemStatus = systemStatus.data !== undefined;
-  const retrySystemStatus = () => void systemStatus.refetch();
-  const records = engagements.data ?? [];
-  const { active } = partitionEngagements(records);
-  const recent = mostRecentlyUpdated(active) ?? mostRecentlyUpdated(records);
-
-  return (
-    <main className="min-h-full bg-background px-4 py-5 sm:px-6">
-      <div className="mx-auto w-full max-w-3xl">
-        <header className="mb-5">
-          <h1 className="mt-0 mb-0 text-[26px] leading-none font-semibold tracking-[-0.04em]">
-            Workspace
-          </h1>
-          <p className="mt-2 mb-0 max-w-xl text-[13px] leading-5 text-muted-foreground">
-            Local control-plane status and the current engagement. Runner, advisor, and report
-            surfaces stay unavailable until they exist.
-          </p>
-        </header>
-
-        <section className="rounded-[10px] border border-border bg-card px-4 py-4">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="m-0 text-[13px] font-semibold">Control plane</h2>
-            <Button variant="quiet" onClick={retrySystemStatus}>
-              Check again
-            </Button>
-          </div>
-
-          {!hasSystemStatus && systemStatus.isFetching && (
-            <Status
-              loading
-              title="Checking system"
-              detail="Waiting for the local runtime status."
-            />
-          )}
-          {hasSystemStatus && !systemStatus.isError && (
-            <Status
-              tone={systemStatus.data.overall === "ready" ? "success" : "warning"}
-              title={systemStatus.data.overall === "ready" ? "System ready" : "System not ready"}
-              detail={
-                systemStatus.data.developmentStorage === "ready"
-                  ? "Control plane and development storage are ready."
-                  : "Development storage is not ready."
-              }
-            />
-          )}
-          {hasSystemStatus && systemStatus.isError && (
-            <Status
-              tone="warning"
-              title={`Last known: system ${systemStatus.data.overall === "ready" ? "ready" : "not ready"}`}
-              detail="Status refresh failed. Showing the last-known system and development storage state."
-              action={<Button onClick={retrySystemStatus}>Retry</Button>}
-            />
-          )}
-          {!hasSystemStatus && systemStatus.isError && !systemStatus.isFetching && (
-            <Status
-              tone="warning"
-              title="System unavailable"
-              detail="No valid runtime status was received."
-              action={<Button onClick={retrySystemStatus}>Retry</Button>}
-            />
-          )}
-        </section>
-
-        {recent ? (
-          <section className="mt-4 rounded-[10px] border border-border bg-card px-4 py-4">
-            <h2 className="m-0 text-[13px] font-semibold">Current engagement</h2>
-            <p className="mt-2 mb-3 text-[13px] text-muted-foreground">
-              Continue from the selected engagement.
-            </p>
-            <Link
-              to="/engagements/$engagementId"
-              params={{ engagementId: recent.id }}
-              className="inline-flex min-h-11 items-center text-[13px] font-semibold text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-            >
-              {recent.name}
-            </Link>
-          </section>
-        ) : (
-          <section className="mt-4">
-            <EmptyEngagementPrompt onCreate={openCreate} />
-          </section>
-        )}
-      </div>
-    </main>
-  );
-}
-
-function mostRecentlyUpdated<T extends { id: string; updatedAt: string }>(
-  engagements: readonly T[],
-): T | undefined {
-  return engagements.reduce<T | undefined>((current, engagement) => {
-    if (!current) return engagement;
-    if (engagement.updatedAt > current.updatedAt) return engagement;
-    if (engagement.updatedAt === current.updatedAt && engagement.id > current.id) return engagement;
-    return current;
-  }, undefined);
-}
-
-function EmptyEngagementPrompt({ onCreate }: { onCreate: () => void }) {
-  const navigate = useNavigate();
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] px-1 py-2">
-      <p className="m-0 text-[13px] text-muted-foreground">
-        Open Engagements to load records from the API, or create one here.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Button onClick={onCreate}>New engagement</Button>
-        <Button
-          variant="secondary"
-          onClick={() => {
-            void navigate({ to: "/engagements" });
-          }}
-        >
-          View engagements
-        </Button>
-      </div>
-    </div>
   );
 }

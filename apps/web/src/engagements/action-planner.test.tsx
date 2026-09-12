@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
+import { browserStorage, readFirstActionDefaults } from "./first-action.js";
 
 const activeEngagement = {
   contractVersion: 1,
@@ -185,9 +186,9 @@ function operatorContinueAck() {
 
 const testQueryClients = new Set<QueryClient>();
 
-async function renderPlanner(engagement: TestEngagement = activeEngagement) {
+async function renderPlanner(engagement: TestEngagement = activeEngagement, search = "") {
   const router = createAppRouter(
-    createMemoryHistory({ initialEntries: [`/engagements/${engagement.id}`] }),
+    createMemoryHistory({ initialEntries: [`/engagements/${engagement.id}${search}`] }),
   );
   await router.load();
   const queryClient = createAppQueryClient();
@@ -508,6 +509,8 @@ describe("action planner", () => {
     expect(screen.getByText(/cannot be represented/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Action needs a warning" })).toBeNull();
+    // A DNS-style planning failure is not an Nmap outage: no Nmap diagnosis.
+    expect(screen.queryByText(/cannot run as an Nmap scan/)).toBeNull();
   });
 
   it("continues on Enter and cancels on Escape from the warning card", async () => {
@@ -580,8 +583,9 @@ describe("action planner", () => {
     });
 
     await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
+    fireEvent.click(await screen.findByRole("radio", { name: /Fuller port pass/ }));
     const targetsField = await screen.findByLabelText("Targets");
-    const portsField = await screen.findByLabelText(/TCP ports/i);
+    const portsField = await screen.findByLabelText(/^TCP ports/i);
     expect(portsField.getAttribute("placeholder")).toBe("22,80,443");
     fireEvent.change(targetsField, { target: { value: "192.0.2.10" } });
     fireEvent.change(portsField, { target: { value: "443,80,80,22" } });
@@ -596,7 +600,8 @@ describe("action planner", () => {
     });
 
     await renderPlanner();
-    const portsField = await screen.findByLabelText(/TCP ports/i);
+    fireEvent.click(await screen.findByRole("radio", { name: /Fuller port pass/ }));
+    const portsField = await screen.findByLabelText(/^TCP ports/i);
     const form = portsField.closest("form")!;
     fireEvent.change(await screen.findByLabelText("Targets"), { target: { value: "192.0.2.10" } });
 
@@ -669,5 +674,399 @@ describe("action planner", () => {
       spy.mock.calls.filter(([a]) => JSON.stringify((a as { queryKey?: unknown })?.queryKey).includes("services")),
     ).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([u]) => String(u).includes(`/actions/${ACTION_ID}`))).toHaveLength(2);
+  });
+
+  describe("first action profile", () => {
+    const unconfiguredAdvisor = {
+      configured: false,
+      endpointReachable: null,
+      modelId: "",
+      endpointHost: "",
+      publicEndpoint: false,
+      optIn: false,
+      keyEnvVar: "",
+      keyPresent: false,
+      latencyMs: null,
+      reason: "unconfigured",
+    };
+
+    function historyRow(overrides: Record<string, unknown>) {
+      return {
+        id: "run-00000000-0000-4000-8000-000000000001",
+        actionId: ACTION_ID,
+        state: "succeeded",
+        terminalKind: "succeeded",
+        terminalReason: null,
+        updatedAt: "2026-08-12T12:15:00.000Z",
+        createdAt: "2026-08-12T12:11:00.000Z",
+        attempt: 1,
+        ...overrides,
+      };
+    }
+
+    function stubWithHistory(runs: unknown[]) {
+      return stubFetch((url, _init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs")) return response({ runs, nextCursor: null });
+        return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+      });
+    }
+
+    it("labels the three passes with what they cover", async () => {
+      stubWithHistory([]);
+      await renderPlanner();
+
+      expect(await screen.findByRole("radio", { name: /Quick port pass/ })).toBeTruthy();
+      expect(screen.getByRole("radio", { name: /Fuller port pass/ })).toBeTruthy();
+      expect(screen.getByRole("radio", { name: /Web-origin inspection/ })).toBeTruthy();
+      expect(screen.getByText(/Default Nmap ports for IP, CIDR, and hostname targets/)).toBeTruthy();
+      expect(screen.getByText(/Direct HTTP\(S\) probe of URL targets, no Nmap/)).toBeTruthy();
+      fireEvent.click(screen.getByText("What each pass covers"));
+      expect(
+        await screen.findByText(/URL targets run the HTTP probe and record status/),
+      ).toBeTruthy();
+    });
+
+    it("remembers the ports default without restoring targets", async () => {
+      const queued = persistedAction("queued");
+      stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs")) return response({ runs: [], nextCursor: null });
+        if (url.endsWith("/actions") && init?.method === "POST") return response(queued, 201);
+        return readResponse(url, { ...activeEngagement, revision: 1, activeScopeRevisionId: null }, null) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
+      fireEvent.click(await screen.findByRole("radio", { name: /Fuller port pass/ }));
+      const portsField = await screen.findByLabelText(/^TCP ports/i);
+      expect((portsField as HTMLInputElement).value).toBe("22,80,443");
+      fireEvent.change(await screen.findByLabelText("Targets"), { target: { value: "192.0.2.10" } });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+      expect(await screen.findByText(/Action queued/)).toBeTruthy();
+      expect(window.localStorage.getItem("stonehush.firstActionDefaults")).toContain("fuller");
+
+      cleanup();
+      await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
+      expect((await screen.findByLabelText(/^TCP ports/i) as HTMLInputElement).value).toBe(
+        "22,80,443",
+      );
+      expect(
+        (await screen.findByRole("radio", { name: /Fuller port pass/ }) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect((await screen.findByLabelText("Targets") as HTMLTextAreaElement).value).toBe("");
+    });
+
+    it("preserves a custom fuller ports value across profile switches", async () => {
+      stubWithHistory([]);
+      await renderPlanner();
+
+      fireEvent.click(await screen.findByRole("radio", { name: /Fuller port pass/ }));
+      const portsField = (await screen.findByLabelText(/^TCP ports/i)) as HTMLInputElement;
+      fireEvent.change(portsField, { target: { value: "8080" } });
+      expect(portsField.value).toBe("8080");
+      fireEvent.click(await screen.findByRole("radio", { name: /Quick port pass/ }));
+      expect((await screen.findByLabelText(/^TCP ports/i) as HTMLInputElement).value).toBe("");
+      fireEvent.click(await screen.findByRole("radio", { name: /Fuller port pass/ }));
+      expect((await screen.findByLabelText(/^TCP ports/i) as HTMLInputElement).value).toBe("8080");
+      expect((await screen.findByLabelText("Targets") as HTMLTextAreaElement).value).toBe("");
+    });
+
+    it("refills the fuller preset when stored defaults pair fuller with empty ports", async () => {
+      stubWithHistory([]);
+      window.localStorage.setItem(
+        "stonehush.firstActionDefaults",
+        JSON.stringify({ profile: "fuller", declaredPorts: "" }),
+      );
+      await renderPlanner();
+
+      expect(
+        (await screen.findByRole("radio", { name: /Fuller port pass/ }) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect((await screen.findByLabelText(/^TCP ports/i) as HTMLInputElement).value).toBe(
+        "22,80,443",
+      );
+    });
+
+    it("falls back when the storage object access itself throws", () => {
+      const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+      Object.defineProperty(window, "localStorage", {
+        configurable: true,
+        get() {
+          throw new Error("denied");
+        },
+      });
+      try {
+        // The planner must never evaluate the storage object directly; the
+        // guarded helper falls back instead of throwing during render.
+        const storage = browserStorage();
+        expect(storage.getItem("stonehush.firstActionDefaults")).toBeNull();
+        expect(() =>
+          storage.setItem("stonehush.firstActionDefaults", "{}"),
+        ).not.toThrow();
+        expect(readFirstActionDefaults(storage)).toEqual({
+          profile: "quick",
+          declaredPorts: "",
+        });
+      } finally {
+        if (descriptor !== undefined) Object.defineProperty(window, "localStorage", descriptor);
+      }
+    });
+
+    it("loads a paused first scan from the action search and offers Continue", async () => {
+      const paused = persistedAction("paused_for_warning");
+      const queued = persistedAction("queued", {
+        warningAcknowledgment: operatorContinueAck(),
+      });
+      let continued = false;
+      const fetchMock = stubFetch((url, init) => {
+        if (
+          url === `/api/v1/engagements/${activeEngagement.id}/actions/${ACTION_ID}` &&
+          (init?.method === undefined || init.method === "GET")
+        ) {
+          return response(continued ? queued : paused);
+        }
+        if (url.endsWith("/continue") && init?.method === "POST") {
+          continued = true;
+          return response(queued);
+        }
+        return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner(activeEngagement, `?action=${ACTION_ID}`);
+
+      const dialog = await screen.findByRole("dialog", { name: "Action needs a warning" });
+      expect(within(dialog).getByText(/outside the saved scope/)).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.some(
+          ([called, init]) =>
+            String(called).endsWith(`/actions/${ACTION_ID}`) &&
+            (init?.method === undefined || init.method === "GET"),
+        ),
+      ).toBe(true);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([called, init]) =>
+            String(called).endsWith("/continue") && init?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+      expect(await screen.findByText(/Action queued/)).toBeTruthy();
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Action needs a warning" })).toBeNull(),
+      );
+    });
+
+    it("shows a specific readiness summary next to the first action", async () => {
+      stubWithHistory([]);
+      await renderPlanner();
+
+      expect(await screen.findByText("Control plane: ready.")).toBeTruthy();
+      expect(await screen.findByText("Runner: no runs yet. The first scan appears here.")).toBeTruthy();
+      expect(
+        await screen.findByText("Advisor: not set up. Manual work is unaffected."),
+      ).toBeTruthy();
+    });
+
+    it("reads runner disconnected differently from target not answering", async () => {
+      stubWithHistory([
+        historyRow({ state: "failed", terminalKind: "failed", terminalReason: "runner_lost" }),
+      ]);
+      await renderPlanner();
+      expect(
+        await screen.findByText(/Runner disconnected during the last run/),
+      ).toBeTruthy();
+      expect(screen.queryByText(/did not answer/)).toBeNull();
+      cleanup();
+
+      stubWithHistory([historyRow({})]);
+      await renderPlanner();
+      expect(
+        await screen.findByText(/No new services means the target did not answer/),
+      ).toBeTruthy();
+      expect(screen.queryByText(/Runner disconnected/)).toBeNull();
+    });
+
+    it("names a missing Nmap binary from the last run", async () => {
+      stubWithHistory([
+        historyRow({ state: "failed", terminalKind: "failed", terminalReason: "nmap_unavailable" }),
+      ]);
+      await renderPlanner();
+      expect(await screen.findByText(/Nmap is not available to the runner/)).toBeTruthy();
+    });
+
+    it("offers a retry while readiness queries fail", async () => {
+      const fetchMock = stubFetch((url) => {
+        if (url.includes("/api/v1/system/status")) return Promise.reject(new Error("offline"));
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs")) return response({ runs: [], nextCursor: null });
+        return (
+          readResponse(url, activeEngagement, emptyRevision) ??
+          response({ code: "invalid_request" }, 400)
+        );
+      });
+      await renderPlanner();
+
+      expect(await screen.findByText(/Control plane: unreachable/)).toBeTruthy();
+      const systemCalls = () =>
+        fetchMock.mock.calls.filter(([url]) => String(url).includes("/system/status")).length;
+      const before = systemCalls();
+      fireEvent.click(await screen.findByRole("button", { name: "Retry status" }));
+      await waitFor(() => expect(systemCalls()).toBeGreaterThan(before));
+    });
+
+    it("explains Nmap unavailability from the last run instead of the plan result", async () => {
+      stubWithHistory([
+        historyRow({ state: "failed", terminalKind: "failed", terminalReason: "nmap_unavailable" }),
+      ]);
+      await renderPlanner();
+
+      expect(
+        await screen.findByText(/Nmap is not available to the runner/),
+      ).toBeTruthy();
+    });
+
+    it("rejects non-URL targets in web-origin inspection without posting", async () => {
+      const fetchMock = stubWithHistory([]);
+      await renderPlanner();
+
+      fireEvent.click(await screen.findByRole("radio", { name: /Web-origin inspection/ }));
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "192.0.2.10" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(
+        await screen.findByText(/Web-origin inspection needs an HTTP\(S\) URL/),
+      ).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => String(url).endsWith("/actions") && init?.method === "POST",
+        ),
+      ).toHaveLength(0);
+    });
+
+    it("queues a web-origin URL target without Nmap ports", async () => {
+      const queued = persistedAction("queued");
+      const fetchMock = stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs")) return response({ runs: [], nextCursor: null });
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          expect(JSON.parse(String(init.body))).toMatchObject({
+            targets: ["https://host.test/"],
+            declaredPorts: null,
+          });
+          return response(queued, 201);
+        }
+        return readResponse(url, { ...activeEngagement, revision: 1, activeScopeRevisionId: null }, null) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
+      fireEvent.click(await screen.findByRole("radio", { name: /Web-origin inspection/ }));
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "https://host.test/" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(await screen.findByText(/Action queued/)).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => String(url).endsWith("/actions") && init?.method === "POST",
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("refreshes run history statefully after a queued creation", async () => {
+      const queued = persistedAction("queued");
+      let runs: unknown[] = [];
+      const fetchMock = stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs") && (!init || init.method === undefined || init.method === "GET")) {
+          return response({ runs, nextCursor: null });
+        }
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          runs = [
+            historyRow({ state: "queued", id: "run-00000000-0000-4000-8000-000000000002" }),
+          ];
+          return response(queued, 201);
+        }
+        return readResponse(url, { ...activeEngagement, revision: 1, activeScopeRevisionId: null }, null) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
+      expect(
+        await screen.findByText("Runner: no runs yet. The first scan appears here."),
+      ).toBeTruthy();
+
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "192.0.2.10" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(await screen.findByText(/Action queued/)).toBeTruthy();
+      // Invalidation after persistence refetches history; the new queued run appears.
+      await waitFor(() =>
+        expect(screen.queryByText("Runner: no runs yet. The first scan appears here.")).toBeNull(),
+      );
+      expect(
+        fetchMock.mock.calls.some(([called]) => String(called).includes("/runs")),
+      ).toBe(true);
+    });
+
+    it("shows completion freshness after the tracked action succeeds", async () => {
+      const noScope = { ...activeEngagement, revision: 1, activeScopeRevisionId: null };
+      const queued = persistedAction("queued");
+      const succeeded = persistedAction("succeeded", { queuedSnapshotVersion: 1, runState: null });
+      let runs: unknown[] = [];
+      stubFetch((url, init) => {
+        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
+        if (url.includes("/runs") && (!init || init.method === undefined || init.method === "GET")) {
+          return response({ runs, nextCursor: null });
+        }
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          runs = [
+            historyRow({ state: "queued", id: "run-00000000-0000-4000-8000-000000000002" }),
+          ];
+          return response(queued, 201);
+        }
+        if (url.includes(`/actions/${ACTION_ID}`) && (init?.method === undefined || init?.method === "GET")) {
+          runs = [historyRow({ state: "succeeded", terminalKind: "succeeded", terminalReason: null })];
+          return response(succeeded);
+        }
+        if (url.includes("/services") || url.includes("/http-probes")) return response([]);
+        return readResponse(url, noScope, null) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner(noScope);
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "192.0.2.10" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      expect(await screen.findByText(/Action succeeded/)).toBeTruthy();
+      // Terminal invalidation refetches history; the final copy replaces queued.
+      expect(
+        await screen.findByText(/No new services means the target did not answer/),
+      ).toBeTruthy();
+    });
+
+    it("offers Retry status for advisor probe failures", async () => {
+      for (const reason of ["unreachable", "probe_failed"] as const) {
+        cleanup();
+        stubFetch((url) => {
+          if (url.includes("/api/v1/advisor/status")) {
+            return response({ ...unconfiguredAdvisor, reason });
+          }
+          if (url.includes("/runs")) return response({ runs: [], nextCursor: null });
+          return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+        });
+        await renderPlanner();
+        expect(
+          await screen.findByText("Advisor: endpoint not answering. Manual work is unaffected."),
+        ).toBeTruthy();
+        expect(await screen.findByRole("button", { name: "Retry status" })).toBeTruthy();
+      }
+    });
   });
 });

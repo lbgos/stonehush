@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { PersistedActionSchema, type PersistedAction } from "@stonehush/contracts";
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
@@ -44,6 +45,67 @@ const archivedEngagement = {
 };
 
 const readyStatus = { version: 1, overall: "ready", developmentStorage: "ready" };
+
+const ACTION_ID = "40000000-0000-4000-8000-000000000001";
+const SNAPSHOT_ID = "40000000-0000-4000-8000-000000000002";
+const BINDING = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+function queuedAction(): PersistedAction {
+  return PersistedActionSchema.parse({
+    contractVersion: 1,
+    engagementId: activeEngagement.id,
+    revision: 1,
+    warningAcknowledgmentId: null,
+    createdAt: "2026-08-12T12:10:00.000Z",
+    updatedAt: "2026-08-12T12:10:00.000Z",
+    action: {
+      orchestrationProfile: "d2-v1",
+      actionId: ACTION_ID,
+      state: "queued",
+      snapshots: [
+        {
+          normalizationProfile: "d1-v1",
+          orchestrationProfile: "d2-v1",
+          snapshotId: SNAPSHOT_ID,
+          version: 1,
+          binding: BINDING,
+          actionId: ACTION_ID,
+          canonicalTargets: [
+            {
+              kind: "ip",
+              normalizationProfile: "d1-v1",
+              family: 4,
+              address: "192.0.2.10",
+              zone: null,
+            },
+          ],
+          concreteDestinations: [
+            {
+              kind: "ip",
+              normalizationProfile: "d1-v1",
+              family: 4,
+              address: "192.0.2.10",
+              zone: null,
+            },
+          ],
+          typedOptions: { declaredPorts: null },
+          resolutionSnapshots: [],
+          scopeRevisionId: null,
+          warningState: { reasonCodes: [], knownAdditions: [], acknowledgment: null },
+        },
+      ],
+      queuedSnapshotVersion: 1,
+      warningAcknowledgment: null,
+      pendingWarning: null,
+      coveredDestinations: [],
+      warningInteractions: 0,
+      runState: null,
+      resumeRequested: false,
+      cleanupRequired: false,
+      capabilityErrorCode: null,
+    },
+  });
+}
 
 function isReadRequest(init?: RequestInit) {
   return init?.method === undefined || init.method === "GET";
@@ -200,6 +262,9 @@ describe("engagement workspace", () => {
         list = [created];
         return response(created, 201);
       }
+      if (url.endsWith("/actions") && init?.method === "POST") {
+        return response(queuedAction(), 201);
+      }
       if (isReadRequest(init)) {
         return readEngagementResponse(url, list as TestEngagement[]) ?? response(list);
       }
@@ -212,11 +277,12 @@ describe("engagement workspace", () => {
     const createButtons = screen.getAllByRole("button", { name: "New engagement" });
     fireEvent.click(createButtons[0]!);
     const dialog = await screen.findByRole("dialog", { name: "Start an engagement" });
-    expect(document.activeElement).toBe(screen.getByLabelText("Name"));
+    expect(document.activeElement).toBe(screen.getByLabelText(/Name/));
 
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Northstar lab" } });
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: "Northstar lab" } });
     fireEvent.change(screen.getByLabelText("Type"), { target: { value: "lab" } });
-    fireEvent.submit(within(dialog).getByRole("button", { name: "Create engagement" }).closest("form")!);
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.submit(within(dialog).getByRole("button", { name: "Start engagement" }).closest("form")!);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Northstar lab" })).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -233,8 +299,8 @@ describe("engagement workspace", () => {
     await renderWorkspace();
     fireEvent.click(screen.getAllByRole("button", { name: "New engagement" })[0]!);
     const dialog = await screen.findByRole("dialog", { name: "Start an engagement" });
-    fireEvent.submit(within(dialog).getByRole("button", { name: "Create engagement" }).closest("form")!);
-    expect(await screen.findByText("Name must be between 1 and 120 characters.")).toBeTruthy();
+    fireEvent.submit(within(dialog).getByRole("button", { name: "Start engagement" }).closest("form")!);
+    expect(await screen.findByText("Enter at least one target or attach a challenge file.")).toBeTruthy();
     expect(screen.getByRole("dialog", { name: "Start an engagement" })).toBeTruthy();
     expect(screen.queryByText("Engagement created")).toBeNull();
   });
@@ -246,9 +312,10 @@ describe("engagement workspace", () => {
     });
     await renderWorkspace();
     fireEvent.click(screen.getAllByRole("button", { name: "New engagement" })[0]!);
-    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Busy lab" } });
-    fireEvent.submit(screen.getByRole("button", { name: "Create engagement" }).closest("form")!);
-    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: "Busy lab" } });
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.submit(screen.getByRole("button", { name: "Start engagement" }).closest("form")!);
+    expect((await screen.findAllByText("Storage is busy. Try again.")).length).toBeGreaterThan(0);
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Busy lab" })).toBeNull();
   });
@@ -387,7 +454,7 @@ describe("engagement workspace", () => {
     expect(screen.queryByRole("button", { name: /Evidence/ })).toBeNull();
 
     fireEvent.click(screen.getAllByRole("link", { name: "Stonehush home" })[0]!);
-    expect(await screen.findByRole("heading", { level: 1, name: "Workspace" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { level: 1, name: "Start" })).toBeTruthy();
     expect(screen.getByTestId("workspace-notice").textContent).toBe("");
   });
 

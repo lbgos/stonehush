@@ -128,6 +128,23 @@ describe("engagement detail route search", () => {
     ).toEqual({ tab: "runs" });
   });
 
+  it("passes a paused-action id through and drops non-string values", () => {
+    expect(validateEngagementSearch({ action: "action-1", tab: "runs" })).toEqual({
+      action: "action-1",
+      tab: "runs",
+    });
+    expect(validateEngagementSearch({ action: 5 })).toEqual({});
+  });
+
+  it("records the opened engagement for Resume", async () => {
+    vi.stubGlobal("fetch", stubBaseFetch());
+    window.localStorage.clear();
+    await renderRoute(`/engagements/${activeEngagement.id}`);
+
+    expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
+    expect(window.localStorage.getItem("stonehush.lastEngagementId")).toBe(activeEngagement.id);
+  });
+
   it("drops non-string tab and run values", () => {
     expect(validateEngagementSearch({ tab: 3, run: ["run-1"] })).toEqual({});
     expect(validateEngagementSearch({ tab: null, run: undefined })).toEqual({});
