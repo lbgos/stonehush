@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
+import { PersistedActionSchema } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
@@ -47,6 +48,74 @@ const ffufResult = {
 function response(payload: unknown, status = 200): Response {
   return { json: async () => payload, ok: status >= 200 && status < 300, status } as Response;
 }
+
+const LAUNCH_ACTION_ID = "40000000-0000-4000-8000-000000000031";
+const LAUNCH_SNAPSHOT_ID = "40000000-0000-4000-8000-000000000032";
+const LAUNCH_BINDING = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+
+const launchedAction = PersistedActionSchema.parse({
+  contractVersion: 1,
+  engagementId,
+  revision: 1,
+  warningAcknowledgmentId: null,
+  createdAt: "2026-08-12T12:10:00.000Z",
+  updatedAt: "2026-08-12T12:10:00.000Z",
+  action: {
+    orchestrationProfile: "d2-v1",
+    actionId: LAUNCH_ACTION_ID,
+    state: "queued",
+    snapshots: [
+      {
+        normalizationProfile: "d1-v1",
+        orchestrationProfile: "d2-v1",
+        snapshotId: LAUNCH_SNAPSHOT_ID,
+        version: 1,
+        binding: LAUNCH_BINDING,
+        actionId: LAUNCH_ACTION_ID,
+        canonicalTargets: [
+          {
+            kind: "ip",
+            normalizationProfile: "d1-v1",
+            family: 4,
+            address: "192.0.2.10",
+            zone: null,
+          },
+        ],
+        concreteDestinations: [
+          {
+            kind: "ip",
+            normalizationProfile: "d1-v1",
+            family: 4,
+            address: "192.0.2.10",
+            zone: null,
+          },
+        ],
+        typedOptions: {},
+        resolutionSnapshots: [],
+        scopeRevisionId: null,
+        warningState: { reasonCodes: [], knownAdditions: [], acknowledgment: null },
+      },
+    ],
+    queuedSnapshotVersion: 1,
+    warningAcknowledgment: null,
+    pendingWarning: null,
+    coveredDestinations: [],
+    warningInteractions: 0,
+    runState: null,
+    resumeRequested: false,
+    cleanupRequired: false,
+    capabilityErrorCode: null,
+  },
+});
+
+const storedRunnerSettings = {
+  ffufBinaryPath: "/usr/bin/ffuf",
+  ffufWordlistPath: "/wordlists/stored.txt",
+  ffufRate: 100,
+  ffufThreads: 10,
+  ffufTimeoutSeconds: 10,
+  ffufMaxTimeSeconds: 600,
+};
 
 let queryClient: ReturnType<typeof createAppQueryClient>;
 
@@ -164,5 +233,59 @@ describe("EngagementFfufSection", () => {
     expect((screen.getByLabelText("Rate") as HTMLInputElement).value).toBe("100");
     expect((screen.getByLabelText("Threads") as HTMLInputElement).value).toBe("40");
     expect(await screen.findByText(/Using shipped defaults/)).toBeTruthy();
+  });
+
+  it("keeps tracking the running discovery when a resubmit fails validation", async () => {
+    let launches = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === `/api/v1/engagements/${engagementId}`) {
+          return response(detail);
+        }
+        if (url === "/api/v1/settings/runner") return response(storedRunnerSettings);
+        if (url.endsWith("/ffuf-results") && (init?.method === undefined || init?.method === "GET")) {
+          return response([]);
+        }
+        if (url.endsWith("/ffuf-discoveries") && init?.method === "POST") {
+          launches += 1;
+          return response(launchedAction, 201);
+        }
+        return response({ code: "invalid_request" }, 400);
+      }),
+    );
+    renderSurface();
+    await waitFor(() => {
+      expect((screen.getByLabelText("Wordlist path") as HTMLInputElement).value).toBe(
+        "/wordlists/stored.txt",
+      );
+    });
+    fireEvent.change(screen.getByLabelText("Origin"), {
+      target: { value: "http://192.0.2.10:8080" },
+    });
+    const form = screen.getByLabelText("Origin").closest("form")!;
+    fireEvent.submit(form);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    });
+    expect(launches).toBe(1);
+
+    // A relative wordlist fails field validation: the running discovery
+    // stays tracked instead of losing its status and Stop control.
+    fireEvent.change(screen.getByLabelText("Wordlist path"), {
+      target: { value: "wordlists/relative.txt" },
+    });
+    fireEvent.submit(form);
+    expect(
+      await screen.findByText(
+        "Wordlist path must be absolute and must not contain path traversal.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(launches).toBe(1);
+    expect(
+      within(screen.getByRole("region", { name: "ffuf discovery" })).queryByText(/No ffuf results yet/),
+    ).toBeTruthy();
   });
 });

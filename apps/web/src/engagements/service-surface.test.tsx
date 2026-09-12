@@ -407,6 +407,86 @@ describe("EngagementServicesSection", () => {
     });
   });
 
+  it("names which result set is stale when only one side has cached data", async () => {
+    const probe = httpProbe("https://192.0.2.10:8443/");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/http-probes")) return Promise.resolve(response([probe]));
+      return Promise.resolve(response({ code: "storage_busy" }, 503));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSurface();
+    expect(await screen.findByText("Services")).toBeTruthy();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      return Promise.resolve(response({ code: "storage_busy" }, 503));
+    });
+    await queryClient.refetchQueries();
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Web probes are stale\. Path discovery results could not be loaded/),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/results are stale\. Showing the last successful load/)).toBeNull();
+  });
+
+  it("counts web origins by scheme and authority, not host and port", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web8080],
+        [httpProbe("http://192.0.2.10:8080/")],
+        [ffufPath("https://192.0.2.10:8080/admin")],
+      ),
+    );
+    renderSurface();
+    const target = await screen.findByRole("button", { name: /192\.0\.2\.10.*2 web/ });
+    expect(target.textContent).toMatch(/1 paths/);
+  });
+
+  it("keeps overridden and observed scheme blocks on distinct controls", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web8080],
+        [httpProbe("http://192.0.2.10:8080/")],
+        [ffufPath("https://192.0.2.10:8080/admin")],
+      ),
+    );
+    const { container } = renderSurface();
+    const httpLabel = "Scheme for http://192.0.2.10:8080";
+    const httpsLabel = "Scheme for https://192.0.2.10:8080";
+    expect(await screen.findByLabelText(httpLabel)).toBeTruthy();
+    expect(screen.getByLabelText(httpsLabel)).toBeTruthy();
+    // Overriding the HTTP block to HTTPS must not merge control identity
+    // with the already observed HTTPS block.
+    fireEvent.change(screen.getByLabelText(httpLabel), { target: { value: "https" } });
+    await waitFor(() => {
+      expect(screen.getByLabelText(httpLabel)).toBeTruthy();
+    });
+    expect(screen.getByLabelText(httpsLabel)).toBeTruthy();
+    const rows = [...container.querySelectorAll("[data-surface-row]")].map((node) =>
+      node.getAttribute("data-surface-row"),
+    );
+    expect(new Set(rows).size).toBe(rows.length);
+  });
+
   it("renders a shared-hostname observation once under its own target", async () => {
     const first = {
       ...serviceA,

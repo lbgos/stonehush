@@ -15,6 +15,7 @@ import {
   isLauncherStoppable,
   isServiceRowSelected,
   launcherWarningKind,
+  selectDisplayAction,
   serviceSelectionKey,
   isWebServiceCandidate,
   parseOriginScheme,
@@ -103,6 +104,46 @@ const continuedAction = PersistedActionSchema.parse({
     },
   },
 });
+
+const queuedLaunchAction = PersistedActionSchema.parse({
+  ...validPausedAction,
+  revision: 1,
+  action: {
+    ...validPausedAction.action,
+    state: "queued",
+    queuedSnapshotVersion: 1,
+    pendingWarning: null,
+    warningInteractions: 0,
+    runState: null,
+  },
+});
+
+const launcherEngagement = {
+  contractVersion: 1,
+  id: engagementId,
+  revision: 2,
+  name: "Target lab",
+  kind: "lab",
+  status: "active",
+  description: null,
+  authorizationContext: null,
+  autoContinueWarnings: false,
+  activeScopeRevisionId: null,
+  deadlineAt: null,
+  createdAt: "2026-08-12T12:00:00.000Z",
+  updatedAt: "2026-08-12T12:00:00.000Z",
+};
+
+const launcherDetail = { engagement: launcherEngagement, activeScopeRevision: null };
+
+const storedRunnerSettings = {
+  ffufBinaryPath: "/usr/bin/ffuf",
+  ffufWordlistPath: "/wordlists/stored.txt",
+  ffufRate: 100,
+  ffufThreads: 10,
+  ffufTimeoutSeconds: 10,
+  ffufMaxTimeSeconds: 600,
+};
 
 function launchedAction(
   state: PersistedAction["action"]["state"],
@@ -439,6 +480,22 @@ describe("origin helpers", () => {
     expect(isLauncherStoppable(launchedAction("active", null, "running"))).toBe(false);
   });
 
+  it("prefers the higher action revision between poll results and mutation results", () => {
+    const atRevision = (revision: number) =>
+      ({ revision }) as unknown as PersistedAction;
+    expect(selectDisplayAction(undefined, undefined)).toBeUndefined();
+    const onlyPolled = atRevision(2);
+    expect(selectDisplayAction(onlyPolled, undefined)).toBe(onlyPolled);
+    const onlyResult = atRevision(3);
+    expect(selectDisplayAction(undefined, onlyResult)).toBe(onlyResult);
+    const polled = atRevision(2);
+    const result = atRevision(4);
+    // A successful cancel (revision 4) supersedes the stale poll (revision 2)
+    // immediately instead of waiting for the next poll.
+    expect(selectDisplayAction(polled, result)).toBe(result);
+    expect(selectDisplayAction(result, polled)).toBe(result);
+  });
+
   it("shows the paused run warning with Continue but no Add to scope", () => {
     render(
       <QueryClientProvider client={queryClient}>
@@ -607,6 +664,114 @@ describe("origin helpers", () => {
     });
     // Untouched fields still follow the stored defaults.
     expect((screen.getByLabelText("Threads") as HTMLInputElement).value).toBe("10");
+  });
+
+  it("keeps tracking the running ffuf action when a resubmit fails validation", async () => {
+    let launches = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === `/api/v1/engagements/${engagementId}`) {
+          return response(launcherDetail);
+        }
+        if (url === "/api/v1/settings/runner") return response(storedRunnerSettings);
+        if (url.endsWith("/ffuf-discoveries") && init?.method === "POST") {
+          launches += 1;
+          return response(queuedLaunchAction, 201);
+        }
+        return response({ code: "invalid_request" }, 400);
+      }),
+    );
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ActionLauncher
+          archived={false}
+          engagementId={engagementId}
+          onClose={() => undefined}
+          request={{ kind: "ffuf", origin: "http://192.0.2.10:8080", sourceLabel: "test" }}
+        />
+      </QueryClientProvider>,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Discover paths" });
+    const originField = await within(dialog).findByLabelText("Origin");
+    const form = originField.closest("form")!;
+    // Wait for the stored wordlist prefill so the submit starts valid.
+    await waitFor(() => {
+      expect(
+        (within(dialog).getByLabelText("Wordlist path") as HTMLInputElement).value,
+      ).toBe("/wordlists/stored.txt");
+    });
+    fireEvent.submit(form);
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Stop" })).toBeTruthy();
+    });
+    expect(launches).toBe(1);
+
+    // An empty wordlist fails validation: the running action stays tracked.
+    fireEvent.change(within(dialog).getByLabelText("Wordlist path"), { target: { value: "" } });
+    fireEvent.submit(form);
+    expect(
+      await within(dialog).findByText("Wordlist path must be an absolute managed path."),
+    ).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(launches).toBe(1);
+
+    // An out-of-range numeric field names its field instead of failing vaguely.
+    fireEvent.change(within(dialog).getByLabelText("Wordlist path"), {
+      target: { value: "/wordlists/stored.txt" },
+    });
+    fireEvent.change(within(dialog).getByLabelText("Threads"), { target: { value: "201" } });
+    fireEvent.submit(form);
+    expect(
+      await within(dialog).findByText("Threads must be an integer in 1-200."),
+    ).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(launches).toBe(1);
+  });
+
+  it("keeps tracking the running probe when a resubmit fails validation", async () => {
+    let launches = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url === `/api/v1/engagements/${engagementId}`) {
+          return response(launcherDetail);
+        }
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          launches += 1;
+          return response(queuedLaunchAction, 201);
+        }
+        return response({ code: "invalid_request" }, 400);
+      }),
+    );
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ActionLauncher
+          archived={false}
+          engagementId={engagementId}
+          onClose={() => undefined}
+          request={{ kind: "probe", origin: "http://192.0.2.10/", sourceLabel: "test" }}
+        />
+      </QueryClientProvider>,
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Probe web" });
+    const originField = await within(dialog).findByLabelText("Origin");
+    const form = originField.closest("form")!;
+    fireEvent.submit(form);
+    await waitFor(() => {
+      expect(within(dialog).getByRole("button", { name: "Stop" })).toBeTruthy();
+    });
+    expect(launches).toBe(1);
+
+    fireEvent.change(within(dialog).getByLabelText("Origin"), { target: { value: "" } });
+    fireEvent.submit(form);
+    expect(
+      await within(dialog).findByText("Origin must be an http or https URL."),
+    ).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Stop" })).toBeTruthy();
+    expect(launches).toBe(1);
   });
 
   it("detects web candidates and port defaults", () => {

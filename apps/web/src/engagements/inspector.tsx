@@ -40,7 +40,7 @@ import {
   warningReasonSummary,
 } from "./action-targets.js";
 import { EngagementMutationClientError, engagementMutationMessage } from "./errors.js";
-import { useLaunchFfufDiscoveryMutation } from "./ffuf-mutations.js";
+import { parseFfufPositiveInt, useLaunchFfufDiscoveryMutation, validateFfufWordlistPath } from "./ffuf-mutations.js";
 import { useFindingsQuery } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
 import {
@@ -947,6 +947,21 @@ export function isLauncherStoppable(displayAction: PersistedAction | undefined):
   );
 }
 
+// A mutation result (launch, cancel, continue) must supersede stale polled
+// cache immediately: revisions increase monotonically per action, so the
+// higher revision is always the newer truth. Without this, a successful
+// cancel briefly loses to the previous poll and re-enables Stop/Continue
+// until the next poll lands.
+export function selectDisplayAction(
+  polledAction: PersistedAction | undefined,
+  resultAction: PersistedAction | undefined,
+): PersistedAction | undefined {
+  if (polledAction !== undefined && resultAction !== undefined) {
+    return polledAction.revision >= resultAction.revision ? polledAction : resultAction;
+  }
+  return polledAction ?? resultAction;
+}
+
 export function PausedRunWarning({
   action,
   engagementId,
@@ -1254,7 +1269,10 @@ function useLauncherActionState(
     retry: false,
   });
 
-  const displayAction = trackedActionId !== undefined ? (polledActionQuery.data ?? result) : result;
+  const displayAction =
+    trackedActionId !== undefined
+      ? selectDisplayAction(polledActionQuery.data ?? undefined, result)
+      : result;
 
   useEffect(() => {
     hasInvalidatedRef.current = null;
@@ -1365,15 +1383,17 @@ function ProbeLauncherForm({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canLaunch) return;
-    createAction.reset();
-    cancelAction.reset();
-    launcher.setResultNone();
+    // Validate before touching launcher state so a rejected edit keeps the
+    // running action polled and stoppable.
     const nextOrigin = withOriginScheme(originText.trim(), scheme);
     if (!isHttpUrl(nextOrigin) || splitOriginUrl(nextOrigin) === undefined) {
       setFieldError("Origin must be an http or https URL.");
       return;
     }
     setFieldError(undefined);
+    createAction.reset();
+    cancelAction.reset();
+    launcher.setResultNone();
     launcher.setPlannedTargets([nextOrigin]);
     createAction.mutate(
       {
@@ -1459,17 +1479,6 @@ function ProbeLauncherForm({
       />
     </div>
   );
-}
-
-function parseLauncherPositiveInt(
-  raw: string,
-  field: string,
-): { ok: true; value: number } | { ok: false; message: string } {
-  const value = Number.parseInt(raw.trim(), 10);
-  if (!/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(value) || value < 1) {
-    return { ok: false, message: `${field} must be a positive integer.` };
-  }
-  return { ok: true, value };
 }
 
 function parseLauncherMatchCodes(raw: string): { ok: true; value: number[] } | { ok: false; message: string } {
@@ -1573,22 +1582,22 @@ function FfufLauncherForm({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canLaunch) return;
-    launch.reset();
-    cancelAction.reset();
-    launcher.setResultNone();
+    // Validate everything before touching launcher state: a rejected edit
+    // must keep polling and cancelling the already-running action.
     if (!isHttpUrl(originText.trim()) || splitOriginUrl(originText.trim()) === undefined) {
       setFieldError("Origin must be an http or https URL.");
       return;
     }
-    if (wordlistPath.trim().length === 0) {
-      setFieldError("Wordlist path must be an absolute managed path.");
+    const wordlist = validateFfufWordlistPath(wordlistPath);
+    if (!wordlist.ok) {
+      setFieldError(wordlist.message);
       return;
     }
     const parsed = {
-      rate: parseLauncherPositiveInt(rate, "Rate"),
-      threads: parseLauncherPositiveInt(threads, "Threads"),
-      timeout: parseLauncherPositiveInt(timeoutSeconds, "Timeout"),
-      maxTime: parseLauncherPositiveInt(maxTimeSeconds, "Duration"),
+      rate: parseFfufPositiveInt(rate, "rate", "Rate"),
+      threads: parseFfufPositiveInt(threads, "threads", "Threads"),
+      timeout: parseFfufPositiveInt(timeoutSeconds, "timeoutSeconds", "Timeout"),
+      maxTime: parseFfufPositiveInt(maxTimeSeconds, "maxTimeSeconds", "Duration"),
       codes: parseLauncherMatchCodes(matchCodes),
     };
     const failure = [parsed.rate, parsed.threads, parsed.timeout, parsed.maxTime, parsed.codes].find(
@@ -1601,6 +1610,9 @@ function FfufLauncherForm({
     if (!parsed.rate.ok || !parsed.threads.ok || !parsed.timeout.ok || !parsed.maxTime.ok || !parsed.codes.ok) {
       return;
     }
+    launch.reset();
+    cancelAction.reset();
+    launcher.setResultNone();
     setFieldError(undefined);
     const target = originText.trim();
     launcher.setPlannedTargets([target]);
@@ -1610,7 +1622,7 @@ function FfufLauncherForm({
         expectedEngagementRevision: detail.expectedEngagementRevision,
         expectedActiveScopeRevisionId: detail.expectedActiveScopeRevisionId,
         origin: target,
-        wordlistPath: wordlistPath.trim(),
+        wordlistPath: wordlist.value,
         rate: parsed.rate.value,
         threads: parsed.threads.value,
         timeoutSeconds: parsed.timeout.value,

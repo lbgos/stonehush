@@ -17,9 +17,9 @@ import { useCancelActionMutation } from "./action-mutations.js";
 import { actionLifecycleStatusCopy, isTerminalActionState, persistedActionQueryOptions } from "./action-query.js";
 import { latestActionSnapshot } from "./action-targets.js";
 import { engagementMutationMessage } from "./errors.js";
-import { type FfufDiscoveryInput, useLaunchFfufDiscoveryMutation } from "./ffuf-mutations.js";
+import { type FfufDiscoveryInput, parseFfufPositiveInt, useLaunchFfufDiscoveryMutation, validateFfufWordlistPath } from "./ffuf-mutations.js";
 import { formatEngagementTimestamp } from "./format.js";
-import { isLauncherStoppable, isPathRowSelected, pathInspectorRecord, pathSelectionKey, PausedRunWarning, type ExtraRowActions } from "./inspector.js";
+import { isLauncherStoppable, isPathRowSelected, pathInspectorRecord, pathSelectionKey, PausedRunWarning, selectDisplayAction, type ExtraRowActions } from "./inspector.js";
 import {
   engagementFfufResultsQueryKey,
   useEngagementDetailQuery,
@@ -29,14 +29,6 @@ import { copyTextToClipboard } from "./report-query.js";
 import { reportQueryKey } from "./report-query.js";
 
 const DEFAULT_MATCH_CODES = "200, 204, 301, 302, 307, 308, 401, 403";
-
-function parsePositiveInt(raw: string, field: string): { ok: true; value: number } | { ok: false; message: string } {
-  const value = Number.parseInt(raw.trim(), 10);
-  if (!/^\d+$/.test(raw.trim()) || !Number.isSafeInteger(value) || value < 1) {
-    return { ok: false, message: `${field} must be a positive integer.` };
-  }
-  return { ok: true, value };
-}
 
 function parseMatchCodes(raw: string): { ok: true; value: number[] } | { ok: false; message: string } {
   const values: number[] = [];
@@ -165,7 +157,10 @@ function FfufDiscoveryBody({
     retry: false,
   });
 
-  const displayAction = trackedActionId !== undefined ? (polledActionQuery.data ?? result) : result;
+  const displayAction =
+    trackedActionId !== undefined
+      ? selectDisplayAction(polledActionQuery.data ?? undefined, result)
+      : result;
 
   useEffect(() => {
     hasInvalidatedFfufRef.current = null;
@@ -200,23 +195,22 @@ function FfufDiscoveryBody({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canLaunch) return;
-    launch.reset();
-    cancelAction.reset();
-    setResult(undefined);
-    setTrackedActionId(undefined);
+    // Validate everything before touching launcher state: a rejected edit
+    // must keep polling and cancelling the already-running discovery.
     if (origin.trim().length === 0) {
       setFieldError("Origin must be an http or https URL.");
       return;
     }
-    if (wordlistPath.trim().length === 0) {
-      setFieldError("Wordlist path must be an absolute managed path.");
+    const wordlist = validateFfufWordlistPath(wordlistPath);
+    if (!wordlist.ok) {
+      setFieldError(wordlist.message);
       return;
     }
     const parsed = {
-      rate: parsePositiveInt(rate, "Rate"),
-      threads: parsePositiveInt(threads, "Threads"),
-      timeout: parsePositiveInt(timeoutSeconds, "Timeout"),
-      maxTime: parsePositiveInt(maxTimeSeconds, "Duration"),
+      rate: parseFfufPositiveInt(rate, "rate", "Rate"),
+      threads: parseFfufPositiveInt(threads, "threads", "Threads"),
+      timeout: parseFfufPositiveInt(timeoutSeconds, "timeoutSeconds", "Timeout"),
+      maxTime: parseFfufPositiveInt(maxTimeSeconds, "maxTimeSeconds", "Duration"),
       codes: parseMatchCodes(matchCodes),
     };
     const failure = [parsed.rate, parsed.threads, parsed.timeout, parsed.maxTime, parsed.codes].find(
@@ -227,13 +221,17 @@ function FfufDiscoveryBody({
       return;
     }
     if (!parsed.rate.ok || !parsed.threads.ok || !parsed.timeout.ok || !parsed.maxTime.ok || !parsed.codes.ok) return;
+    launch.reset();
+    cancelAction.reset();
+    setResult(undefined);
+    setTrackedActionId(undefined);
     setFieldError(undefined);
     const inputs: FfufDiscoveryInput = {
       engagementId,
       expectedEngagementRevision,
       expectedActiveScopeRevisionId,
       origin: origin.trim(),
-      wordlistPath: wordlistPath.trim(),
+      wordlistPath: wordlist.value,
       rate: parsed.rate.value,
       threads: parsed.threads.value,
       timeoutSeconds: parsed.timeout.value,

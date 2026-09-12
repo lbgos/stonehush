@@ -325,15 +325,18 @@ export function EngagementServicesSection({
     if (ffufQuery.isError) void ffufQuery.refetch();
   };
   // Cached observations stay visible under a failed refresh, so the banner
-  // must not claim they are absent. Name exactly what failed and whether the
-  // rows below are missing or stale.
+  // must name exactly which result set is stale and which is absent.
   const probesStale = probesQuery.isError && probes !== undefined;
   const ffufStale = ffufQuery.isError && ffufResults !== undefined;
   const webStatusCopy =
     probesQuery.isError && ffufQuery.isError
-      ? probesStale || ffufStale
+      ? probesStale && ffufStale
         ? "Web probes and path discovery results are stale. Showing the last successful load."
-        : "Web probes and path discovery results could not be loaded. Showing services only."
+        : probesStale
+          ? "Web probes are stale. Path discovery results could not be loaded. Showing cached probes and services only."
+          : ffufStale
+            ? "Path discovery results are stale. Web probes could not be loaded. Showing cached path discovery results and services only."
+            : "Web probes and path discovery results could not be loaded. Showing services only."
       : probesQuery.isError
         ? probesStale
           ? "Web probes are stale. Showing the last successful load."
@@ -447,8 +450,16 @@ function collectTargets(
     const entry = ensure(service.address);
     entry.services += 1;
     if (entry.hostname === null && service.hostname !== null) entry.hostname = service.hostname;
-    if (isWebServiceCandidate(service)) {
-      entry.origins.add(`${service.address}:${String(service.port)}`);
+    // Count exactly the origins rendering produces: one block per observed
+    // endpoint, or one heuristic block when nothing was observed.
+    const { serviceProbes, servicePaths } = matchedServiceObservations(
+      service,
+      probes,
+      ffufResults,
+      services,
+    );
+    for (const group of groupServiceOrigins(service, serviceProbes, servicePaths)) {
+      entry.origins.add(observedOriginKey(group.host, group.port, group.scheme));
     }
   }
   if (probes !== undefined) {
@@ -457,7 +468,7 @@ function collectTargets(
       if (parts === undefined) continue;
       const canonicalTarget = canonicalTargetForHost(parts.host, services);
       const entry = ensure(canonicalTarget);
-      entry.origins.add(`${parts.host}:${String(parts.port)}`);
+      entry.origins.add(observedOriginKey(parts.host, parts.port, parts.scheme));
     }
   }
   if (ffufResults !== undefined) {
@@ -466,7 +477,7 @@ function collectTargets(
       if (parts === undefined) continue;
       const canonicalTarget = canonicalTargetForHost(parts.host, services);
       const entry = ensure(canonicalTarget);
-      entry.origins.add(`${parts.host}:${String(parts.port)}`);
+      entry.origins.add(observedOriginKey(parts.host, parts.port, parts.scheme));
       entry.paths += 1;
     }
   }
@@ -575,17 +586,12 @@ function TargetGroup({
       </div>
       <div className="divide-y divide-border">
         {services.map((service) => {
-          const serviceProbes = (probes ?? []).filter((probe) =>
-            probeMatchesService(probe, service, allServices),
+          const { serviceProbes, servicePaths } = matchedServiceObservations(
+            service,
+            probes,
+            ffufResults,
+            allServices,
           );
-          const servicePaths = (ffufResults ?? []).filter((result) => {
-            const parts = splitOriginUrl(result.url);
-            return (
-              parts !== undefined &&
-              parts.port === service.port &&
-              hostMatchesService(parts.host, service, allServices)
-            );
-          });
           const originGroups = groupServiceOrigins(service, serviceProbes, servicePaths);
           return (
             <div key={`${service.address}:${String(service.port)}:${service.protocol}:${service.artifactId}`}>
@@ -605,6 +611,7 @@ function TargetGroup({
                     engagementId={engagementId}
                     extraRowActions={extraRowActions}
                     host={group.host}
+                    observedScheme={group.scheme}
                     onAskAbout={onAskAbout}
                     onOpenLauncher={onOpenLauncher}
                     onSelectKey={onSelectKey}
@@ -667,6 +674,28 @@ function probeMatchesService(
   const parts = splitOriginUrl(probe.url);
   if (parts === undefined || parts.port !== service.port) return false;
   return hostMatchesService(parts.host, service, allServices);
+}
+
+// Observations matched to one service, shared by rendering and target
+// summaries so both count the same endpoints.
+function matchedServiceObservations(
+  service: NmapProjectedService,
+  probes: readonly HttpProbeProjected[] | undefined,
+  ffufResults: readonly FfufProjected[] | undefined,
+  allServices: readonly NmapProjectedService[],
+): { serviceProbes: HttpProbeProjected[]; servicePaths: FfufProjected[] } {
+  const serviceProbes = (probes ?? []).filter((probe) =>
+    probeMatchesService(probe, service, allServices),
+  );
+  const servicePaths = (ffufResults ?? []).filter((result) => {
+    const parts = splitOriginUrl(result.url);
+    return (
+      parts !== undefined &&
+      parts.port === service.port &&
+      hostMatchesService(parts.host, service, allServices)
+    );
+  });
+  return { serviceProbes, servicePaths };
 }
 
 interface ObservedOriginGroup {
@@ -810,6 +839,7 @@ function UnmatchedOrigins({
               engagementId={engagementId}
               extraRowActions={extraRowActions}
               host={entry.host}
+              observedScheme={entry.scheme}
               onAskAbout={onAskAbout}
               onOpenLauncher={onOpenLauncher}
               onSelectKey={onSelectKey}
@@ -874,6 +904,7 @@ function ObservedOriginsWithoutServices({
               engagementId={engagementId}
               extraRowActions={extraRowActions}
               host={entry.host}
+              observedScheme={entry.scheme}
               onAskAbout={onAskAbout}
               onOpenLauncher={onOpenLauncher}
               onSelectKey={onSelectKey}
@@ -898,6 +929,7 @@ function OriginBlock({
   engagementId,
   extraRowActions,
   host,
+  observedScheme,
   onAskAbout,
   onOpenLauncher,
   onSelectKey,
@@ -914,6 +946,7 @@ function OriginBlock({
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
   host: string;
+  observedScheme: OriginScheme;
   onAskAbout: ((target: string) => void) | undefined;
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
@@ -932,7 +965,11 @@ function OriginBlock({
   // Origin-level row identifier so launcher actions carry a defined sourceKey
   // for focus restoration. The container is not a selectable inspector row,
   // so the key uses an origin namespace that never collides with selection keys.
-  const rowKey = `origin:${scheme}:${host}:${String(port)}`;
+  // Identity follows the OBSERVED block origin, never the mutable selected
+  // scheme: overriding HTTP to HTTPS must not collide with an already
+  // observed HTTPS block on the same host and port.
+  const identityKey = observedOriginKey(host, port, observedScheme);
+  const rowKey = `origin:${identityKey}`;
   return (
     <div
       className="mx-3 mb-3 rounded-md border border-border"
@@ -940,11 +977,11 @@ function OriginBlock({
       data-surface-row={rowKey}
     >
       <div className="flex flex-wrap items-center gap-2 px-2.5 py-2">
-        <label className="sr-only" htmlFor={`scheme-${scheme}-${host}-${String(port)}`}>
-          Scheme for {scheme}://{host}:{String(port)}
+        <label className="sr-only" htmlFor={`scheme-${identityKey}`}>
+          Scheme for {identityKey}
         </label>
         <select
-          id={`scheme-${scheme}-${host}-${String(port)}`}
+          id={`scheme-${identityKey}`}
           value={scheme}
           onChange={(event) => setScheme(event.target.value === "https" ? "https" : "http")}
           className="h-8 rounded-md border border-input bg-transparent px-1.5 font-mono text-[12px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
