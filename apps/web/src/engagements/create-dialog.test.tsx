@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import { PersistedActionSchema, type PersistedAction } from "@stonehush/contracts";
+import {
+  PersistedActionSchema,
+  canonicalizeJson,
+  type PersistedAction,
+} from "@stonehush/contracts";
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import {
@@ -805,5 +809,184 @@ describe("CreateEngagementDialog start", () => {
     expect(await screen.findByText(/Enter a valid URL/)).toBeTruthy();
     const details = screen.getByText("More options").closest("details");
     expect(details?.open).toBe(true);
+  });
+
+  it("resends identical scope rule ids and canonical body on lost-response retry", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    const stored = new Map<string, { body: unknown; revision: unknown }>();
+    let scopeCommits = 0;
+    let loseFirst = true;
+    const fetchMock = stubFetch((url, init) => {
+      if (
+        url === `/api/v1/engagements/${ENGAGEMENT_ID}/scope-revisions` &&
+        init?.method === "POST"
+      ) {
+        const key = String((init?.headers as Record<string, string>)["Idempotency-Key"]);
+        const body = JSON.parse(String(init?.body)) as unknown;
+        const prev = stored.get(key);
+        if (prev !== undefined) {
+          // Real server semantics: same key replays only when the canonical
+          // body digest matches, otherwise it conflicts.
+          const prevJson = canonicalizeJson(prev.body);
+          const nextJson = canonicalizeJson(body);
+          if (
+            prevJson.ok &&
+            nextJson.ok &&
+            prevJson.canonicalJson === nextJson.canonicalJson
+          ) {
+            return response(prev.revision, 201);
+          }
+          return response({ code: "idempotency_conflict" }, 409);
+        }
+        const revision = {
+          contractVersion: 1,
+          id: SCOPE_ID,
+          engagementId: ENGAGEMENT_ID,
+          version: 1,
+          rules: (body as { rules: unknown }).rules,
+          createdAt: "2026-08-12T12:06:00.000Z",
+        };
+        stored.set(key, { body, revision });
+        scopeCommits += 1;
+        if (loseFirst) {
+          loseFirst = false;
+          throw new Error("offline");
+        }
+        return response(revision, 201);
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.click(screen.getByLabelText("Also save these targets as scope"));
+    submitStart();
+
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(scopeCommits).toBe(1);
+    const scopeCalls = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).endsWith("/scope-revisions") && init?.method === "POST",
+    );
+    expect(scopeCalls).toHaveLength(2);
+    const bodies = scopeCalls.map(([, init]) => JSON.parse(String(init?.body)));
+    // Identical canonical body, including generated rule ids.
+    expect(bodies[1]).toEqual(bodies[0]);
+    const firstIds = (bodies[0] as { rules: Array<{ id: string }> }).rules.map((rule) => rule.id);
+    const secondIds = (bodies[1] as { rules: Array<{ id: string }> }).rules.map((rule) => rule.id);
+    expect(secondIds).toEqual(firstIds);
+    const firstJson = canonicalizeJson(bodies[0]);
+    const secondJson = canonicalizeJson(bodies[1]);
+    expect(firstJson.ok && secondJson.ok).toBe(true);
+    if (firstJson.ok && secondJson.ok) {
+      expect(secondJson.canonicalJson).toBe(firstJson.canonicalJson);
+    }
+    const keys = scopeCalls.map(([, init]) =>
+      String((init?.headers as Record<string, string>)["Idempotency-Key"]),
+    );
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  it("uses new scope ids and key when retry targets change", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let scopeCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (
+        url === `/api/v1/engagements/${ENGAGEMENT_ID}/scope-revisions` &&
+        init?.method === "POST"
+      ) {
+        scopeCalls += 1;
+        if (scopeCalls === 1) return response({ code: "storage_busy" }, 503);
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    fireEvent.click(screen.getByLabelText("Also save these targets as scope"));
+    submitStart();
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    // Scope has not been saved yet, so targets stay editable. New targets
+    // mean a new scope intent with fresh rule ids and a new key.
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "198.51.100.25" } });
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    const scopeCallsList = fetchMock.mock.calls.filter(
+      ([url, init]) => String(url).endsWith("/scope-revisions") && init?.method === "POST",
+    );
+    expect(scopeCallsList).toHaveLength(2);
+    const bodies = scopeCallsList.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[1]).not.toEqual(bodies[0]);
+    const keys = scopeCallsList.map(([, init]) =>
+      String((init?.headers as Record<string, string>)["Idempotency-Key"]),
+    );
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("drops a prior read when an oversized replacement is picked", async () => {
+    stubFetch(engagementHandler("Lab brief"));
+    await renderDialog();
+
+    const resolvers: Array<(text: string) => void> = [];
+    vi.spyOn(File.prototype, "text").mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "keep me" } });
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [new File(["first content"], "a.txt", { type: "text/plain" })] },
+    });
+    expect(resolvers).toHaveLength(1);
+    const oversized = new File(["x"], "big.txt", { type: "text/plain" });
+    Object.defineProperty(oversized, "size", { value: 300 * 1024 });
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [oversized] },
+    });
+
+    expect(
+      await screen.findByText("That file is larger than 256 KB. Paste the relevant part instead."),
+    ).toBeTruthy();
+    expect(screen.queryByText("a.txt")).toBeNull();
+    // Unrelated fields are preserved.
+    expect((screen.getByLabelText(/Targets/) as HTMLTextAreaElement).value).toBe("keep me");
+    // The earlier read finishes last; it must not restore the old file or clear the error.
+    resolvers[0]!("first content");
+    await waitFor(() =>
+      expect(
+        screen.getByText("That file is larger than 256 KB. Paste the relevant part instead."),
+      ).toBeTruthy(),
+    );
+    expect(screen.queryByText("a.txt")).toBeNull();
+  });
+
+  it("clears a prior attachment when an oversized file replaces it", async () => {
+    stubFetch(engagementHandler("Lab brief"));
+    await renderDialog();
+
+    const file = new File(["valid"], "ok.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText(/Challenge file/), { target: { files: [file] } });
+    expect(await screen.findByText("ok.txt")).toBeTruthy();
+
+    const oversized = new File(["x"], "big.txt", { type: "text/plain" });
+    Object.defineProperty(oversized, "size", { value: 300 * 1024 });
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [oversized] },
+    });
+
+    expect(
+      await screen.findByText("That file is larger than 256 KB. Paste the relevant part instead."),
+    ).toBeTruthy();
+    expect(screen.queryByText("ok.txt")).toBeNull();
   });
 });

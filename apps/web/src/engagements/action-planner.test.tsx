@@ -1068,5 +1068,193 @@ describe("action planner", () => {
         expect(await screen.findByRole("button", { name: "Retry status" })).toBeTruthy();
       }
     });
+
+    it("switches the warning when the route action is replaced without remount", async () => {
+      const ACTION_B = "40000000-0000-4000-8000-000000000009";
+      const pausedA = persistedAction("paused_for_warning");
+      const pausedB = PersistedActionSchema.parse({
+        ...pausedA,
+        action: {
+          ...pausedA.action,
+          actionId: ACTION_B,
+          snapshots: pausedA.action.snapshots.map((snapshot) => ({
+            ...snapshot,
+            actionId: ACTION_B,
+          })),
+        },
+      });
+      const queuedB = PersistedActionSchema.parse({
+        ...persistedAction("queued"),
+        action: {
+          ...persistedAction("queued").action,
+          actionId: ACTION_B,
+          snapshots: persistedAction("queued").action.snapshots.map((snapshot) => ({
+            ...snapshot,
+            actionId: ACTION_B,
+          })),
+        },
+      });
+      const fetchMock = stubFetch((url, init) => {
+        if (
+          url === `/api/v1/engagements/${activeEngagement.id}/actions/${ACTION_ID}` &&
+          (init?.method === undefined || init.method === "GET")
+        ) {
+          return response(pausedA);
+        }
+        if (
+          url === `/api/v1/engagements/${activeEngagement.id}/actions/${ACTION_B}` &&
+          (init?.method === undefined || init.method === "GET")
+        ) {
+          return response(pausedB);
+        }
+        if (
+          url === `/api/v1/engagements/${activeEngagement.id}/actions/${ACTION_B}/continue` &&
+          init?.method === "POST"
+        ) {
+          return response(queuedB);
+        }
+        return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      const { router } = await renderPlanner(activeEngagement, `?action=${ACTION_ID}`);
+      expect(
+        await screen.findByRole("dialog", { name: "Action needs a warning" }),
+      ).toBeTruthy();
+
+      await router.navigate({
+        to: "/engagements/$engagementId",
+        params: { engagementId: activeEngagement.id },
+        search: { action: ACTION_B },
+      });
+
+      // New action loads and its Continue targets the new id, not the old one.
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([called, init]) =>
+              String(called).endsWith(`/actions/${ACTION_B}`) &&
+              (init?.method === undefined || init.method === "GET"),
+          ),
+        ).toBe(true),
+      );
+      const dialog = await screen.findByRole("dialog", { name: "Action needs a warning" });
+      fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([called, init]) =>
+            String(called).endsWith(`/actions/${ACTION_B}/continue`) && init?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+      expect(
+        fetchMock.mock.calls.some(([called, init]) =>
+          String(called).endsWith(`/actions/${ACTION_ID}/continue`) && init?.method === "POST",
+        ),
+      ).toBe(false);
+    });
+
+    it("clears the tracked warning when the route action is removed", async () => {
+      const paused = persistedAction("paused_for_warning");
+      stubFetch((url, init) => {
+        if (
+          url === `/api/v1/engagements/${activeEngagement.id}/actions/${ACTION_ID}` &&
+          (init?.method === undefined || init.method === "GET")
+        ) {
+          return response(paused);
+        }
+        return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      const { router } = await renderPlanner(activeEngagement, `?action=${ACTION_ID}`);
+      expect(
+        await screen.findByRole("dialog", { name: "Action needs a warning" }),
+      ).toBeTruthy();
+
+      await router.navigate({
+        to: "/engagements/$engagementId",
+        params: { engagementId: activeEngagement.id },
+        search: {},
+      });
+
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Action needs a warning" })).toBeNull(),
+      );
+      expect(screen.queryByText("Status update failed.")).toBeNull();
+    });
+
+    it("shows a foreign action error without a warning card", async () => {
+      stubFetch((url) => {
+        if (url.includes(`/actions/ffffffff-ffff-4fff-bfff-ffffffffffff`)) {
+          return response({ code: "action_not_found" }, 404);
+        }
+        return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner(activeEngagement, `?action=ffffffff-ffff-4fff-bfff-ffffffffffff`);
+
+      expect(await screen.findByText("Status update failed.")).toBeTruthy();
+      expect(screen.queryByRole("dialog", { name: "Action needs a warning" })).toBeNull();
+      expect(await screen.findByRole("button", { name: "Refresh" })).toBeTruthy();
+    });
+
+    it("keeps the new route selection when an older plan resolves late", async () => {
+      const ACTION_B = "40000000-0000-4000-8000-000000000009";
+      const pausedB = PersistedActionSchema.parse({
+        ...persistedAction("paused_for_warning"),
+        action: {
+          ...persistedAction("paused_for_warning").action,
+          actionId: ACTION_B,
+          snapshots: persistedAction("paused_for_warning").action.snapshots.map((snapshot) => ({
+            ...snapshot,
+            actionId: ACTION_B,
+          })),
+        },
+      });
+      const queuedA = persistedAction("queued");
+      let releasePlan!: (value: Response) => void;
+      const fetchMock = stubFetch((url, init) => {
+        if (url.endsWith("/actions") && init?.method === "POST") {
+          return new Promise<Response>((resolve) => {
+            releasePlan = resolve;
+          });
+        }
+        if (
+          url === `/api/v1/engagements/${activeEngagement.id}/actions/${ACTION_B}` &&
+          (init?.method === undefined || init.method === "GET")
+        ) {
+          return response(pausedB);
+        }
+        return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      const { router } = await renderPlanner(activeEngagement);
+      fireEvent.change(await screen.findByLabelText("Targets"), {
+        target: { value: "192.0.2.10" },
+      });
+      fireEvent.submit(screen.getByRole("button", { name: "Plan action" }).closest("form")!);
+
+      await router.navigate({
+        to: "/engagements/$engagementId",
+        params: { engagementId: activeEngagement.id },
+        search: { action: ACTION_B },
+      });
+      expect(
+        await screen.findByRole("dialog", { name: "Action needs a warning" }),
+      ).toBeTruthy();
+
+      releasePlan(response(queuedA, 201));
+      // Older plan resolves late; the explicit route selection wins.
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(
+            ([called, init]) =>
+              String(called).endsWith(`/actions/${ACTION_B}`) &&
+              (init?.method === undefined || init.method === "GET"),
+          ),
+        ).toBe(true),
+      );
+      expect(screen.getByRole("dialog", { name: "Action needs a warning" })).toBeTruthy();
+      expect(screen.queryByText("Action queued")).toBeNull();
+    });
   });
 });

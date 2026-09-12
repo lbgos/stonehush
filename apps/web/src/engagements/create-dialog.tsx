@@ -83,12 +83,16 @@ interface ChallengeDraft {
 
 // Progress across the start phases. Creation, scope save, and the first scan
 // run in order; once the engagement exists, retries resume the follow-up
-// phases instead of creating a duplicate engagement.
+// phases instead of creating a duplicate engagement. Scope rules carry
+// generated ids, so the exact generated payload is retained for replay:
+// a lost response must resend identical rule ids, not fresh UUIDs.
 interface StartedProgress {
   engagement: Engagement;
   revision: number;
   scopeId: string | null;
   scopeDone: boolean;
+  scopeTargets: string[] | null;
+  scopeRules: SavedScopeRule[] | null;
 }
 
 type FieldKey =
@@ -113,6 +117,14 @@ const emptyForm: FormFields = {
 
 function optionalContext(value: string): string | null {
   return value.trim() === "" ? null : value;
+}
+
+function targetsEqual(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 function fieldError(message: string | undefined): string | undefined {
@@ -216,13 +228,15 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
   const onChallengeFile = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    // Invalidate any in-flight read before all validation exits. A slow
+    // earlier read must not clear the new error or restore a discarded file.
+    challengeReadRef.current += 1;
     if (file.size > CHALLENGE_FILE_MAX_BYTES) {
       setChallenge(null);
       setChallengeError("That file is larger than 256 KB. Paste the relevant part instead.");
       setFileKey((current) => current + 1);
       return;
     }
-    challengeReadRef.current += 1;
     const readSeq = challengeReadRef.current;
     void file
       .text()
@@ -342,26 +356,51 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
           revision: engagement.revision,
           scopeId: engagement.activeScopeRevisionId,
           scopeDone: !(fields.saveAsScope && targets.length > 0),
+          scopeTargets: null,
+          scopeRules: null,
         };
         setStarted(progress);
       }
       attempted = progress;
 
       if (fields.saveAsScope && targets.length > 0 && !progress.scopeDone) {
-        const rules: SavedScopeRule[] = [];
-        for (const target of targets) {
-          const drafted = createDraftScopeRule({
-            includeSubdomains: false,
-            portRanges: "",
-            rawTarget: target,
-          });
-          if (!drafted.ok) throw new Error(drafted.message);
-          rules.push(drafted.rule);
+        // Reuse the retained rules when the targets match. Fresh UUIDs per
+        // retry would change the canonical body and turn a replay into an
+        // idempotency_conflict. A revision refresh keeps the same rule ids
+        // with the new expectedRevision, which is a new intent by design.
+        let rules: SavedScopeRule[];
+        if (
+          progress.scopeRules !== null &&
+          progress.scopeTargets !== null &&
+          targetsEqual(progress.scopeTargets, targets)
+        ) {
+          rules = progress.scopeRules;
+        } else {
+          const built: SavedScopeRule[] = [];
+          for (const target of targets) {
+            const drafted = createDraftScopeRule({
+              includeSubdomains: false,
+              portRanges: "",
+              rawTarget: target,
+            });
+            if (!drafted.ok) throw new Error(drafted.message);
+            built.push(drafted.rule);
+          }
+          rules = built;
+          // Retain before the request so a dropped response still replays
+          // identical rule ids on the next attempt.
+          progress = {
+            ...progress,
+            scopeTargets: [...targets],
+            scopeRules: rules,
+          };
+          setStarted(progress);
+          attempted = progress;
         }
         const scopeBody = { expectedRevision: progress.revision, rules };
-        // Fingerprint the stable scope intent (targets), not the rule ids:
-        // createDraftScopeRule mints a fresh id per build, so fingerprinting
-        // rules would give every retry a new key and defeat replay.
+        // Fingerprint the stable scope intent (targets + revision), not the
+        // rule ids. Same targets and revision replay; changed targets or a
+        // conflict refresh get a new key.
         const scopeIntent = requestFingerprint({
           engagementId: progress.engagement.id,
           expectedRevision: scopeBody.expectedRevision,
@@ -618,6 +657,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                 name="challengeFile"
                 type="file"
                 accept=".txt,.md,.markdown,.text,text/plain"
+                disabled={pending}
                 className="min-h-11 w-full text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
                 onChange={onChallengeFile}
               />
@@ -627,6 +667,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   <Button
                     type="button"
                     variant="quiet"
+                    disabled={pending}
                     onClick={(event) => {
                       event.preventDefault();
                       clearChallenge();

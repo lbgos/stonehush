@@ -153,6 +153,15 @@ function PlannerBody({
   );
   const queryClient = useQueryClient();
   const hasInvalidatedServicesRef = useRef<string | null>(null);
+  // Route selection vs local planning: the route wins when it changes, but a
+  // local plan must not be cleared by an unchanged prop. Refs guard stale
+  // async completions from overwriting a newer selection.
+  const pendingActionIdRef = useRef(pendingActionId);
+  const trackedActionIdRef = useRef(trackedActionId);
+  const planSeqRef = useRef(0);
+  useEffect(() => {
+    trackedActionIdRef.current = trackedActionId;
+  }, [trackedActionId]);
 
   const createAction = useCreateActionMutation();
 
@@ -174,6 +183,25 @@ function PlannerBody({
   useEffect(() => {
     hasInvalidatedServicesRef.current = null;
   }, [trackedActionId]);
+
+  // Synchronize route ?action changes within the same mounted planner.
+  // Adding, replacing, or removing the param switches the tracked action and
+  // clears stale local plan state so an old card does not linger. An
+  // unchanged prop never clears ids established by local planning.
+  useEffect(() => {
+    if (pendingActionIdRef.current === pendingActionId) return;
+    pendingActionIdRef.current = pendingActionId;
+    planSeqRef.current += 1;
+    createAction.reset();
+    setResult(undefined);
+    setOutcome(undefined);
+    setQueuedBy(undefined);
+    setPlannedTargets([]);
+    setFieldError(undefined);
+    setPortsFieldError(undefined);
+    trackedActionIdRef.current = pendingActionId;
+    setTrackedActionId(pendingActionId);
+  }, [pendingActionId, createAction]);
 
   useEffect(() => {
     const action = polledActionQuery.data;
@@ -211,6 +239,10 @@ function PlannerBody({
     setOutcome(undefined);
     setQueuedBy(undefined);
     setTrackedActionId(undefined);
+    trackedActionIdRef.current = undefined;
+    planSeqRef.current += 1;
+    const planSeq = planSeqRef.current;
+    const routeAtStart = pendingActionIdRef.current;
     const parsed = parsePlannedTargets(rawTargets);
     // Only the fuller port pass sends explicit ports. The quick pass and
     // web-origin inspection always run with declaredPorts null so the
@@ -253,6 +285,10 @@ function PlannerBody({
       },
       {
         onSuccess: (action) => {
+          // Drop a stale plan that lost a race with a route change or a
+          // newer plan, so an older fetch never overwrites the new selection.
+          if (planSeq !== planSeqRef.current) return;
+          if (pendingActionIdRef.current !== routeAtStart) return;
           setResult(action);
           storeFirstActionDefaults(browserStorage(), {
             profile,
@@ -281,15 +317,20 @@ function PlannerBody({
     nextOutcome: "queued" | "cancelled",
     nextQueuedBy?: "continue" | "add_scope_and_run",
   ) => {
-    setResult(action);
-    setOutcome(nextOutcome);
-    setQueuedBy(nextQueuedBy);
     // Keep the polled cache newer than the last poll so a loaded warning
     // card clears immediately instead of lingering on stale paused data.
+    // Cache is per action id, so it is always safe to update.
     queryClient.setQueryData(
       persistedActionQueryKey(engagementId, action.action.actionId),
       action,
     );
+    // Drop a stale warning completion that lost a race with a newer route
+    // selection, so an older mutation never hides the active work.
+    const currentTracked = trackedActionIdRef.current;
+    if (currentTracked !== undefined && currentTracked !== action.action.actionId) return;
+    setResult(action);
+    setOutcome(nextOutcome);
+    setQueuedBy(nextQueuedBy);
     if (nextOutcome === "queued" && action.action.state === "queued") {
       setTrackedActionId(action.action.actionId);
     } else {
@@ -470,6 +511,20 @@ function PlannerBody({
           showPollError={showPollError}
           onRefresh={() => void polledActionQuery.refetch()}
         />
+      ) : null}
+
+      {trackedActionId !== undefined && displayAction === undefined && showPollError ? (
+        <p className="mt-4 mb-0 flex items-center gap-2 text-[12px] text-muted-foreground" role="status">
+          <span>Status update failed.</span>
+          <Button
+            type="button"
+            variant="quiet"
+            className="h-7 px-2 text-[12px]"
+            onClick={() => void polledActionQuery.refetch()}
+          >
+            Refresh
+          </Button>
+        </p>
       ) : null}
 
       {outcome === "cancelled" && result?.action.state === "cancelled" ? (
