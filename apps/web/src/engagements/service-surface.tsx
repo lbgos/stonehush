@@ -574,51 +574,54 @@ function TargetGroup({
         <span>Observed</span>
       </div>
       <div className="divide-y divide-border">
-        {services.map((service) => (
-          <div key={`${service.address}:${String(service.port)}:${service.protocol}:${service.artifactId}`}>
-            <ServiceRow
-              engagementId={engagementId}
-              extraRowActions={extraRowActions}
-              onSelect={onSelectKey}
-              selected={isServiceRowSelected(service, selectedKey, services)}
-              service={service}
-            />
-            {isWebServiceCandidate(service) ? (
-              <OriginBlock
-                belowOrigin={belowOrigin}
+        {services.map((service) => {
+          const serviceProbes = (probes ?? []).filter((probe) =>
+            probeMatchesService(probe, service, allServices),
+          );
+          const servicePaths = (ffufResults ?? []).filter((result) => {
+            const parts = splitOriginUrl(result.url);
+            return (
+              parts !== undefined &&
+              parts.port === service.port &&
+              hostMatchesService(parts.host, service, allServices)
+            );
+          });
+          const originGroups = groupServiceOrigins(service, serviceProbes, servicePaths);
+          return (
+            <div key={`${service.address}:${String(service.port)}:${service.protocol}:${service.artifactId}`}>
+              <ServiceRow
                 engagementId={engagementId}
                 extraRowActions={extraRowActions}
-                host={originDisplayHost(service, probes, ffufResults, allServices)}
-                onAskAbout={onAskAbout}
-                onOpenLauncher={onOpenLauncher}
-                onSelectKey={onSelectKey}
-                onStartLead={onStartLead}
-                paths={(ffufResults ?? []).filter((result) => {
-                  const parts = splitOriginUrl(result.url);
-                  return (
-                    parts !== undefined &&
-                    parts.port === service.port &&
-                    hostMatchesService(parts.host, service, allServices)
-                  );
-                })}
-                port={service.port}
-                probes={(probes ?? []).filter((probe) => probeMatchesService(probe, service, allServices))}
-                scheme={
-                  schemes[`${service.address}:${String(service.port)}`] ??
-                  defaultSchemeForService(service, probes, ffufResults, allServices)
-                }
-                selectedKey={selectedKey}
-                setScheme={(scheme) =>
-                  setSchemes({
-                    ...schemes,
-                    [`${service.address}:${String(service.port)}`]: scheme,
-                  })
-                }
-                target={target}
+                onSelect={onSelectKey}
+                selected={isServiceRowSelected(service, selectedKey, services)}
+                service={service}
               />
-            ) : null}
-          </div>
-        ))}
+              {originGroups.map((group) => {
+                const schemeKey = observedOriginKey(group.host, group.port, group.scheme);
+                return (
+                  <OriginBlock
+                    key={schemeKey}
+                    belowOrigin={belowOrigin}
+                    engagementId={engagementId}
+                    extraRowActions={extraRowActions}
+                    host={group.host}
+                    onAskAbout={onAskAbout}
+                    onOpenLauncher={onOpenLauncher}
+                    onSelectKey={onSelectKey}
+                    onStartLead={onStartLead}
+                    paths={group.paths}
+                    port={group.port}
+                    probes={group.probes}
+                    scheme={schemes[schemeKey] ?? group.scheme}
+                    selectedKey={selectedKey}
+                    setScheme={(scheme) => setSchemes({ ...schemes, [schemeKey]: scheme })}
+                    target={target}
+                  />
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
       <UnmatchedOrigins
         allServices={allServices}
@@ -666,95 +669,74 @@ function probeMatchesService(
   return hostMatchesService(parts.host, service, allServices);
 }
 
-function defaultSchemeForService(
-  service: NmapProjectedService,
-  probes: readonly HttpProbeProjected[] | undefined,
-  ffufResults: readonly FfufProjected[] | undefined,
-  allServices: readonly NmapProjectedService[],
-): OriginScheme {
-  const matched = (probes ?? []).filter((probe) => probeMatchesService(probe, service, allServices));
-  // Several runs may probe the same origin: keep the observed scheme when
-  // every matched probe agrees instead of discarding the evidence.
-  const probeScheme = unanimousObservedScheme(matched.map((probe) => probe.url));
-  if (probeScheme !== undefined) return probeScheme;
-  const matchedPaths = (ffufResults ?? []).filter((result) => {
-    const parts = splitOriginUrl(result.url);
-    return (
-      parts !== undefined &&
-      parts.port === service.port &&
-      hostMatchesService(parts.host, service, allServices)
-    );
-  });
-  const pathScheme = unanimousObservedScheme(matchedPaths.map((result) => result.url));
-  if (pathScheme !== undefined) return pathScheme;
-  return defaultSchemeForPort(service.port);
+interface ObservedOriginGroup {
+  readonly host: string;
+  readonly port: number;
+  readonly scheme: OriginScheme;
+  readonly probes: HttpProbeProjected[];
+  readonly paths: FfufProjected[];
 }
 
-// Observed scheme shared by probes and path discoveries. Returns a scheme
-// only when at least one URL parses and every parsed URL agrees; mixed
-// observations fall back to the port heuristic instead of silently picking
-// one endpoint as the target.
-function unanimousObservedScheme(urls: readonly string[]): OriginScheme | undefined {
-  let seen: OriginScheme | undefined;
-  let parsed = 0;
-  for (const url of urls) {
-    const scheme = splitOriginUrl(url)?.scheme;
-    if (scheme === undefined) continue;
-    parsed += 1;
-    if (seen === undefined) {
-      seen = scheme;
-    } else if (seen !== scheme) {
-      return undefined;
+// Group observations by the exact endpoint they represent: authority plus
+// scheme. One service may hold several origins (IP and hostname forms, http
+// and https variants); each keeps its own browser link, launcher actions,
+// and scheme override so no observed endpoint is silently rewritten.
+function groupObservationsByOrigin(
+  probes: readonly HttpProbeProjected[],
+  paths: readonly FfufProjected[],
+): ObservedOriginGroup[] {
+  const groups = new Map<
+    string,
+    { host: string; port: number; scheme: OriginScheme; probes: HttpProbeProjected[]; paths: FfufProjected[] }
+  >();
+  const add = (host: string, port: number, scheme: OriginScheme) => {
+    const key = `${scheme}://${host}:${String(port)}`;
+    let group = groups.get(key);
+    if (group === undefined) {
+      group = { host, port, scheme, probes: [], paths: [] };
+      groups.set(key, group);
     }
+    return group;
+  };
+  for (const probe of probes) {
+    const parts = splitOriginUrl(probe.url);
+    if (parts === undefined) continue;
+    add(parts.host, parts.port, parts.scheme).probes.push(probe);
   }
-  return parsed === 0 ? undefined : seen;
-}
-
-// Default scheme for an unmatched observed origin. An explicit operator
-// override wins, then any observed probe scheme, then the unanimous observed
-// path scheme, then the port heuristic. Probe priority is unchanged so mixed
-// probe/path observations keep their existing target.
-// OriginBlock shows the observed hostname when every matched observation
-// addressed the service by hostname; otherwise it keeps the service address
-// so IP-addressed observations are never relaunched at a different virtual host.
-function originDisplayHost(
-  service: NmapProjectedService,
-  probes: readonly HttpProbeProjected[] | undefined,
-  ffufResults: readonly FfufProjected[] | undefined,
-  allServices: readonly NmapProjectedService[],
-): string {
-  if (service.hostname === null) return service.address;
-  const wanted = service.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  const observed = new Set<string>();
-  for (const probe of probes ?? []) {
-    if (!probeMatchesService(probe, service, allServices)) continue;
-    const host = splitOriginUrl(probe.url)?.host;
-    if (host !== undefined) observed.add(host);
-  }
-  for (const result of ffufResults ?? []) {
+  for (const result of paths) {
     const parts = splitOriginUrl(result.url);
-    if (parts === undefined || parts.port !== service.port) continue;
-    if (!hostMatchesService(parts.host, service, allServices)) continue;
-    observed.add(parts.host);
+    if (parts === undefined) continue;
+    add(parts.host, parts.port, parts.scheme).paths.push(result);
   }
-  if (observed.size === 0) return service.address;
-  for (const host of observed) {
-    if (host !== wanted) return service.address;
-  }
-  return service.hostname;
+  return [...groups.values()];
 }
 
-function defaultSchemeForUnmatchedEntry(
-  entry: { host: string; port: number; probes: readonly HttpProbeProjected[]; paths: readonly FfufProjected[] },
-  schemes: Readonly<Record<string, OriginScheme>>,
-): OriginScheme {
-  const key = `${entry.host}:${String(entry.port)}`;
-  return (
-    schemes[key] ??
-    entry.probes.map((probe) => splitOriginUrl(probe.url)?.scheme).find((scheme) => scheme !== undefined) ??
-    unanimousObservedScheme(entry.paths.map((result) => result.url)) ??
-    defaultSchemeForPort(entry.port)
-  );
+// Origin identity for scheme overrides and row keys. Scoped to the exact
+// observed origin so one origin never inherits another origin's override.
+function observedOriginKey(host: string, port: number, scheme: OriginScheme): string {
+  return `${scheme}://${host}:${String(port)}`;
+}
+
+// Origins rendered for one projected service: one block per observed
+// endpoint, or a single address block with the port heuristic when nothing
+// was observed yet so discovery actions stay available.
+function groupServiceOrigins(
+  service: NmapProjectedService,
+  serviceProbes: readonly HttpProbeProjected[],
+  servicePaths: readonly FfufProjected[],
+): ObservedOriginGroup[] {
+  if (!isWebServiceCandidate(service)) return [];
+  const groups = groupObservationsByOrigin(serviceProbes, servicePaths);
+  if (groups.length > 0) return groups;
+  return [
+    {
+      host: service.address,
+      port: service.port,
+      scheme: defaultSchemeForPort(service.port),
+      probes: [],
+      paths: [],
+    },
+  ];
 }
 
 function UnmatchedOrigins({
@@ -788,47 +770,30 @@ function UnmatchedOrigins({
   setSchemes: (next: Readonly<Record<string, OriginScheme>>) => void;
   target: string;
 }) {
-  const groups = new Map<string, { host: string; port: number; probes: HttpProbeProjected[]; paths: FfufProjected[] }>();
-  for (const probe of probes ?? []) {
+  const unmatchedProbes = (probes ?? []).filter((probe) => {
     const parts = splitOriginUrl(probe.url);
-    if (parts === undefined) continue;
+    if (parts === undefined) return false;
     const probeTarget = canonicalTargetForHost(parts.host, allServices);
-    if (probeTarget !== target && probeTarget.toLowerCase() !== target.toLowerCase()) continue;
-    if (
-      allServices.some((service) => isWebServiceCandidate(service) && probeMatchesService(probe, service, allServices))
-    )
-      continue;
-    const key = `${parts.host}:${String(parts.port)}`;
-    const existing = groups.get(key);
-    if (existing === undefined) {
-      groups.set(key, { host: parts.host, port: parts.port, probes: [probe], paths: [] });
-    } else {
-      existing.probes.push(probe);
-    }
-  }
-  for (const result of ffufResults ?? []) {
+    if (probeTarget !== target && probeTarget.toLowerCase() !== target.toLowerCase()) return false;
+    return !allServices.some(
+      (service) => isWebServiceCandidate(service) && probeMatchesService(probe, service, allServices),
+    );
+  });
+  const unmatchedPaths = (ffufResults ?? []).filter((result) => {
     const parts = splitOriginUrl(result.url);
-    if (parts === undefined) continue;
+    if (parts === undefined) return false;
     const pathTarget = canonicalTargetForHost(parts.host, allServices);
-    if (pathTarget !== target && pathTarget.toLowerCase() !== target.toLowerCase()) continue;
-    if (
-      allServices.some(
-        (service) =>
-          isWebServiceCandidate(service) &&
-          parts.port === service.port &&
-          hostMatchesService(parts.host, service, allServices),
-      )
-    )
-      continue;
-    const key = `${parts.host}:${String(parts.port)}`;
-    const existing = groups.get(key);
-    if (existing === undefined) {
-      groups.set(key, { host: parts.host, port: parts.port, probes: [], paths: [result] });
-    } else {
-      existing.paths.push(result);
-    }
-  }
-  const entries = [...groups.values()].sort((left, right) => left.port - right.port);
+    if (pathTarget !== target && pathTarget.toLowerCase() !== target.toLowerCase()) return false;
+    return !allServices.some(
+      (service) =>
+        isWebServiceCandidate(service) &&
+        parts.port === service.port &&
+        hostMatchesService(parts.host, service, allServices),
+    );
+  });
+  const entries = groupObservationsByOrigin(unmatchedProbes, unmatchedPaths).sort(
+    (left, right) => left.port - right.port,
+  );
   if (entries.length === 0) return null;
   return (
     <div className="border-t border-border px-3 py-2">
@@ -837,8 +802,7 @@ function UnmatchedOrigins({
       </p>
       <div className="grid gap-2">
         {entries.map((entry) => {
-          const key = `${entry.host}:${String(entry.port)}`;
-          const scheme = defaultSchemeForUnmatchedEntry(entry, schemes);
+          const key = observedOriginKey(entry.host, entry.port, entry.scheme);
           return (
             <OriginBlock
               key={key}
@@ -853,7 +817,7 @@ function UnmatchedOrigins({
               paths={entry.paths}
               port={entry.port}
               probes={entry.probes}
-              scheme={scheme}
+              scheme={schemes[key] ?? entry.scheme}
               selectedKey={selectedKey}
               setScheme={(next) => setSchemes({ ...schemes, [key]: next })}
               target={target}
@@ -889,30 +853,7 @@ function ObservedOriginsWithoutServices({
   selectedKey: string | undefined;
 }) {
   const [schemes, setSchemes] = useState<Readonly<Record<string, OriginScheme>>>({});
-  const groups = new Map<string, { host: string; port: number; probes: HttpProbeProjected[]; paths: FfufProjected[] }>();
-  for (const probe of probes ?? []) {
-    const parts = splitOriginUrl(probe.url);
-    if (parts === undefined) continue;
-    const key = `${parts.host}:${String(parts.port)}`;
-    const existing = groups.get(key);
-    if (existing === undefined) {
-      groups.set(key, { host: parts.host, port: parts.port, probes: [probe], paths: [] });
-    } else {
-      existing.probes.push(probe);
-    }
-  }
-  for (const result of ffufResults ?? []) {
-    const parts = splitOriginUrl(result.url);
-    if (parts === undefined) continue;
-    const key = `${parts.host}:${String(parts.port)}`;
-    const existing = groups.get(key);
-    if (existing === undefined) {
-      groups.set(key, { host: parts.host, port: parts.port, probes: [], paths: [result] });
-    } else {
-      existing.paths.push(result);
-    }
-  }
-  const entries = [...groups.values()].sort((left, right) => {
+  const entries = groupObservationsByOrigin(probes ?? [], ffufResults ?? []).sort((left, right) => {
     const host = left.host.localeCompare(right.host);
     return host !== 0 ? host : left.port - right.port;
   });
@@ -925,8 +866,7 @@ function ObservedOriginsWithoutServices({
       </p>
       <div className="grid gap-2">
         {entries.map((entry) => {
-          const key = `${entry.host}:${String(entry.port)}`;
-          const scheme = defaultSchemeForUnmatchedEntry(entry, schemes);
+          const key = observedOriginKey(entry.host, entry.port, entry.scheme);
           return (
             <OriginBlock
               key={key}
@@ -941,7 +881,7 @@ function ObservedOriginsWithoutServices({
               paths={entry.paths}
               port={entry.port}
               probes={entry.probes}
-              scheme={scheme}
+              scheme={schemes[key] ?? entry.scheme}
               selectedKey={selectedKey}
               setScheme={(next) => setSchemes({ ...schemes, [key]: next })}
               target={entry.host}
@@ -992,7 +932,7 @@ function OriginBlock({
   // Origin-level row identifier so launcher actions carry a defined sourceKey
   // for focus restoration. The container is not a selectable inspector row,
   // so the key uses an origin namespace that never collides with selection keys.
-  const rowKey = `origin:${host}:${String(port)}`;
+  const rowKey = `origin:${scheme}:${host}:${String(port)}`;
   return (
     <div
       className="mx-3 mb-3 rounded-md border border-border"
@@ -1000,11 +940,11 @@ function OriginBlock({
       data-surface-row={rowKey}
     >
       <div className="flex flex-wrap items-center gap-2 px-2.5 py-2">
-        <label className="sr-only" htmlFor={`scheme-${host}-${String(port)}`}>
-          Scheme for {host}:{String(port)}
+        <label className="sr-only" htmlFor={`scheme-${scheme}-${host}-${String(port)}`}>
+          Scheme for {scheme}://{host}:{String(port)}
         </label>
         <select
-          id={`scheme-${host}-${String(port)}`}
+          id={`scheme-${scheme}-${host}-${String(port)}`}
           value={scheme}
           onChange={(event) => setScheme(event.target.value === "https" ? "https" : "http")}
           className="h-8 rounded-md border border-input bg-transparent px-1.5 font-mono text-[12px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"

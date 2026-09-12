@@ -281,18 +281,19 @@ describe("EngagementServicesSection", () => {
     renderSurface();
     const browserLink = await screen.findByRole("link", { name: "Open in browser" });
     expect(browserLink.getAttribute("href")).toBe("https://192.0.2.10:8080");
-    expect(screen.getByLabelText("Scheme for 192.0.2.10:8080")).toHaveProperty("value", "https");
+    expect(screen.getByLabelText("Scheme for https://192.0.2.10:8080")).toHaveProperty("value", "https");
   });
 
-  it("keeps the probe scheme when probes and paths disagree on one origin", async () => {
+  it("keeps disagreeing probe and path origins as separate blocks", async () => {
     const probe = httpProbe("http://192.0.2.10:8080/");
     vi.stubGlobal(
       "fetch",
       routeSurfaceResponses([], [probe], [ffufPath("https://192.0.2.10:8080/admin")]),
     );
     renderSurface();
-    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
-    expect(browserLink.getAttribute("href")).toBe("http://192.0.2.10:8080");
+    const links = await screen.findAllByRole("link", { name: "Open in browser" });
+    const hrefs = links.map((link) => link.getAttribute("href")).sort();
+    expect(hrefs).toEqual(["http://192.0.2.10:8080", "https://192.0.2.10:8080"]);
   });
 
   it("keeps the observed scheme when several runs probe one origin", async () => {
@@ -334,6 +335,34 @@ describe("EngagementServicesSection", () => {
     renderSurface();
     const browserLink = await screen.findByRole("link", { name: "Open in browser" });
     expect(browserLink.getAttribute("href")).toBe("https://app.example.test");
+  });
+
+  it("keeps mixed IP and hostname observations on one service as separate origins", async () => {
+    const web443 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 443,
+      serviceName: "https",
+      hostname: "app.example.test",
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web443],
+        [
+          httpProbe("https://192.0.2.10/", "artifact-7"),
+          httpProbe("https://192.0.2.10/", "artifact-8"),
+          httpProbe("https://app.example.test/", "artifact-9"),
+        ],
+        [],
+      ),
+    );
+    renderSurface();
+    const links = await screen.findAllByRole("link", { name: "Open in browser" });
+    const hrefs = links.map((link) => link.getAttribute("href")).sort();
+    // Repeated IP observations share one block; the hostname observation
+    // keeps its own authority instead of falling back to the IP.
+    expect(hrefs).toEqual(["https://192.0.2.10", "https://app.example.test"]);
   });
 
   it("calls stale cached web observations stale instead of absent", async () => {

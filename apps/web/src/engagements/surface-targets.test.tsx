@@ -325,7 +325,7 @@ describe("surface target organization", () => {
     const probeButton = screen.getByRole("button", { name: "Probe web" });
     expect(
       probeButton.closest("[data-surface-row]")?.getAttribute("data-surface-row"),
-    ).toBe("origin:192.0.2.10:80");
+    ).toBe("origin:http:192.0.2.10:80");
 
     // Focus holder outside the surface; jsdom clicks do not move focus, so
     // the launcher captures this element. Removing it before close forces
