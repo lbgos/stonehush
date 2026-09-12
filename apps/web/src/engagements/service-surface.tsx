@@ -324,16 +324,27 @@ export function EngagementServicesSection({
     if (probesQuery.isError) void probesQuery.refetch();
     if (ffufQuery.isError) void ffufQuery.refetch();
   };
+  // Cached observations stay visible under a failed refresh, so the banner
+  // must not claim they are absent. Name exactly what failed and whether the
+  // rows below are missing or stale.
+  const probesStale = probesQuery.isError && probes !== undefined;
+  const ffufStale = ffufQuery.isError && ffufResults !== undefined;
+  const webStatusCopy =
+    probesQuery.isError && ffufQuery.isError
+      ? probesStale || ffufStale
+        ? "Web probes and path discovery results are stale. Showing the last successful load."
+        : "Web probes and path discovery results could not be loaded. Showing services only."
+      : probesQuery.isError
+        ? probesStale
+          ? "Web probes are stale. Showing the last successful load."
+          : "Web probes could not be loaded. Showing services only."
+        : ffufStale
+          ? "Path discovery results are stale. Showing the last successful load."
+          : "Path discovery results could not be loaded. Showing services only.";
   const webStatusBanner = isWebError ? (
     <div className="rounded-[10px] border border-warning/35 bg-warning/10 p-3" role="status">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="m-0 text-[12px] text-warning">
-          {probesQuery.isError && ffufQuery.isError
-            ? "Web probes and path discovery results could not be loaded. Showing services only."
-            : probesQuery.isError
-              ? "Web probes could not be loaded. Showing services only."
-              : "Path discovery results could not be loaded. Showing services only."}
-        </p>
+        <p className="m-0 text-[12px] text-warning">{webStatusCopy}</p>
         <Button type="button" variant="secondary" className="h-7 px-2 text-[12px]" onClick={retryWeb}>
           Retry web observations
         </Button>
@@ -360,7 +371,7 @@ export function EngagementServicesSection({
   const hasFailedQuery = servicesQuery.isError || probesQuery.isError || ffufQuery.isError;
   const staleDescription = servicesQuery.isError
     ? "The latest refresh failed. Existing services are still available."
-    : "The latest web refresh failed. Existing web observations are marked where they failed to load.";
+    : "The latest web refresh failed. Cached web observations below may be stale.";
   const content = hasFailedQuery ? (
     <StaleDataState
       title="Showing the last successful attack surface"
@@ -577,7 +588,7 @@ function TargetGroup({
                 belowOrigin={belowOrigin}
                 engagementId={engagementId}
                 extraRowActions={extraRowActions}
-                host={service.address}
+                host={originDisplayHost(service, probes, ffufResults, allServices)}
                 onAskAbout={onAskAbout}
                 onOpenLauncher={onOpenLauncher}
                 onSelectKey={onSelectKey}
@@ -662,10 +673,10 @@ function defaultSchemeForService(
   allServices: readonly NmapProjectedService[],
 ): OriginScheme {
   const matched = (probes ?? []).filter((probe) => probeMatchesService(probe, service, allServices));
-  if (matched.length === 1) {
-    const scheme = splitOriginUrl(matched[0]?.url ?? "")?.scheme;
-    if (scheme !== undefined) return scheme;
-  }
+  // Several runs may probe the same origin: keep the observed scheme when
+  // every matched probe agrees instead of discarding the evidence.
+  const probeScheme = unanimousObservedScheme(matched.map((probe) => probe.url));
+  if (probeScheme !== undefined) return probeScheme;
   const matchedPaths = (ffufResults ?? []).filter((result) => {
     const parts = splitOriginUrl(result.url);
     return (
@@ -703,6 +714,36 @@ function unanimousObservedScheme(urls: readonly string[]): OriginScheme | undefi
 // override wins, then any observed probe scheme, then the unanimous observed
 // path scheme, then the port heuristic. Probe priority is unchanged so mixed
 // probe/path observations keep their existing target.
+// OriginBlock shows the observed hostname when every matched observation
+// addressed the service by hostname; otherwise it keeps the service address
+// so IP-addressed observations are never relaunched at a different virtual host.
+function originDisplayHost(
+  service: NmapProjectedService,
+  probes: readonly HttpProbeProjected[] | undefined,
+  ffufResults: readonly FfufProjected[] | undefined,
+  allServices: readonly NmapProjectedService[],
+): string {
+  if (service.hostname === null) return service.address;
+  const wanted = service.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const observed = new Set<string>();
+  for (const probe of probes ?? []) {
+    if (!probeMatchesService(probe, service, allServices)) continue;
+    const host = splitOriginUrl(probe.url)?.host;
+    if (host !== undefined) observed.add(host);
+  }
+  for (const result of ffufResults ?? []) {
+    const parts = splitOriginUrl(result.url);
+    if (parts === undefined || parts.port !== service.port) continue;
+    if (!hostMatchesService(parts.host, service, allServices)) continue;
+    observed.add(parts.host);
+  }
+  if (observed.size === 0) return service.address;
+  for (const host of observed) {
+    if (host !== wanted) return service.address;
+  }
+  return service.hostname;
+}
+
 function defaultSchemeForUnmatchedEntry(
   entry: { host: string; port: number; probes: readonly HttpProbeProjected[]; paths: readonly FfufProjected[] },
   schemes: Readonly<Record<string, OriginScheme>>,

@@ -19,7 +19,7 @@ import { latestActionSnapshot } from "./action-targets.js";
 import { engagementMutationMessage } from "./errors.js";
 import { type FfufDiscoveryInput, useLaunchFfufDiscoveryMutation } from "./ffuf-mutations.js";
 import { formatEngagementTimestamp } from "./format.js";
-import { isPathRowSelected, pathInspectorRecord, pathSelectionKey, PausedRunWarning, type ExtraRowActions } from "./inspector.js";
+import { isLauncherStoppable, isPathRowSelected, pathInspectorRecord, pathSelectionKey, PausedRunWarning, type ExtraRowActions } from "./inspector.js";
 import {
   engagementFfufResultsQueryKey,
   useEngagementDetailQuery,
@@ -267,10 +267,7 @@ function FfufDiscoveryBody({
 
   const snapshot = displayAction !== undefined ? latestActionSnapshot(displayAction) : undefined;
   const terminal = displayAction !== undefined && isTerminalActionState(displayAction.action.state);
-  const stoppable =
-    displayAction !== undefined &&
-    !terminal &&
-    (displayAction.action.state === "queued" || displayAction.action.state === "active_paused_for_warning");
+  const stoppable = isLauncherStoppable(displayAction);
 
   const numericFields = [
     { id: `${formId}-rate`, label: "Rate", value: rate, onChange: setRate, field: "rate" },

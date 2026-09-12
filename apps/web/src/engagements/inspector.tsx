@@ -933,6 +933,20 @@ export function launcherWarningKind(
   return "none";
 }
 
+// Stop is actionable only while the cancel transition can accept it: a queued
+// action, or a paused run that is still running. Once cancellation is
+// requested the run is stopping, so neither Stop nor Continue may fire again.
+export function isLauncherStoppable(displayAction: PersistedAction | undefined): boolean {
+  if (displayAction === undefined || isTerminalActionState(displayAction.action.state)) {
+    return false;
+  }
+  if (displayAction.action.state === "queued") return true;
+  return (
+    displayAction.action.state === "active_paused_for_warning" &&
+    displayAction.action.runState === "running"
+  );
+}
+
 export function PausedRunWarning({
   action,
   engagementId,
@@ -947,6 +961,7 @@ export function PausedRunWarning({
   const reasonCodes = warningReasonCodes(action);
   const snapshot = latestActionSnapshot(action);
   const pendingEventId = action.action.pendingWarning?.pendingEventId ?? null;
+  const cancelling = action.action.runState === "cancel_requested";
   const staleWarning =
     continueLateWarning.error instanceof EngagementMutationClientError &&
     continueLateWarning.error.code === "invalid_run_transition";
@@ -955,7 +970,7 @@ export function PausedRunWarning({
     : undefined;
 
   const submitContinue = () => {
-    if (continueLateWarning.isPending || pendingEventId === null) return;
+    if (continueLateWarning.isPending || pendingEventId === null || cancelling) return;
     continueLateWarning.mutate(
       {
         engagementId,
@@ -984,7 +999,11 @@ export function PausedRunWarning({
       <p className="mt-2 mb-0 text-[12px] leading-5 text-muted-foreground">
         One acknowledgment covers the whole action. The run resumes from this warning.
       </p>
-      {staleWarning ? (
+      {cancelling ? (
+        <p className="mt-2 mb-0 text-[12px] leading-5 text-muted-foreground" role="status">
+          Cancellation requested. Waiting for the run to stop.
+        </p>
+      ) : staleWarning ? (
         <p className="mt-2 mb-0 text-[13px] text-destructive" role="alert">
           This warning is no longer current. The latest warning appears here automatically.
         </p>
@@ -995,7 +1014,7 @@ export function PausedRunWarning({
       ) : null}
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <Button
-          disabled={continueLateWarning.isPending || pendingEventId === null}
+          disabled={continueLateWarning.isPending || pendingEventId === null || cancelling}
           onClick={submitContinue}
           type="button"
         >
@@ -1262,10 +1281,7 @@ function useLauncherActionState(
   };
 
   const terminal = displayAction !== undefined && isTerminalActionState(displayAction.action.state);
-  const stoppable =
-    displayAction !== undefined &&
-    !terminal &&
-    (displayAction.action.state === "queued" || displayAction.action.state === "active_paused_for_warning");
+  const stoppable = isLauncherStoppable(displayAction);
 
   return {
     displayAction,
@@ -1501,7 +1517,11 @@ function FfufLauncherForm({
   const [timeoutSeconds, setTimeoutSeconds] = useState(String(FFUF_TIMEOUT_SECONDS_DEFAULT));
   const [maxTimeSeconds, setMaxTimeSeconds] = useState(String(FFUF_MAX_TIME_SECONDS_DEFAULT));
   const [matchCodes, setMatchCodes] = useState(FFUF_DEFAULT_MATCH_CODES.join(", "));
-  const editedFields = useRef(new Set<string>());
+  // Explicitly touched fields keep the operator's value: late async runner
+  // settings may prefill untouched fields but never override a typed edit.
+  // Clean/dirty state stays a separate value comparison below, so reverting
+  // to the shown value reads clean without authorizing an overwrite.
+  const touchedFields = useRef(new Set<string>());
   const launch = useLaunchFfufDiscoveryMutation();
   const cancelAction = useCancelActionMutation();
   const launcher = useLauncherActionState(
@@ -1513,12 +1533,12 @@ function FfufLauncherForm({
 
   useEffect(() => {
     if (storedDefaults === undefined) return;
-    if (!editedFields.current.has("wordlistPath")) setWordlistPath(storedDefaults.ffufWordlistPath);
-    if (!editedFields.current.has("rate")) setRate(String(storedDefaults.ffufRate));
-    if (!editedFields.current.has("threads")) setThreads(String(storedDefaults.ffufThreads));
-    if (!editedFields.current.has("timeoutSeconds"))
+    if (!touchedFields.current.has("wordlistPath")) setWordlistPath(storedDefaults.ffufWordlistPath);
+    if (!touchedFields.current.has("rate")) setRate(String(storedDefaults.ffufRate));
+    if (!touchedFields.current.has("threads")) setThreads(String(storedDefaults.ffufThreads));
+    if (!touchedFields.current.has("timeoutSeconds"))
       setTimeoutSeconds(String(storedDefaults.ffufTimeoutSeconds));
-    if (!editedFields.current.has("maxTimeSeconds"))
+    if (!touchedFields.current.has("maxTimeSeconds"))
       setMaxTimeSeconds(String(storedDefaults.ffufMaxTimeSeconds));
   }, [storedDefaults]);
 
@@ -1545,12 +1565,8 @@ function FfufLauncherForm({
     onPendingChange(launch.isPending);
   }, [launch.isPending, onPendingChange]);
 
-  const markEdited = (field: string, nextValue: string, initialValue: string) => {
-    if (nextValue !== initialValue) {
-      editedFields.current.add(field);
-    } else {
-      editedFields.current.delete(field);
-    }
+  const markTouched = (field: string) => {
+    touchedFields.current.add(field);
   };
   const canLaunch = !archived && !launch.isPending;
 
@@ -1649,7 +1665,7 @@ function FfufLauncherForm({
             disabled={archived || launch.isPending}
             className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onChange={(event) => {
-              markEdited("wordlistPath", event.target.value, initialWordlist);
+              markTouched("wordlistPath");
               setWordlistPath(event.target.value);
             }}
           />
@@ -1667,14 +1683,7 @@ function FfufLauncherForm({
                 disabled={archived || launch.isPending}
                 className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onChange={(event) => {
-                  let initialVal = "";
-                  switch (field.field) {
-                    case "rate": initialVal = initialRate; break;
-                    case "threads": initialVal = initialThreads; break;
-                    case "timeoutSeconds": initialVal = initialTimeout; break;
-                    case "maxTimeSeconds": initialVal = initialMaxTime; break;
-                  }
-                  markEdited(field.field, event.target.value, initialVal);
+                  markTouched(field.field);
                   field.onChange(event.target.value);
                 }}
               />
@@ -1691,7 +1700,7 @@ function FfufLauncherForm({
             disabled={archived || launch.isPending}
             className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onChange={(event) => {
-              markEdited("matchCodes", event.target.value, initialCodes);
+              markTouched("matchCodes");
               setMatchCodes(event.target.value);
             }}
           />

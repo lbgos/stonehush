@@ -295,6 +295,89 @@ describe("EngagementServicesSection", () => {
     expect(browserLink.getAttribute("href")).toBe("http://192.0.2.10:8080");
   });
 
+  it("keeps the observed scheme when several runs probe one origin", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web8080],
+        [
+          httpProbe("https://192.0.2.10:8080/", "artifact-7"),
+          httpProbe("https://192.0.2.10:8080/", "artifact-8"),
+        ],
+        [],
+      ),
+    );
+    renderSurface();
+    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
+    expect(browserLink.getAttribute("href")).toBe("https://192.0.2.10:8080");
+  });
+
+  it("renders hostname-addressed observations under the observed hostname", async () => {
+    const web443 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 443,
+      serviceName: "https",
+      hostname: "app.example.test",
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([web443], [httpProbe("https://app.example.test/")], []),
+    );
+    renderSurface();
+    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
+    expect(browserLink.getAttribute("href")).toBe("https://app.example.test");
+  });
+
+  it("calls stale cached web observations stale instead of absent", async () => {
+    const probe = httpProbe("https://192.0.2.10:8443/");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/http-probes")) return Promise.resolve(response([probe]));
+      if (url.endsWith("/ffuf-results")) return Promise.resolve(response([]));
+      return Promise.resolve(response({ code: "invalid_request" }, 400));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSurface();
+    expect(await screen.findByText("Services")).toBeTruthy();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/http-probes")) {
+        return Promise.resolve(response({ code: "storage_busy" }, 503));
+      }
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/ffuf-results")) return Promise.resolve(response([]));
+      return Promise.resolve(response({ code: "invalid_request" }, 400));
+    });
+    await queryClient.refetchQueries();
+    await waitFor(() => {
+      expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
+    });
+    expect(screen.getByText(/Web probes are stale/)).toBeTruthy();
+    expect(screen.queryByText(/Showing services only/)).toBeNull();
+  });
+
+  it("reports never-loaded web observations as absent", async () => {
+    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/ffuf-results")) return Promise.resolve(response([]));
+      return Promise.resolve(response({ code: "storage_busy" }, 503));
+    });
+    renderSurface();
+    await waitFor(() => {
+      expect(screen.getByText(/could not be loaded\. Showing services only/)).toBeTruthy();
+    });
+  });
+
   it("renders a shared-hostname observation once under its own target", async () => {
     const first = {
       ...serviceA,

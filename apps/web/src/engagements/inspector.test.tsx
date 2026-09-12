@@ -1,16 +1,18 @@
 // @vitest-environment jsdom
 import { PersistedActionSchema, type PersistedAction } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import {
   PausedRunWarning,
   SurfaceInspector,
+  ActionLauncher,
   decodeSurfaceSelection,
   defaultSchemeForPort,
   focusSurfaceRow,
+  isLauncherStoppable,
   isServiceRowSelected,
   launcherWarningKind,
   serviceSelectionKey,
@@ -105,11 +107,13 @@ const continuedAction = PersistedActionSchema.parse({
 function launchedAction(
   state: PersistedAction["action"]["state"],
   pendingWarning: PersistedAction["action"]["pendingWarning"] = null,
+  runState: PersistedAction["action"]["runState"] = null,
 ): PersistedAction {
   return {
     action: {
       state,
       pendingWarning,
+      runState,
       snapshots: [
         { version: 1, binding: PAUSED_BINDING, canonicalTargets: [] },
       ],
@@ -413,6 +417,28 @@ describe("origin helpers", () => {
     expect(launcherWarningKind(succeededAction)).toBe("none");
   });
 
+  it("offers Stop only while cancellation can be requested", () => {
+    const runningPaused = launchedAction(
+      "active_paused_for_warning",
+      {
+        reasonCodes: ["outside_scope"],
+        knownAdditions: [],
+        pendingEventId: 7,
+      },
+      "running",
+    );
+    expect(isLauncherStoppable(undefined)).toBe(false);
+    expect(isLauncherStoppable(queuedAction)).toBe(true);
+    expect(isLauncherStoppable(runningPaused)).toBe(true);
+    expect(isLauncherStoppable(activePausedAction)).toBe(false);
+    expect(
+      isLauncherStoppable(launchedAction("active_paused_for_warning", null, "cancel_requested")),
+    ).toBe(false);
+    expect(isLauncherStoppable(succeededAction)).toBe(false);
+    expect(isLauncherStoppable(launchedAction("cancelled"))).toBe(false);
+    expect(isLauncherStoppable(launchedAction("active", null, "running"))).toBe(false);
+  });
+
   it("shows the paused run warning with Continue but no Add to scope", () => {
     render(
       <QueryClientProvider client={queryClient}>
@@ -493,6 +519,94 @@ describe("origin helpers", () => {
       expect(screen.getByText(/no longer current/)).toBeTruthy();
     });
     expect(onContinued).not.toHaveBeenCalled();
+  });
+
+  it("disables Continue once cancellation is requested", () => {
+    const cancelling = PersistedActionSchema.parse({
+      ...validPausedAction,
+      action: {
+        ...validPausedAction.action,
+        runState: "cancel_requested",
+        cleanupRequired: true,
+      },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PausedRunWarning
+          action={cancelling}
+          engagementId={engagementId}
+          onContinued={() => undefined}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Continue" })).toHaveProperty("disabled", true);
+    expect(screen.getByText(/Waiting for the run to stop/)).toBeTruthy();
+  });
+
+  it("keeps an explicit edit when runner settings arrive late", async () => {
+    const engagement = {
+      contractVersion: 1,
+      id: engagementId,
+      revision: 2,
+      name: "Target lab",
+      kind: "lab",
+      status: "active",
+      description: null,
+      authorizationContext: null,
+      autoContinueWarnings: false,
+      activeScopeRevisionId: null,
+      deadlineAt: null,
+      createdAt: "2026-08-12T12:00:00.000Z",
+      updatedAt: "2026-08-12T12:00:00.000Z",
+    };
+    let resolveSettings!: (value: Response) => void;
+    const settingsGate = new Promise<Response>((resolve) => {
+      resolveSettings = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === `/api/v1/engagements/${engagementId}`) {
+          return response({ engagement, activeScopeRevision: null });
+        }
+        if (url === "/api/v1/settings/runner") return settingsGate;
+        return response({ code: "invalid_request" }, 400);
+      }),
+    );
+    const onClose = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ActionLauncher
+          archived={false}
+          engagementId={engagementId}
+          onClose={onClose}
+          request={{ kind: "ffuf", origin: "http://192.0.2.10:8080", sourceLabel: "test" }}
+        />
+      </QueryClientProvider>,
+    );
+    const rate = (await screen.findByLabelText("Rate")) as HTMLInputElement;
+    expect(rate.value).toBe("100");
+    fireEvent.change(rate, { target: { value: "99" } });
+    // Stored defaults arrive after the explicit edit with a different rate.
+    // The typed value must survive instead of being overwritten.
+    await act(async () => {
+      resolveSettings(
+        response({
+          ffufBinaryPath: "/usr/bin/ffuf",
+          ffufWordlistPath: "/wordlists/stored.txt",
+          ffufRate: 200,
+          ffufThreads: 10,
+          ffufTimeoutSeconds: 10,
+          ffufMaxTimeSeconds: 600,
+        }),
+      );
+    });
+    await waitFor(() => {
+      expect((screen.getByLabelText("Rate") as HTMLInputElement).value).toBe("99");
+    });
+    // Untouched fields still follow the stored defaults.
+    expect((screen.getByLabelText("Threads") as HTMLInputElement).value).toBe("10");
   });
 
   it("detects web candidates and port defaults", () => {
