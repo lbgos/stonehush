@@ -26,15 +26,20 @@ import {
 import { createPortal } from "react-dom";
 
 import { useRunnerSettingsQuery } from "../settings/runner-settings.js";
-import { useCancelActionMutation, useCreateActionMutation } from "./action-mutations.js";
+import { useCancelActionMutation, useContinueLateWarningActionMutation, useCreateActionMutation } from "./action-mutations.js";
 import { WarningCard } from "./action-planner.js";
 import {
   actionLifecycleStatusCopy,
   isTerminalActionState,
   persistedActionQueryOptions,
 } from "./action-query.js";
-import { warningReasonCodes, warningReasonSummary } from "./action-targets.js";
-import { engagementMutationMessage } from "./errors.js";
+import {
+  formatCanonicalTarget,
+  latestActionSnapshot,
+  warningReasonCodes,
+  warningReasonSummary,
+} from "./action-targets.js";
+import { EngagementMutationClientError, engagementMutationMessage } from "./errors.js";
 import { useLaunchFfufDiscoveryMutation } from "./ffuf-mutations.js";
 import { useFindingsQuery } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
@@ -199,6 +204,11 @@ export function splitOriginUrl(url: string): OriginParts | undefined {
     return undefined;
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+  // The URL parser silently drops an explicit empty port (http://host: reads
+  // as http://host). An explicit port separator with no port is malformed
+  // operator input, not a default-port URL, so reject it here.
+  const authority = url.slice(url.indexOf("://") + 3).split(/[/?#]/, 1)[0] ?? "";
+  if (authority.endsWith(":")) return undefined;
   const scheme: OriginScheme = parsed.protocol === "https:" ? "https" : "http";
   const defaultPort = scheme === "https" ? 443 : 80;
   const port = parsed.port === "" ? defaultPort : Number.parseInt(parsed.port, 10);
@@ -923,9 +933,42 @@ export function launcherWarningKind(
   return "none";
 }
 
-export function PausedRunWarning({ action }: { action: PersistedAction }) {
+export function PausedRunWarning({
+  action,
+  engagementId,
+  onContinued,
+}: {
+  action: PersistedAction;
+  engagementId: string;
+  onContinued: (action: PersistedAction) => void;
+}) {
   const titleId = useId();
+  const continueLateWarning = useContinueLateWarningActionMutation();
   const reasonCodes = warningReasonCodes(action);
+  const snapshot = latestActionSnapshot(action);
+  const pendingEventId = action.action.pendingWarning?.pendingEventId ?? null;
+  const staleWarning =
+    continueLateWarning.error instanceof EngagementMutationClientError &&
+    continueLateWarning.error.code === "invalid_run_transition";
+  const mutationError = continueLateWarning.isError
+    ? engagementMutationMessage(continueLateWarning.error)
+    : undefined;
+
+  const submitContinue = () => {
+    if (continueLateWarning.isPending || pendingEventId === null) return;
+    continueLateWarning.mutate(
+      {
+        engagementId,
+        actionId: action.action.actionId,
+        expectedRevision: action.revision,
+        snapshotVersion: snapshot.version,
+        snapshotBinding: snapshot.binding,
+        pendingEventId,
+      },
+      { onSuccess: onContinued },
+    );
+  };
+
   return (
     <section
       role="alert"
@@ -939,9 +982,38 @@ export function PausedRunWarning({ action }: { action: PersistedAction }) {
         {warningReasonSummary(reasonCodes)}
       </p>
       <p className="mt-2 mb-0 text-[12px] leading-5 text-muted-foreground">
-        The run started, then paused. Stopping the action is available above. Continuing a
-        paused run is not supported here.
+        One acknowledgment covers the whole action. The run resumes from this warning.
       </p>
+      {staleWarning ? (
+        <p className="mt-2 mb-0 text-[13px] text-destructive" role="alert">
+          This warning is no longer current. The latest warning appears here automatically.
+        </p>
+      ) : mutationError !== undefined ? (
+        <p className="mt-2 mb-0 text-[13px] text-destructive" role="alert">
+          {mutationError}
+        </p>
+      ) : null}
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <Button
+          disabled={continueLateWarning.isPending || pendingEventId === null}
+          onClick={submitContinue}
+          type="button"
+        >
+          {continueLateWarning.isPending ? "Continuing" : "Continue"}
+        </Button>
+      </div>
+      <details className="mt-2">
+        <summary className="min-h-11 cursor-pointer text-[12px] font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8">
+          Normalized targets
+        </summary>
+        <ul className="mt-1 mb-0 list-none p-0">
+          {snapshot.canonicalTargets.map((target) => (
+            <li key={formatCanonicalTarget(target)} className="font-mono text-[12px] text-foreground">
+              {formatCanonicalTarget(target)}
+            </li>
+          ))}
+        </ul>
+      </details>
     </section>
   );
 }
@@ -1693,7 +1765,13 @@ function LauncherResult({
     );
   }
   if (warningKind === "paused-run" && launcher.displayAction !== undefined) {
-    return <PausedRunWarning action={launcher.displayAction} />;
+    return (
+      <PausedRunWarning
+        action={launcher.displayAction}
+        engagementId={engagementId}
+        onContinued={launcher.trackLaunched}
+      />
+    );
   }
   if (launcher.displayAction === undefined) return null;
   return (

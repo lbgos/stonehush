@@ -388,7 +388,11 @@ function FfufDiscoveryBody({
       ) : null}
 
       {displayAction?.action.state === "active_paused_for_warning" ? (
-        <PausedRunWarning action={displayAction} />
+        <PausedRunWarning
+          action={displayAction}
+          engagementId={engagementId}
+          onContinued={trackLaunched}
+        />
       ) : null}
 
       {displayAction !== undefined &&

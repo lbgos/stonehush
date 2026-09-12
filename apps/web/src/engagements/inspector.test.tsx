@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { PersistedAction } from "@stonehush/contracts";
+import { PersistedActionSchema, type PersistedAction } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,11 +26,95 @@ import {
 
 const engagementId = "10000000-0000-4000-8000-000000000001";
 
+const PAUSED_ACTION_ID = "40000000-0000-4000-8000-000000000021";
+const PAUSED_SNAPSHOT_ID = "40000000-0000-4000-8000-000000000022";
+const PAUSED_BINDING = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const PAUSED_TARGET = {
+  kind: "ip" as const,
+  normalizationProfile: "d1-v1" as const,
+  family: 4 as const,
+  address: "192.0.2.10",
+  zone: null,
+};
+
+function pausedSnapshot() {
+  return {
+    normalizationProfile: "d1-v1" as const,
+    orchestrationProfile: "d2-v1" as const,
+    snapshotId: PAUSED_SNAPSHOT_ID,
+    version: 1,
+    binding: PAUSED_BINDING,
+    actionId: PAUSED_ACTION_ID,
+    canonicalTargets: [PAUSED_TARGET],
+    concreteDestinations: [PAUSED_TARGET],
+    typedOptions: {},
+    resolutionSnapshots: [],
+    scopeRevisionId: null,
+    warningState: { reasonCodes: ["outside_scope"], knownAdditions: [], acknowledgment: null },
+  };
+}
+
+const validPausedAction = PersistedActionSchema.parse({
+  contractVersion: 1,
+  engagementId,
+  revision: 3,
+  warningAcknowledgmentId: null,
+  createdAt: "2026-08-12T12:10:00.000Z",
+  updatedAt: "2026-08-12T12:10:00.000Z",
+  action: {
+    orchestrationProfile: "d2-v1",
+    actionId: PAUSED_ACTION_ID,
+    state: "active_paused_for_warning",
+    snapshots: [pausedSnapshot()],
+    queuedSnapshotVersion: 1,
+    warningAcknowledgment: null,
+    pendingWarning: { reasonCodes: ["outside_scope"], knownAdditions: [], pendingEventId: 7 },
+    coveredDestinations: [],
+    warningInteractions: 1,
+    runState: "running",
+    resumeRequested: false,
+    cleanupRequired: false,
+    capabilityErrorCode: null,
+  },
+});
+
+const continuedAction = PersistedActionSchema.parse({
+  ...validPausedAction,
+  revision: 4,
+  action: {
+    ...validPausedAction.action,
+    state: "active",
+    pendingWarning: null,
+    resumeRequested: true,
+    warningAcknowledgment: {
+      actionId: PAUSED_ACTION_ID,
+      snapshotId: PAUSED_SNAPSHOT_ID,
+      snapshotVersion: 1,
+      snapshotBinding: PAUSED_BINDING,
+      scopeRevisionId: null,
+      reasonCodes: ["outside_scope"],
+      knownAdditions: [],
+      source: "operator_continue",
+      acknowledgedAt: "2026-08-12T12:11:00.000Z",
+      pendingEventId: 7,
+      coveredDestinations: [],
+    },
+  },
+});
+
 function launchedAction(
   state: PersistedAction["action"]["state"],
   pendingWarning: PersistedAction["action"]["pendingWarning"] = null,
 ): PersistedAction {
-  return { action: { state, pendingWarning } } as PersistedAction;
+  return {
+    action: {
+      state,
+      pendingWarning,
+      snapshots: [
+        { version: 1, binding: PAUSED_BINDING, canonicalTargets: [] },
+      ],
+    },
+  } as unknown as PersistedAction;
 }
 
 const queuedAction = launchedAction("queued");
@@ -303,6 +387,9 @@ describe("origin helpers", () => {
       "[2001:db8::1]:80abc",
       "[2001:db8::1]junk",
       "http://host:0",
+      "http://host:",
+      "http://host:/path",
+      "http://[2001:db8::1]:",
     ];
     for (const origin of invalid) {
       for (const scheme of ["http", "https"] as const) {
@@ -322,12 +409,86 @@ describe("origin helpers", () => {
     expect(launcherWarningKind(succeededAction)).toBe("none");
   });
 
-  it("shows the paused run warning without Continue or Add to scope", () => {
-    render(<PausedRunWarning action={activePausedAction} />);
+  it("shows the paused run warning with Continue but no Add to scope", () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PausedRunWarning
+          action={activePausedAction}
+          engagementId={engagementId}
+          onContinued={() => undefined}
+        />
+      </QueryClientProvider>,
+    );
     expect(screen.getByRole("heading", { name: "Action paused for warning" })).toBeTruthy();
     expect(screen.getByText(/outside the saved scope/)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /scope/i })).toBeNull();
+  });
+
+  it("continues the current paused warning with its event identifier", async () => {
+    const seen: Array<{ url: string; body: unknown }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/continue-late-warning")) {
+          const body = JSON.parse(String(init?.body));
+          seen.push({ url, body });
+          return response(continuedAction);
+        }
+        return response({ code: "invalid_request" }, 400);
+      }),
+    );
+    const onContinued = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PausedRunWarning
+          action={validPausedAction}
+          engagementId={engagementId}
+          onContinued={onContinued}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => expect(onContinued).toHaveBeenCalledTimes(1));
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.url).toContain(
+      `/api/v1/engagements/${engagementId}/actions/${PAUSED_ACTION_ID}/continue-late-warning`,
+    );
+    expect(seen[0]?.body).toMatchObject({
+      expectedRevision: 3,
+      snapshotVersion: 1,
+      snapshotBinding: PAUSED_BINDING,
+      pendingEventId: 7,
+    });
+    expect(onContinued.mock.calls[0]?.[0]).toMatchObject({ action: { state: "active" } });
+  });
+
+  it("reports a replaced warning without calling back", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/continue-late-warning")) {
+          return response({ code: "invalid_run_transition" }, 409);
+        }
+        return response({ code: "invalid_request" }, 400);
+      }),
+    );
+    const onContinued = vi.fn();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PausedRunWarning
+          action={validPausedAction}
+          engagementId={engagementId}
+          onContinued={onContinued}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() => {
+      expect(screen.getByText(/no longer current/)).toBeTruthy();
+    });
+    expect(onContinued).not.toHaveBeenCalled();
   });
 
   it("detects web candidates and port defaults", () => {

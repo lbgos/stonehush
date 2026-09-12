@@ -45,6 +45,13 @@ export const ContinueActionRequestSchema = z.strictObject({
   snapshotBinding: ActionSnapshotBindingSchema,
 });
 
+export const ContinueLateWarningActionRequestSchema = z.strictObject({
+  expectedRevision: z.number().int().positive(),
+  snapshotVersion: z.number().int().positive(),
+  snapshotBinding: ActionSnapshotBindingSchema,
+  pendingEventId: z.number().int().positive(),
+});
+
 export const AddScopeAndRunActionRequestSchema = z.strictObject({
   expectedEngagementRevision: z.number().int().positive(),
   expectedActionRevision: z.number().int().positive(),
@@ -97,6 +104,9 @@ export type ActionIdParams = z.infer<typeof ActionIdParamsSchema>;
 export type CreateActionRequest = z.infer<typeof CreateActionRequestSchema>;
 export type CreateActionRequestInput = z.input<typeof CreateActionRequestSchema>;
 export type ContinueActionRequest = z.infer<typeof ContinueActionRequestSchema>;
+export type ContinueLateWarningActionRequest = z.infer<
+  typeof ContinueLateWarningActionRequestSchema
+>;
 export type AddScopeAndRunActionRequest = z.infer<
   typeof AddScopeAndRunActionRequestSchema
 >;
