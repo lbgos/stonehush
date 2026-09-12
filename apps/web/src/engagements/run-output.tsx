@@ -2,7 +2,7 @@ import type { Excerpt, RunOutputResponse } from "@stonehush/contracts";
 import { formatExcerptSourceLabel, selectionBytesFromText } from "@stonehush/domain";
 import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
 import { useRouterState } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   NoTerminalRunError,
@@ -18,6 +18,7 @@ import {
   useLatestRunOutputQuery,
   useRunOutputQuery,
 } from "./run-output-query.js";
+import { fetchRunHistoryPage } from "./run-history-query.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
 
 export function RawOutputPanel({
@@ -116,6 +117,20 @@ function RawOutputBody({
       />
     );
   }
+  // The default latest-run view loses the run id when its bytes fail
+  // verification (the 409 body carries only the code), so without extra work
+  // it collapses to a generic error without reference metadata or combined
+  // retry. Resolve the latest terminal run through history and render the
+  // same reference panel; fall back to the generic error when unresolvable.
+  if (!hasData && query.error instanceof RunOutputUnavailableError) {
+    return (
+      <LatestUnavailablePanel
+        engagementId={engagementId}
+        reason={query.error.code}
+        onRetry={retry}
+      />
+    );
+  }
   if (!hasData && query.isError) {
     return (
       <RecoverableError
@@ -192,6 +207,65 @@ function FailedDownloadPanel({
         </Button>
       </div>
     </div>
+  );
+}
+
+// Latest-run unavailable path: the 409 carries only the verification code,
+// so the run id comes from history. The newest terminal run by updatedAt is
+// the same row the latest-output endpoint used. While resolving, keep a
+// loading state; when unresolvable, fall back to the generic retry.
+function LatestUnavailablePanel({
+  engagementId,
+  reason,
+  onRetry,
+}: {
+  engagementId: string;
+  reason: string;
+  onRetry: () => void;
+}) {
+  const [runId, setRunId] = useState<string | undefined>(undefined);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setRunId(undefined);
+    setFailed(false);
+    void fetchRunHistoryPage(engagementId, { limit: 25 })
+      .then((page) => {
+        if (cancelled) return;
+        const terminal = page.runs
+          .filter((run) => run.state === "succeeded" || run.state === "failed" || run.state === "cancelled")
+          .sort((left, right) =>
+            left.updatedAt === right.updatedAt
+              ? (left.id < right.id ? 1 : -1)
+              : (left.updatedAt < right.updatedAt ? 1 : -1),
+          )[0];
+        if (terminal === undefined) setFailed(true);
+        else setRunId(terminal.id);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [engagementId]);
+  if (runId !== undefined) {
+    return <FailedDownloadPanel engagementId={engagementId} runId={runId} reason={reason} onRetry={onRetry} />;
+  }
+  if (failed) {
+    return (
+      <RecoverableError
+        title="Raw output unavailable"
+        description="Preserved raw output could not be loaded from the local control plane."
+        onRetry={onRetry}
+      />
+    );
+  }
+  return (
+    <LoadingRegion label="Loading raw output" className="space-y-2">
+      <Skeleton className="h-3 w-40" />
+      <Skeleton className="h-24 w-full" />
+    </LoadingRegion>
   );
 }
 
@@ -304,33 +378,55 @@ function RunOutputSearch({
   >({ status: "idle" });
   const create = useCreateExcerptMutation(engagementId);
   const { announce } = useEngagementWorkspace();
+  // Binds each search to its query and run. A slow `foo` resolving after
+  // `bar` was submitted must not overwrite bar's matches, and matches from a
+  // previous run must never be kept with a new run id.
+  const requestSeq = useRef(0);
 
   useEffect(() => {
     onActiveChange(activeQuery.length > 0);
   }, [activeQuery, onActiveChange]);
 
+  // Reset search when the run changes so stale matches with old artifact ids
+  // cannot be submitted under a new run.
+  useEffect(() => {
+    requestSeq.current += 1;
+    setInput("");
+    setActiveQuery("");
+    setSearchState({ status: "idle" });
+  }, [engagementId, runId]);
+
   const submit = () => {
     const query = input.trim();
     if (query.length === 0) {
+      requestSeq.current += 1;
       setActiveQuery("");
       setSearchState({ status: "idle" });
       return;
     }
+    const seq = ++requestSeq.current;
+    const submittedRunId = runId;
+    const submittedQuery = query;
     setActiveQuery(query);
     setSearchState({ status: "pending" });
-    void searchRunOutput(engagementId, runId, query)
-      .then((result) =>
+    void searchRunOutput(engagementId, submittedRunId, submittedQuery)
+      .then((result) => {
+        if (requestSeq.current !== seq) return;
         setSearchState({
           status: "ready",
           matches: result.matches,
           searchedBytes: result.searchedBytes,
           scanCapped: result.scanCapped,
-        }),
-      )
-      .catch(() => setSearchState({ status: "error" }));
+        });
+      })
+      .catch(() => {
+        if (requestSeq.current !== seq) return;
+        setSearchState({ status: "error" });
+      });
   };
 
   const clear = () => {
+    requestSeq.current += 1;
     setInput("");
     setActiveQuery("");
     setSearchState({ status: "idle" });
@@ -566,6 +662,15 @@ function RawStream({
   >(null);
   const create = useCreateExcerptMutation(engagementId);
   const { announce } = useEngagementWorkspace();
+  const streamArtifactId = stream.present ? stream.artifactId : null;
+
+  // A selection holds byte offsets for one specific run and artifact.
+  // Navigating runs without clearing it would submit the old range under the
+  // new run id, keeping unrelated bytes or failing validation.
+  useEffect(() => {
+    setPage(0);
+    setSelection(null);
+  }, [engagementId, runId, streamArtifactId]);
 
   if (!stream.present) {
     return (
@@ -719,6 +824,7 @@ function RawStream({
             artifactId={stream.artifactId}
             stream={label}
             selection={selection}
+            create={create}
           />
           <AddToLeadButton excerpt={null} onAddToLead={onAddToLead} />
         </div>
@@ -735,20 +841,24 @@ function RawStream({
 // Creates the excerpt first when the operator goes straight from a text
 // selection to a finding, then stages the kept excerpt for the Findings tab.
 // The staged object is the server response, never the local selection text.
+// Shares the parent Keep mutation so the two actions stay mutually exclusive:
+// clicking Create finding while Keep is pending no longer posts the same
+// range a second time and creates a duplicate persisted excerpt.
 function CreateFindingButtonAfterKeep({
   engagementId,
   runId,
   artifactId,
   stream,
   selection,
+  create,
 }: {
   engagementId: string;
   runId: string;
   artifactId: string;
   stream: "stdout" | "stderr";
   selection: { byteOffset: number; byteLength: number };
+  create: ReturnType<typeof useCreateExcerptMutation>;
 }) {
-  const create = useCreateExcerptMutation(engagementId);
   const { announce } = useEngagementWorkspace();
   return (
     <Button

@@ -1,4 +1,5 @@
 import type { Attachment, Excerpt } from "@stonehush/contracts";
+import { AttachmentCropSchema, ExcerptSchema } from "@stonehush/contracts";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
@@ -95,8 +96,21 @@ function attachmentFromRow(row: typeof evidenceAttachments.$inferSelect): Attach
   ) {
     return undefined;
   }
-  const crop =
-    row.cropRectJson === null ? null : (JSON.parse(row.cropRectJson) as Attachment["crop"]);
+  // Crop metadata is display-space only and never mutates the original bytes,
+  // but a malformed value (for example `{}`) must not become a persisted
+  // attachment that violates AttachmentCropSchema. Validate before accepting.
+  let crop: Attachment["crop"] = null;
+  if (row.cropRectJson !== null) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.cropRectJson);
+    } catch {
+      return undefined;
+    }
+    const validated = AttachmentCropSchema.safeParse(parsed);
+    if (!validated.success) return undefined;
+    crop = validated.data;
+  }
   const value: Attachment = {
     contractVersion: 1,
     id: row.id,
@@ -155,6 +169,12 @@ export class ExcerptRepository {
         targetNote: input.targetNote,
         createdAt: this.now().toISOString(),
       } as const;
+      // Validate before inserting so contract-invalid values (for example an
+      // empty runId) fail closed instead of persisting a row that later list
+      // and get calls reject as invalid data.
+      if (!ExcerptSchema.safeParse({ ...row }).success) {
+        return { ok: false, error: { code: "invalid_repository_input" } };
+      }
       this.db.insert(evidenceExcerpts).values(row).run();
       const excerpt = excerptFromRow({ ...row });
       if (excerpt === undefined) return { ok: false, error: { code: "invalid_repository_input" } };
@@ -241,6 +261,19 @@ export class ExcerptRepository {
         contentBase64: input.contentBase64,
         createdAt: this.now().toISOString(),
       } as const;
+      // Validate before inserting so a malformed crop (for example `{}`)
+      // fails closed instead of persisting a row that later reads reject.
+      if (row.cropRectJson !== null) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(row.cropRectJson);
+        } catch {
+          return { ok: false, error: { code: "invalid_repository_input" } };
+        }
+        if (!AttachmentCropSchema.safeParse(parsed).success) {
+          return { ok: false, error: { code: "invalid_repository_input" } };
+        }
+      }
       this.db.insert(evidenceAttachments).values(row).run();
       const attachment = attachmentFromRow({ ...row });
       if (attachment === undefined) {

@@ -443,6 +443,30 @@ describe("excerpt routes", () => {
     expect(created.statusCode).toBe(409);
     expect(created.json()).toEqual({ code: "engagement_archived" });
   });
+
+  it("never returns shifted offsets for malformed UTF-8 output", async () => {
+    const harness = await createHarness();
+    // 0xFF decodes to U+FFFD (three bytes on re-encode) while occupying one
+    // source byte. Re-encoding the displayed text would report `login` at
+    // offset 3 instead of 1; the route must not publish that shifted range.
+    harness.artifacts.set(
+      ARTIFACT_ID,
+      Buffer.concat([Buffer.from([0xff]), Buffer.from("login", "utf8")]),
+    );
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=login`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as {
+      matches: { byteOffset: number; byteLength: number }[];
+      searchedBytes: number;
+      scanCapped: boolean;
+    };
+    expect(body.matches).toEqual([]);
+    expect(body.searchedBytes).toBeGreaterThan(0);
+    expect(body.scanCapped).toBe(true);
+  });
 });
 
 describe("attachment routes", () => {

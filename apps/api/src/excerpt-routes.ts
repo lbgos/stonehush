@@ -104,6 +104,7 @@ async function engagementWriteGate(
 }
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
+const utf8StrictDecoder = new TextDecoder("utf-8", { fatal: true });
 
 function sha256Digest(bytes: Buffer): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -179,6 +180,18 @@ export function registerExcerptRoutes(
     }
     if (bytes.status === "missing") return sendExcerptError(reply, 409, "missing_artifact");
     if (bytes.status === "corrupt") return sendExcerptError(reply, 409, "corrupt_artifact");
+
+    // The write gate must hold at commit time, not just at request start. The
+    // verified byte read above awaits I/O, so an archive could land in
+    // between. Re-check synchronously here; the insert below is synchronous
+    // with no await in between, so no interleave remains in this process.
+    const commitGate = await engagementWriteGate(
+      reply,
+      engagements,
+      params.data.engagementId,
+      sendExcerptError,
+    );
+    if (!commitGate.ok) return reply;
 
     // Mask before persistence. The stored excerpt never carries raw secret
     // values, and the response carries the same masked text.
@@ -395,7 +408,21 @@ export function registerExcerptRoutes(
         }
         searchedBytes += taken;
         if (taken < download.sizeBytes) scanCapped = true;
-        const text = utf8Decoder.decode(Buffer.concat(chunks));
+        const prefix = Buffer.concat(chunks);
+        // Byte offsets are computed by re-encoding decoded text. When the
+        // source bytes are not valid UTF-8, a replacement character occupies
+        // one source byte but three re-encoded bytes, so offsets would point
+        // at other evidence. Reject the unsafe mapping: count the bytes,
+        // mark the scan incomplete so absence is never misread as proof of
+        // absence, and return no matches for this artifact. Original bytes
+        // are preserved untouched.
+        try {
+          utf8StrictDecoder.decode(prefix);
+        } catch {
+          scanCapped = true;
+          continue;
+        }
+        const text = utf8Decoder.decode(prefix);
         const hits = findTextMatches(text, query.data.q, query.data.limit - matches.length);
         const points = Array.from(text);
         for (const hit of hits) {
@@ -610,7 +637,17 @@ export function registerExcerptRoutes(
         return sendAttachmentError(reply, 500, "invalid_persisted_data");
       }
       if (!parentBytes.ok) {
-        return sendAttachmentError(reply, 404, "attachment_not_found");
+        if (parentBytes.error.code === "engagement_not_found") {
+          return sendAttachmentError(reply, 404, "engagement_not_found");
+        }
+        if (parentBytes.error.code === "attachment_not_found") {
+          return sendAttachmentError(reply, 404, "attachment_not_found");
+        }
+        return sendAttachmentError(
+          reply,
+          storageStatus(parentBytes.error),
+          parentBytes.error.code === "storage_busy" ? "storage_busy" : "invalid_persisted_data",
+        );
       }
       const raw = Buffer.from(parentBytes.value.contentBase64, "base64");
       const created = excerpts.createAttachment({

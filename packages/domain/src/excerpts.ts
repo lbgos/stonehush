@@ -40,7 +40,12 @@ export function utf8ByteLength(value: string): number {
 
 // Maps a char range inside displayed text to UTF-8 byte offsets for the
 // server range request. Out-of-order or empty selections are rejected so a
-// misclick can never produce a zero-length excerpt.
+// misclick can never produce a zero-length excerpt. When the displayed text
+// contains a replacement character before the selection end, the original
+// bytes may have been invalid UTF-8 (one source byte decoding to U+FFFD,
+// which re-encodes to three bytes). Without the original bytes the exact
+// mapping is unavailable, so the range is rejected rather than risking
+// offsets that point at other evidence.
 export function selectionBytesFromText(
   fullText: string,
   charStart: number,
@@ -59,6 +64,9 @@ export function selectionBytesFromText(
     return { ok: false, code: "range_rejected" };
   }
   const chars = Array.from(fullText);
+  if (chars.slice(0, charEnd).join("").includes("�")) {
+    return { ok: false, code: "range_rejected" };
+  }
   const byteOffset = utf8ByteLength(chars.slice(0, charStart).join(""));
   const byteLength = utf8ByteLength(chars.slice(charStart, charEnd).join(""));
   if (byteLength < 1 || byteLength > EXCERPT_RANGE_MAX_BYTES) {
@@ -87,25 +95,40 @@ export interface TextMatch {
 
 // Case-insensitive non-overlapping substring search over decoded text.
 // Empty queries match nothing; the route rejects them as invalid_request.
+// Offsets are reported in original coordinates: the search runs against the
+// original string with a case-insensitive pattern, so Unicode case
+// expansions (for example U+0130 lowercasing to two code points) cannot
+// shift the reported match into other evidence. The matched length comes
+// from the original substring, not the query.
+function escapeRegExpLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function findTextMatches(
   haystack: string,
   query: string,
   maxMatches: number,
 ): TextMatch[] {
   if (query.length === 0 || maxMatches < 1) return [];
-  const loweredHaystack = haystack.toLowerCase();
-  const loweredQuery = query.toLowerCase();
+  let pattern: RegExp;
+  try {
+    pattern = new RegExp(escapeRegExpLiteral(query), "giu");
+  } catch {
+    return [];
+  }
   const matches: TextMatch[] = [];
-  let from = 0;
-  while (matches.length < maxMatches) {
-    const index = loweredHaystack.indexOf(loweredQuery, from);
-    if (index < 0) break;
+  for (;;) {
+    if (matches.length >= maxMatches) break;
+    const found = pattern.exec(haystack);
+    if (found === null) break;
+    if (found[0].length === 0) {
+      pattern.lastIndex += 1;
+      continue;
+    }
     matches.push({
-      charOffset: Array.from(haystack.slice(0, index)).length,
-      charLength: Array.from(query).length,
+      charOffset: Array.from(haystack.slice(0, found.index)).length,
+      charLength: Array.from(found[0]).length,
     });
-    from = index + query.length;
-    if (query.length === 0) break;
   }
   return matches;
 }
@@ -138,7 +161,11 @@ export function windowSnippetFromChars(
 }
 
 // Byte offset of a char offset, for reporting server-style match positions
-// from decoded scan text.
+// from decoded scan text. Callers must only pass text decoded from bytes
+// already validated as strict UTF-8; otherwise a replacement character from
+// malformed input re-encodes to three bytes while occupying one source byte
+// and the result points at other evidence. The search route validates with
+// a fatal decoder before calling this.
 export function byteOffsetOfCharOffset(text: string, charOffset: number): number {
   return utf8ByteLength(Array.from(text).slice(0, Math.max(0, charOffset)).join(""));
 }

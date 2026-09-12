@@ -89,6 +89,25 @@ describe("search windowing", () => {
     expect(findTextMatches("login here", "", 10)).toEqual([]);
   });
 
+  it("keeps original offsets when case folding expands characters", () => {
+    // U+0130 lowercases to two code points; a lowered-string index would shift
+    // every later match into other evidence. The engine reports original
+    // coordinates, so the ASCII match after it stays exact.
+    const haystack = "İ login";
+    const matches = findTextMatches(haystack, "login", 10);
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.charOffset).toBe(Array.from("İ ").length);
+    expect(matches[0]?.charLength).toBe(5);
+  });
+
+  it("rejects selections that cannot be mapped exactly after malformed UTF-8", () => {
+    expect(selectionBytesFromText("�foo", 1, 4)).toEqual({
+      ok: false,
+      code: "range_rejected",
+    });
+    expect(selectionBytesFromText("abc � def", 0, 3).ok).toBe(true);
+  });
+
   it("windows snippets without rendering the whole file", () => {
     const text = `${"a".repeat(500)}login${"b".repeat(500)}`;
     const [match] = findTextMatches(text, "login", 1);

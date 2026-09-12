@@ -184,7 +184,7 @@ describe("notes image capture", () => {
 
     await waitFor(() => expect(posts.length).toBe(1));
     expect(posts[0]?.body).toMatchObject({
-      filename: "login form",
+      filename: "login",
       mime: "image/png",
       caption: "login form",
     });

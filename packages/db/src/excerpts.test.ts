@@ -134,6 +134,27 @@ describe("excerpt persistence", () => {
     });
     expect(created.ok).toBe(false);
   });
+
+  it("rejects contract-invalid excerpts before persisting them", () => {
+    const { engagements, excerpts } = createFixture();
+    const engagementId = createEngagement(engagements);
+    const created = excerpts.createExcerpt({
+      engagementId,
+      runId: "",
+      artifactId: "artifact-stdout",
+      artifactDigest: DIGEST,
+      stream: "stdout",
+      byteOffset: 0,
+      byteLength: 16,
+      content: "line",
+      redactions: 0,
+      targetNote: null,
+    });
+    expect(created).toEqual({ ok: false, error: { code: "invalid_repository_input" } });
+    const listed = excerpts.listExcerpts(engagementId);
+    if (!listed.ok) throw new Error(`Excerpt list failed: ${listed.error.code}`);
+    expect(listed.value).toHaveLength(0);
+  });
 });
 
 describe("attachment persistence", () => {
@@ -224,5 +245,19 @@ describe("attachment persistence", () => {
       ok: false,
       error: { code: "attachment_not_found" },
     });
+  });
+
+  it("rejects malformed crop metadata before persisting it", () => {
+    const { engagements, excerpts } = createFixture();
+    const engagementId = createEngagement(engagements);
+    const created = excerpts.createAttachment({
+      ...uploadInput(engagementId),
+      parentAttachmentId: null,
+      cropRectJson: JSON.stringify({}),
+    });
+    expect(created).toEqual({ ok: false, error: { code: "invalid_repository_input" } });
+    const listed = excerpts.listAttachments(engagementId);
+    if (!listed.ok) throw new Error(`Attachment list failed: ${listed.error.code}`);
+    expect(listed.value).toHaveLength(0);
   });
 });

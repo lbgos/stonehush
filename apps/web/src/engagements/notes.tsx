@@ -37,13 +37,19 @@ export function EngagementNotesSection({
   const copyId = useId();
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentsRef = useRef<{ acceptFiles: (files: readonly File[]) => void } | null>(null);
+  // Latest draft for async insert: an upload resolving after the operator
+  // kept typing must insert into the newest text, never overwrite it with a
+  // stale render closure.
+  const valueRef = useRef(value);
+  valueRef.current = value;
 
   const insertIntoDraft = (snippet: string) => {
     const element = editorRef.current;
+    const latest = valueRef.current;
     if (element !== null && typeof element.selectionStart === "number") {
-      const start = element.selectionStart;
-      const end = element.selectionEnd;
-      setDraft(`${value.slice(0, start)}${snippet}${value.slice(end)}`);
+      const start = Math.min(element.selectionStart, latest.length);
+      const end = Math.min(element.selectionEnd, latest.length);
+      setDraft(`${latest.slice(0, start)}${snippet}${latest.slice(end)}`);
       const cursor = start + snippet.length;
       requestAnimationFrame(() => {
         element.focus();
@@ -51,7 +57,7 @@ export function EngagementNotesSection({
       });
       return;
     }
-    setDraft(value.length === 0 ? snippet : `${value}\n${snippet}`);
+    setDraft(latest.length === 0 ? snippet : `${latest}\n${snippet}`);
   };
   const isConflict =
     conflictServer !== null ||
@@ -313,7 +319,10 @@ function NotesEditorBody({
 
 const ATTACHMENT_MIME_ALLOWLIST = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 type AttachmentMime = (typeof ATTACHMENT_MIME_ALLOWLIST)[number];
-const ATTACHMENT_RAW_MAX_BYTES = 2_000_000;
+// Raw bytes stay below the stored Base64 limit: Base64 expands by 4/3, so
+// 1.5M raw fits the 2M content_base64 column and contract bound. Accepting a
+// full 2M raw file would always fail at persistence with no successful retry.
+const ATTACHMENT_RAW_MAX_BYTES = 1_500_000;
 
 function isAttachmentMime(value: string): value is AttachmentMime {
   return (ATTACHMENT_MIME_ALLOWLIST as readonly string[]).includes(value);
@@ -475,14 +484,39 @@ function NoteAttachmentsSection({
   const [pending, setPending] = useState<PendingUpload[]>([]);
   const [engagementName, setEngagementName] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Tracks the engagement this section currently shows. Async FileReader and
+  // upload completions capture their starting engagement and ignore stale
+  // resolutions after navigation, so A's bytes never land under B.
+  const engagementIdRef = useRef(engagementId);
+  engagementIdRef.current = engagementId;
+
+  // Union by id so a slow initial fetch never drops an attachment an upload
+  // just added. Server rows win on conflicts; order stays by creation.
+  const mergeAttachmentRows = (current: Attachment[] | undefined, incoming: Attachment[]) => {
+    const byId = new Map<string, Attachment>();
+    for (const row of current ?? []) byId.set(row.id, row);
+    for (const row of incoming) byId.set(row.id, row);
+    return [...byId.values()].sort((left, right) =>
+      left.createdAt === right.createdAt
+        ? (left.id < right.id ? -1 : 1)
+        : (left.createdAt < right.createdAt ? -1 : 1),
+    );
+  };
 
   useEffect(() => {
     let cancelled = false;
     setAttachments(undefined);
     setLoadError(false);
+    // Clear per-engagement capture state: a paste queued for A must not
+    // persist A's target label or bytes under B after navigation.
+    setPending([]);
+    setEngagementName("");
     void fetchAttachments(engagementId)
       .then((rows) => {
-        if (!cancelled) setAttachments(rows);
+        if (cancelled) return;
+        // Merge instead of replacing: an upload that finished while this
+        // fetch was in flight already appended to current state.
+        setAttachments((current) => mergeAttachmentRows(current, rows));
       })
       .catch(() => {
         if (!cancelled) setLoadError(true);
@@ -508,6 +542,8 @@ function NoteAttachmentsSection({
 
   const acceptFiles = (files: readonly File[]) => {
     if (archived) return;
+    const startedEngagementId = engagementIdRef.current;
+    const startedEngagementName = engagementName;
     for (const file of files) {
       const mime = file.type;
       if (!isAttachmentMime(mime)) continue;
@@ -516,6 +552,8 @@ function NoteAttachmentsSection({
       const clientId = ++pendingUploadSeq;
       const proves = file.name.replace(/\.[a-z0-9]+$/i, "").slice(0, 128);
       reader.onload = () => {
+        // Drop pastes that finished reading after navigation away.
+        if (engagementIdRef.current !== startedEngagementId) return;
         const dataUrl = typeof reader.result === "string" ? reader.result : "";
         if (dataUrl.length === 0) return;
         setPending((current) => [
@@ -526,7 +564,7 @@ function NoteAttachmentsSection({
             mime,
             proves: proves.length > 0 ? proves : "evidence",
             caption: "",
-            targetLabel: engagementName,
+            targetLabel: startedEngagementName,
             status: "ready",
             error: undefined,
           },
@@ -551,26 +589,37 @@ function NoteAttachmentsSection({
     );
     const entry = pending.find((candidate) => candidate.clientId === clientId);
     if (entry === undefined) return;
+    // Bind this upload to its starting engagement. If navigation happens
+    // before the POST resolves, the completion below is ignored so A's bytes
+    // never append to or insert into B.
+    const startedEngagementId = engagementIdRef.current;
+    const startedEngagementName = engagementName;
     const base64 = entry.dataUrl.split(",", 2)[1] ?? "";
     // Fall back to the current engagement context when the paste landed
     // before the engagement name finished loading.
     const targetLabel =
-      entry.targetLabel.length > 0 ? entry.targetLabel : engagementName;
-    void createAttachmentRequest(engagementId, {
-      filename: entry.caption.length > 0 ? entry.caption : entry.proves,
+      entry.targetLabel.length > 0 ? entry.targetLabel : startedEngagementName;
+    // The filename always comes from what the image proves. The caption is a
+    // separate display field; using it as the filename loses the evidence
+    // name the operator typed.
+    const filename = entry.proves.length > 0 ? entry.proves : "evidence";
+    void createAttachmentRequest(startedEngagementId, {
+      filename,
       mime: entry.mime,
       contentBase64: base64,
       caption: entry.caption,
       ...(targetLabel.length > 0 ? { targetLabel } : {}),
     })
       .then((saved) => {
+        if (engagementIdRef.current !== startedEngagementId) return;
         setPending((current) => current.filter((candidate) => candidate.clientId !== clientId));
-        setAttachments((current) => [...(current ?? []), saved]);
+        setAttachments((current) => mergeAttachmentRows(current, [saved]));
         onInsert(
           `![${saved.caption.length > 0 ? saved.caption : saved.filename}](attachment:${saved.id})`,
         );
       })
       .catch(() => {
+        if (engagementIdRef.current !== startedEngagementId) return;
         // The pasted bytes stay local with a retry action; nothing is lost.
         setPending((current) =>
           current.map((candidate) =>
@@ -589,7 +638,7 @@ function NoteAttachmentsSection({
   const reload = () => {
     setLoadError(false);
     void fetchAttachments(engagementId)
-      .then(setAttachments)
+      .then((rows) => setAttachments((current) => mergeAttachmentRows(current, rows)))
       .catch(() => setLoadError(true));
   };
 
