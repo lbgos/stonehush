@@ -33,6 +33,7 @@ import {
   isTerminalActionState,
   persistedActionQueryOptions,
 } from "./action-query.js";
+import { warningReasonCodes, warningReasonSummary } from "./action-targets.js";
 import { engagementMutationMessage } from "./errors.js";
 import { useLaunchFfufDiscoveryMutation } from "./ffuf-mutations.js";
 import { useFindingsQuery } from "./findings-query.js";
@@ -226,16 +227,31 @@ export function withOriginScheme(origin: string, scheme: OriginScheme): string {
   }
   let host: string;
   let port: number | undefined;
+  // An explicit port that is not a plain 1-65535 integer is kept verbatim in
+  // the authority so downstream splitOriginUrl validation rejects the target
+  // instead of silently probing a different endpoint without the port.
+  const parseAuthorityPort = (rawPort: string): number | undefined => {
+    if (!/^\d+$/.test(rawPort)) return undefined;
+    const parsedPort = Number.parseInt(rawPort, 10);
+    if (!Number.isSafeInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+      return undefined;
+    }
+    return parsedPort;
+  };
   if (authority.startsWith("[")) {
     const closingBracket = authority.indexOf("]");
     if (closingBracket >= 0) {
       host = authority.slice(0, closingBracket + 1);
       const after = authority.slice(closingBracket + 1);
       if (after.startsWith(":")) {
-        const parsedPort = Number.parseInt(after.slice(1), 10);
-        if (Number.isSafeInteger(parsedPort)) {
+        const parsedPort = parseAuthorityPort(after.slice(1));
+        if (parsedPort === undefined) {
+          host = authority;
+        } else {
           port = parsedPort;
         }
+      } else if (after.length > 0) {
+        host = authority;
       }
     } else {
       host = authority;
@@ -246,9 +262,11 @@ export function withOriginScheme(origin: string, scheme: OriginScheme): string {
       host = `[${authority}]`;
     } else if (colonCount === 1) {
       const colon = authority.indexOf(":");
-      host = authority.slice(0, colon);
-      const parsedPort = Number.parseInt(authority.slice(colon + 1), 10);
-      if (Number.isSafeInteger(parsedPort)) {
+      const parsedPort = parseAuthorityPort(authority.slice(colon + 1));
+      if (parsedPort === undefined) {
+        host = authority;
+      } else {
+        host = authority.slice(0, colon);
         port = parsedPort;
       }
     } else {
@@ -888,6 +906,45 @@ function InspectorProvenanceField({
 // ---------------------------------------------------------------------------
 // Action launcher: probe or ffuf discovery from an exact selected target.
 // ---------------------------------------------------------------------------
+
+export type LauncherWarningKind = "warning-card" | "paused-run" | "none";
+
+// Warning UI follows the current display action, never a stale launch
+// result. A pre-run warning renders the full WarningCard with Continue and
+// Add to scope. A run that started and then paused for a late warning keeps
+// its warning visible, but Continue and Add to scope stay unavailable: the
+// action API accepts them only for pre-run warnings, and no late-warning
+// continue route exists. Stopping the paused run remains available.
+export function launcherWarningKind(
+  displayAction: PersistedAction | undefined,
+): LauncherWarningKind {
+  if (displayAction?.action.state === "paused_for_warning") return "warning-card";
+  if (displayAction?.action.state === "active_paused_for_warning") return "paused-run";
+  return "none";
+}
+
+export function PausedRunWarning({ action }: { action: PersistedAction }) {
+  const titleId = useId();
+  const reasonCodes = warningReasonCodes(action);
+  return (
+    <section
+      role="alert"
+      aria-labelledby={titleId}
+      className="mt-4 rounded-[10px] border border-warning/35 bg-warning/10 px-3 py-3"
+    >
+      <h3 id={titleId} className="m-0 text-[13px] font-semibold text-foreground">
+        Action paused for warning
+      </h3>
+      <p className="mt-1 mb-0 text-[12px] leading-5 text-foreground">
+        {warningReasonSummary(reasonCodes)}
+      </p>
+      <p className="mt-2 mb-0 text-[12px] leading-5 text-muted-foreground">
+        The run started, then paused. Stopping the action is available above. Continuing a
+        paused run is not supported here.
+      </p>
+    </section>
+  );
+}
 
 export type LauncherRequest =
   | {
@@ -1620,10 +1677,11 @@ function LauncherResult({
   scopeRules: readonly SavedScopeRule[];
   sourceLabel: string;
 }) {
-  if (launcher.result?.action.state === "paused_for_warning") {
+  const warningKind = launcherWarningKind(launcher.displayAction);
+  if (warningKind === "warning-card" && launcher.displayAction !== undefined) {
     return (
       <WarningCard
-        action={launcher.result}
+        action={launcher.displayAction}
         engagementId={engagementId}
         expectedEngagementRevision={expectedEngagementRevision}
         plannedTargets={launcher.plannedTargets}
@@ -1633,6 +1691,9 @@ function LauncherResult({
         onContinue={launcher.trackLaunched}
       />
     );
+  }
+  if (warningKind === "paused-run" && launcher.displayAction !== undefined) {
+    return <PausedRunWarning action={launcher.displayAction} />;
   }
   if (launcher.displayAction === undefined) return null;
   return (

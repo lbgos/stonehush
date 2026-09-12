@@ -19,7 +19,7 @@ import { latestActionSnapshot } from "./action-targets.js";
 import { engagementMutationMessage } from "./errors.js";
 import { type FfufDiscoveryInput, useLaunchFfufDiscoveryMutation } from "./ffuf-mutations.js";
 import { formatEngagementTimestamp } from "./format.js";
-import { isPathRowSelected, pathInspectorRecord, pathSelectionKey, type ExtraRowActions } from "./inspector.js";
+import { isPathRowSelected, pathInspectorRecord, pathSelectionKey, PausedRunWarning, type ExtraRowActions } from "./inspector.js";
 import {
   engagementFfufResultsQueryKey,
   useEngagementDetailQuery,
@@ -374,9 +374,9 @@ function FfufDiscoveryBody({
         </div>
       </form>
 
-      {result?.action.state === "paused_for_warning" ? (
+      {displayAction?.action.state === "paused_for_warning" ? (
         <WarningCard
-          action={result}
+          action={displayAction}
           engagementId={engagementId}
           expectedEngagementRevision={expectedEngagementRevision}
           plannedTargets={[lastInputs?.origin ?? origin.trim()]}
@@ -387,7 +387,13 @@ function FfufDiscoveryBody({
         />
       ) : null}
 
-      {displayAction !== undefined && displayAction.action.state !== "paused_for_warning" ? (
+      {displayAction?.action.state === "active_paused_for_warning" ? (
+        <PausedRunWarning action={displayAction} />
+      ) : null}
+
+      {displayAction !== undefined &&
+      displayAction.action.state !== "paused_for_warning" &&
+      displayAction.action.state !== "active_paused_for_warning" ? (
         <p className="mt-4 mb-0 text-[13px] text-foreground" role="status">
           {actionLifecycleStatusCopy(displayAction.action)}{" "}
           <span className="font-mono text-[12px] text-muted-foreground">

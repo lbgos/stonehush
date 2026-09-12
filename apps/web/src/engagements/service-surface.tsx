@@ -591,7 +591,7 @@ function TargetGroup({
                 probes={(probes ?? []).filter((probe) => probeMatchesService(probe, service))}
                 scheme={
                   schemes[`${service.address}:${String(service.port)}`] ??
-                  defaultSchemeForService(service, probes)
+                  defaultSchemeForService(service, probes, ffufResults)
                 }
                 selectedKey={selectedKey}
                 setScheme={(scheme) =>
@@ -642,13 +642,61 @@ function probeMatchesService(probe: HttpProbeProjected, service: NmapProjectedSe
 function defaultSchemeForService(
   service: NmapProjectedService,
   probes: readonly HttpProbeProjected[] | undefined,
+  ffufResults: readonly FfufProjected[] | undefined,
 ): OriginScheme {
   const matched = (probes ?? []).filter((probe) => probeMatchesService(probe, service));
   if (matched.length === 1) {
     const scheme = splitOriginUrl(matched[0]?.url ?? "")?.scheme;
     if (scheme !== undefined) return scheme;
   }
+  const matchedPaths = (ffufResults ?? []).filter((result) => {
+    const parts = splitOriginUrl(result.url);
+    return (
+      parts !== undefined &&
+      parts.port === service.port &&
+      hostMatchesService(parts.host, service)
+    );
+  });
+  const pathScheme = unanimousObservedScheme(matchedPaths.map((result) => result.url));
+  if (pathScheme !== undefined) return pathScheme;
   return defaultSchemeForPort(service.port);
+}
+
+// Observed scheme shared by probes and path discoveries. Returns a scheme
+// only when at least one URL parses and every parsed URL agrees; mixed
+// observations fall back to the port heuristic instead of silently picking
+// one endpoint as the target.
+function unanimousObservedScheme(urls: readonly string[]): OriginScheme | undefined {
+  let seen: OriginScheme | undefined;
+  let parsed = 0;
+  for (const url of urls) {
+    const scheme = splitOriginUrl(url)?.scheme;
+    if (scheme === undefined) continue;
+    parsed += 1;
+    if (seen === undefined) {
+      seen = scheme;
+    } else if (seen !== scheme) {
+      return undefined;
+    }
+  }
+  return parsed === 0 ? undefined : seen;
+}
+
+// Default scheme for an unmatched observed origin. An explicit operator
+// override wins, then any observed probe scheme, then the unanimous observed
+// path scheme, then the port heuristic. Probe priority is unchanged so mixed
+// probe/path observations keep their existing target.
+function defaultSchemeForUnmatchedEntry(
+  entry: { host: string; port: number; probes: readonly HttpProbeProjected[]; paths: readonly FfufProjected[] },
+  schemes: Readonly<Record<string, OriginScheme>>,
+): OriginScheme {
+  const key = `${entry.host}:${String(entry.port)}`;
+  return (
+    schemes[key] ??
+    entry.probes.map((probe) => splitOriginUrl(probe.url)?.scheme).find((scheme) => scheme !== undefined) ??
+    unanimousObservedScheme(entry.paths.map((result) => result.url)) ??
+    defaultSchemeForPort(entry.port)
+  );
 }
 
 function UnmatchedOrigins({
@@ -732,7 +780,7 @@ function UnmatchedOrigins({
       <div className="grid gap-2">
         {entries.map((entry) => {
           const key = `${entry.host}:${String(entry.port)}`;
-          const scheme = schemes[key] ?? entry.probes.map((probe) => splitOriginUrl(probe.url)?.scheme).find((scheme) => scheme !== undefined) ?? defaultSchemeForPort(entry.port);
+          const scheme = defaultSchemeForUnmatchedEntry(entry, schemes);
           return (
             <OriginBlock
               key={key}
@@ -820,10 +868,7 @@ function ObservedOriginsWithoutServices({
       <div className="grid gap-2">
         {entries.map((entry) => {
           const key = `${entry.host}:${String(entry.port)}`;
-          const scheme =
-            schemes[key] ??
-            entry.probes.map((probe) => splitOriginUrl(probe.url)?.scheme).find((scheme) => scheme !== undefined) ??
-            defaultSchemeForPort(entry.port);
+          const scheme = defaultSchemeForUnmatchedEntry(entry, schemes);
           return (
             <OriginBlock
               key={key}

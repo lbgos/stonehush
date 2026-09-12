@@ -1,15 +1,18 @@
 // @vitest-environment jsdom
+import type { PersistedAction } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import {
+  PausedRunWarning,
   SurfaceInspector,
   decodeSurfaceSelection,
   defaultSchemeForPort,
   focusSurfaceRow,
   isServiceRowSelected,
+  launcherWarningKind,
   serviceSelectionKey,
   isWebServiceCandidate,
   parseOriginScheme,
@@ -22,6 +25,26 @@ import {
 } from "./inspector.js";
 
 const engagementId = "10000000-0000-4000-8000-000000000001";
+
+function launchedAction(
+  state: PersistedAction["action"]["state"],
+  pendingWarning: PersistedAction["action"]["pendingWarning"] = null,
+): PersistedAction {
+  return { action: { state, pendingWarning } } as PersistedAction;
+}
+
+const queuedAction = launchedAction("queued");
+const pausedAction = launchedAction("paused_for_warning", {
+  reasonCodes: ["outside_scope"],
+  knownAdditions: [],
+  pendingEventId: null,
+});
+const activePausedAction = launchedAction("active_paused_for_warning", {
+  reasonCodes: ["outside_scope"],
+  knownAdditions: [],
+  pendingEventId: 7,
+});
+const succeededAction = launchedAction("succeeded");
 
 const webService = {
   address: "192.0.2.10",
@@ -267,6 +290,44 @@ describe("origin helpers", () => {
     expect(withOriginScheme("2001:db8::1", "http")).toBe("http://[2001:db8::1]");
     expect(withOriginScheme("[2001:db8::1]:80", "http")).toBe("http://[2001:db8::1]");
     expect(withOriginScheme("[2001:db8::1]:80", "https")).toBe("https://[2001:db8::1]:80");
+  });
+
+  it("keeps invalid ports verbatim so validation rejects the target", () => {
+    // An unparseable or out-of-range port must never be dropped: dropping it
+    // would submit a different endpoint than the operator typed.
+    const invalid = [
+      "http://host:bad",
+      "host:80abc",
+      "host:99999",
+      "http://[2001:db8::1]:bad",
+      "[2001:db8::1]:80abc",
+      "[2001:db8::1]junk",
+      "http://host:0",
+    ];
+    for (const origin of invalid) {
+      for (const scheme of ["http", "https"] as const) {
+        expect(splitOriginUrl(withOriginScheme(origin, scheme))).toBeUndefined();
+      }
+    }
+    // Valid ports still normalize, including default-port elision.
+    expect(withOriginScheme("http://host:8080", "https")).toBe("https://host:8080");
+    expect(withOriginScheme("http://host:80", "http")).toBe("http://host");
+  });
+
+  it("maps launcher warning display to the current action state", () => {
+    expect(launcherWarningKind(undefined)).toBe("none");
+    expect(launcherWarningKind(queuedAction)).toBe("none");
+    expect(launcherWarningKind(pausedAction)).toBe("warning-card");
+    expect(launcherWarningKind(activePausedAction)).toBe("paused-run");
+    expect(launcherWarningKind(succeededAction)).toBe("none");
+  });
+
+  it("shows the paused run warning without Continue or Add to scope", () => {
+    render(<PausedRunWarning action={activePausedAction} />);
+    expect(screen.getByRole("heading", { name: "Action paused for warning" })).toBeTruthy();
+    expect(screen.getByText(/outside the saved scope/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /scope/i })).toBeNull();
   });
 
   it("detects web candidates and port defaults", () => {

@@ -46,6 +46,38 @@ function response(payload: unknown, status = 200): Response {
   return { json: async () => payload, ok: status >= 200 && status < 300, status } as Response;
 }
 
+function ffufPath(url: string, artifactId = "artifact-9") {
+  return {
+    source: "ffuf" as const,
+    parserVersion: "ffuf-json-v1" as const,
+    url,
+    status: 200,
+    length: 1234,
+    words: 10,
+    lines: 5,
+    redirectlocation: null,
+    fuzz: "admin",
+    runId: "run-1",
+    artifactId,
+    artifactDigest: `sha256:${"c".repeat(64)}`,
+    observedAt: "2026-08-13T12:00:00.000Z",
+  };
+}
+
+function routeSurfaceResponses(
+  services: readonly unknown[],
+  probes: readonly unknown[] = [],
+  paths: readonly unknown[] = [],
+) {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/services")) return Promise.resolve(response(services));
+    if (url.endsWith("/http-probes")) return Promise.resolve(response(probes));
+    if (url.endsWith("/ffuf-results")) return Promise.resolve(response(paths));
+    return Promise.resolve(response({ code: "invalid_request" }, 400));
+  });
+}
+
 let queryClient: ReturnType<typeof createAppQueryClient>;
 
 beforeEach(() => {
@@ -213,5 +245,49 @@ describe("EngagementServicesSection", () => {
     expect(rowKeys).toContain(
       serviceSelectionKey(second.address, second.port, second.protocol, second.artifactId),
     );
+  });
+
+  it("retains the observed https scheme for ffuf-only discoveries on nonstandard ports", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([web8080], [], [ffufPath("https://192.0.2.10:8080/admin")]),
+    );
+    renderSurface();
+    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
+    expect(browserLink.getAttribute("href")).toBe("https://192.0.2.10:8080");
+    expect(screen.getByLabelText("Scheme for 192.0.2.10:8080")).toHaveProperty("value", "https");
+  });
+
+  it("keeps the probe scheme when probes and paths disagree on one origin", async () => {
+    const probe = {
+      parserVersion: "http-probe-raw-v1" as const,
+      url: "http://192.0.2.10:8080/",
+      fetchedAt: "2026-08-13T12:00:00.000Z",
+      finalUrl: "http://192.0.2.10:8080/",
+      status: 200,
+      title: "lab",
+      selectedHeaders: { contentType: "text/html", server: null, poweredBy: null },
+      hops: [],
+      error: null,
+      source: "http-probe" as const,
+      runId: "run-1",
+      artifactId: "artifact-7",
+      artifactDigest: `sha256:${"d".repeat(64)}`,
+      observedAt: "2026-08-13T12:00:00.000Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([], [probe], [ffufPath("https://192.0.2.10:8080/admin")]),
+    );
+    renderSurface();
+    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
+    expect(browserLink.getAttribute("href")).toBe("http://192.0.2.10:8080");
   });
 });
