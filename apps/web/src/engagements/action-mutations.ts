@@ -18,6 +18,7 @@ import {
 import { createIntentKeyHolder, requestFingerprint } from "./idempotency.js";
 import { sendActionMutation } from "./mutations.js";
 import { ENGAGEMENTS_QUERY_KEY, engagementDetailQueryKey } from "./query.js";
+import { runHistoryQueryKey } from "./run-history-query.js";
 
 const ERROR_STATUSES = new Set([400, 404, 409, 500, 503]);
 
@@ -178,6 +179,9 @@ export function useCreateActionMutation() {
           ...body,
         }),
       );
+      // The readiness summary and run panel read run history, so a newly
+      // planned action must refresh them instead of leaving "no runs yet".
+      void queryClient.invalidateQueries({ queryKey: runHistoryQueryKey(input.engagementId) });
     },
     onError: async (error, input) => {
       if (isRevisionConflict(error)) {

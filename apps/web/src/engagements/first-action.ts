@@ -28,6 +28,24 @@ const CHALLENGE_NOTES_MAX_BYTES = 60_000;
 
 type MinimalStorage = Pick<Storage, "getItem" | "setItem">;
 
+// Inert fallback when the browser storage object itself is unreachable
+// (denied cookies, SecurityError on access). Reads miss, writes drop.
+const inertStorage: MinimalStorage = {
+  getItem: () => null,
+  setItem: () => undefined,
+};
+
+// Guard the storage object access itself. The read/write helpers below catch
+// per-call failures, but evaluating window.localStorage can throw before any
+// helper runs, which would break render. Every browser call site uses this.
+export function browserStorage(): MinimalStorage {
+  try {
+    return window.localStorage;
+  } catch {
+    return inertStorage;
+  }
+}
+
 function readStorage(storage: MinimalStorage, key: string): string | null {
   try {
     return storage.getItem(key);

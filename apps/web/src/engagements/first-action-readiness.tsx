@@ -64,10 +64,8 @@ function runLine(run: RunHistorySummary | undefined): string {
 
 export function FirstActionReadiness({
   engagementId,
-  nmapUnavailable,
 }: {
   engagementId?: string | undefined;
-  nmapUnavailable: boolean;
 }) {
   const system = useSystemStatusQuery();
   const advisor = useAdvisorStatusQuery();
@@ -84,15 +82,17 @@ export function FirstActionReadiness({
       lines.push("Runner: checking recent runs.");
     }
   }
-  if (nmapUnavailable) {
-    lines.push("This target cannot run as an Nmap scan here. URL targets use web-origin inspection.");
-  }
+  // Nmap outages surface through the run-history line above; the planning
+  // aggregate carries no Nmap-specific code, so no separate Nmap line here.
   lines.push(advisorLine(advisor));
 
   // Manual retry only, shown only while something failed, so an unreachable
   // control plane never strands the summary without recourse.
   const failed =
-    system.isError || advisor.isError || (engagementId !== undefined && history.isError);
+    system.isError ||
+    system.data?.overall === "not_ready" ||
+    advisor.isError ||
+    (engagementId !== undefined && history.isError);
   const retryStatus = () => {
     void system.refetch();
     void advisor.refetch();

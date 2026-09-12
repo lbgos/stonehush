@@ -84,6 +84,23 @@ function queuedAction(): PersistedAction {
 }
 
 const readyStatus = { version: 1, overall: "ready", developmentStorage: "ready" };
+
+function pausedAction(): PersistedAction {
+  const queued = queuedAction();
+  return PersistedActionSchema.parse({
+    ...queued,
+    action: {
+      ...queued.action,
+      state: "paused_for_warning",
+      queuedSnapshotVersion: null,
+      pendingWarning: { reasonCodes: ["outside_scope"], knownAdditions: [], pendingEventId: null },
+      snapshots: queued.action.snapshots.map((snapshot) => ({
+        ...snapshot,
+        warningState: { reasonCodes: ["outside_scope"], knownAdditions: [], acknowledgment: null },
+      })),
+    },
+  });
+}
 const unconfiguredAdvisor = {
   configured: false,
   endpointReachable: null,
@@ -229,8 +246,8 @@ describe("opening screen", () => {
 
   it("starts a scan from a pasted IP and reopens the same work", async () => {
     const fetchMock = stubFetch(openingHandler());
-    const { router } = await renderOpening();
-
+    const { queryClient, router } = await renderOpening();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
     fireEvent.change(await screen.findByLabelText("Target"), {
       target: { value: "192.0.2.10" },
     });
@@ -254,6 +271,10 @@ describe("opening screen", () => {
       declaredPorts: null,
     });
     expect(window.localStorage.getItem("stonehush.lastEngagementId")).toBe(ENGAGEMENT_ID);
+    // The readiness summary reads run history, so the start refreshes it.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["engagements", ENGAGEMENT_ID, "runs"],
+    });
   });
 
   it("rejects an empty start without posting", async () => {
@@ -282,5 +303,130 @@ describe("opening screen", () => {
 
     await renderOpening();
     expect((await screen.findByLabelText("Target") as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("carries a paused first scan into the planner through the action search", async () => {
+    const base = openingHandler();
+    stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        return response(pausedAction(), 201);
+      }
+      return base(url, init);
+    });
+    const { router } = await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(router.state.location.search).toMatchObject({ action: ACTION_ID });
+  });
+
+  it("retries the scan on the same engagement instead of creating a second one", async () => {
+    const base = openingHandler();
+    let actionCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) return response({ code: "storage_busy" }, 503);
+        return response(queuedAction(), 201);
+      }
+      return base(url, init);
+    });
+    const { router } = await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/");
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(actionCalls).toBe(2);
+  });
+
+  it("refreshes the engagement revision after a scan conflict and still creates once", async () => {
+    const base = openingHandler();
+    let actionCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) {
+          return response(
+            {
+              code: "revision_conflict",
+              resourceType: "engagement",
+              resourceId: ENGAGEMENT_ID,
+              currentRevision: 5,
+            },
+            409,
+          );
+        }
+        return response(queuedAction(), 201);
+      }
+      return base(url, init);
+    });
+    const { router } = await renderOpening();
+
+    fireEvent.change(await screen.findByLabelText("Target"), {
+      target: { value: "192.0.2.10" },
+    });
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.submit(form);
+
+    expect(await screen.findByText("This engagement changed. Showing the latest revision.")).toBeTruthy();
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    const actionBodies = fetchMock.mock.calls
+      .filter(([url, init]) => String(url).endsWith("/actions") && init?.method === "POST")
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(actionBodies).toHaveLength(2);
+    expect(actionBodies[1]).toMatchObject({ expectedEngagementRevision: 5 });
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("offers Retry status when the control plane store is not ready", async () => {
+    const base = openingHandler();
+    stubFetch((url, init) => {
+      if (url.includes("/api/v1/system/status")) {
+        return response(
+          { version: 1, overall: "not_ready", developmentStorage: "not_ready" },
+          503,
+        );
+      }
+      return base(url, init);
+    });
+    await renderOpening();
+
+    expect(
+      await screen.findByText("Control plane: storage not ready. Queued work waits."),
+    ).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Retry status" })).toBeTruthy();
   });
 });

@@ -1,6 +1,7 @@
 import {
   CreateEngagementRequestSchema,
   EngagementKindSchema,
+  type Engagement,
   type EngagementKind,
 } from "@stonehush/contracts";
 import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
@@ -10,8 +11,13 @@ import { useState, type FormEvent } from "react";
 
 import { createActionRequest } from "../engagements/action-mutations.js";
 import { parsePlannedTargets } from "../engagements/action-targets.js";
-import { engagementMutationMessage } from "../engagements/errors.js";
 import {
+  EngagementMutationClientError,
+  engagementMutationMessage,
+  isRevisionConflict,
+} from "../engagements/errors.js";
+import {
+  browserStorage,
   readLastEngagementId,
   selectResumeEngagement,
   splitStartTargets,
@@ -23,6 +29,7 @@ import { ENGAGEMENT_KIND_LABELS } from "../engagements/format.js";
 import { createIdempotencyKey } from "../engagements/idempotency.js";
 import { createEngagementRequest, upsertEngagementInCache } from "../engagements/mutations.js";
 import { partitionEngagements, useEngagementsQuery } from "../engagements/query.js";
+import { runHistoryQueryKey } from "../engagements/run-history-query.js";
 import { useEngagementWorkspace } from "../engagements/workspace-context.js";
 
 export const Route = createFileRoute("/")({
@@ -36,12 +43,16 @@ function OpeningScreen() {
   const { announce, openCreate } = useEngagementWorkspace();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [lastId, setLastId] = useState(() => readLastEngagementId(window.localStorage));
+  const [lastId, setLastId] = useState(() => readLastEngagementId(browserStorage()));
   const [startTargets, setStartTargets] = useState("");
   const [startName, setStartName] = useState("");
   const [startKind, setStartKind] = useState<EngagementKind>("ctf");
   const [startError, setStartError] = useState<string | undefined>(undefined);
   const [starting, setStarting] = useState(false);
+  // Creation and the follow-up scan are separate phases. Once the engagement
+  // exists, retries reuse it so a failed scan never leaves duplicate
+  // engagements behind. Cleared on success; inputs stay editable throughout.
+  const [started, setStarted] = useState<Engagement | null>(null);
 
   const records = engagements.data ?? [];
   const { active } = partitionEngagements(records);
@@ -76,10 +87,14 @@ function OpeningScreen() {
     setStartError(undefined);
     setStarting(true);
     try {
-      const engagement = await createEngagementRequest(validated.data, createIdempotencyKey());
-      upsertEngagementInCache(queryClient, engagement);
-      storeLastEngagementId(window.localStorage, engagement.id);
-      setLastId(engagement.id);
+      let engagement = started;
+      if (engagement === null) {
+        engagement = await createEngagementRequest(validated.data, createIdempotencyKey());
+        upsertEngagementInCache(queryClient, engagement);
+        storeLastEngagementId(browserStorage(), engagement.id);
+        setLastId(engagement.id);
+        setStarted(engagement);
+      }
       const action = await createActionRequest(
         engagement.id,
         {
@@ -90,7 +105,11 @@ function OpeningScreen() {
         },
         createIdempotencyKey(),
       );
-      if (action.action.state === "paused_for_warning") {
+      // The readiness summary reads run history, so refresh it now instead
+      // of leaving "no runs yet" until a remount.
+      void queryClient.invalidateQueries({ queryKey: runHistoryQueryKey(engagement.id) });
+      const paused = action.action.state === "paused_for_warning";
+      if (paused) {
         announce(`Action ${action.action.actionId} needs one warning before it runs.`);
       } else {
         announce(
@@ -99,11 +118,24 @@ function OpeningScreen() {
       }
       setStartTargets("");
       setStartName("");
+      setStarted(null);
       void navigate({
         to: "/engagements/$engagementId",
         params: { engagementId: engagement.id },
+        // A paused scan carries its action id along so the planner can load
+        // the warning card. Without it Continue would be unreachable.
+        ...(paused ? { search: { action: action.action.actionId } } : {}),
       });
     } catch (error) {
+      if (error instanceof EngagementMutationClientError) {
+        if (error.code === "engagement_not_found" || error.code === "engagement_archived") {
+          // The retained engagement is gone; the next submit starts over.
+          setStarted(null);
+        } else if (isRevisionConflict(error)) {
+          const revision = error.currentRevision;
+          setStarted((current) => (current === null ? current : { ...current, revision }));
+        }
+      }
       setStartError(engagementMutationMessage(error));
     } finally {
       setStarting(false);
@@ -148,7 +180,7 @@ function OpeningScreen() {
                       params={{ engagementId: resume.id }}
                       className="inline-flex min-h-11 items-center text-[15px] font-semibold text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
                       onClick={() => {
-                        storeLastEngagementId(window.localStorage, resume.id);
+                        storeLastEngagementId(browserStorage(), resume.id);
                         setLastId(resume.id);
                       }}
                     >
@@ -248,7 +280,7 @@ function OpeningScreen() {
               </form>
             </section>
 
-            <FirstActionReadiness engagementId={resume?.id} nmapUnavailable={false} />
+            <FirstActionReadiness engagementId={resume?.id} />
           </div>
         ) : null}
       </div>

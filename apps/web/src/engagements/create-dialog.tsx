@@ -29,8 +29,10 @@ import {
   engagementMutationMessage,
   EngagementNotesMutationClientError,
   engagementNotesMutationMessage,
+  isRevisionConflict,
 } from "./errors.js";
 import {
+  browserStorage,
   buildChallengeNotes,
   mergeStartDescription,
   parseDeadlineDraft,
@@ -46,6 +48,7 @@ import {
   useCreateEngagementMutation,
 } from "./mutations.js";
 import { fetchEngagementNotes, saveEngagementNotesRequest } from "./notes-query.js";
+import { runHistoryQueryKey } from "./run-history-query.js";
 import { createDraftScopeRule } from "./scope-rules.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
 
@@ -75,6 +78,16 @@ interface ChallengeDraft {
   name: string;
   text: string;
   truncated: boolean;
+}
+
+// Progress across the start phases. Creation, scope save, and the first scan
+// run in order; once the engagement exists, retries resume the follow-up
+// phases instead of creating a duplicate engagement.
+interface StartedProgress {
+  engagement: Engagement;
+  revision: number;
+  scopeId: string | null;
+  scopeDone: boolean;
 }
 
 type FieldKey =
@@ -136,8 +149,13 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
   const [challenge, setChallenge] = useState<ChallengeDraft | null>(null);
   const [challengeError, setChallengeError] = useState<string | undefined>(undefined);
   const [fileKey, setFileKey] = useState(0);
+  // Sequence guard for async file reads. A slow read from an earlier file
+  // (or a read that finishes after the dialog closed) must not overwrite or
+  // repopulate the current attachment.
+  const challengeReadRef = useRef(0);
   const [submitError, setSubmitError] = useState<string | undefined>(undefined);
   const [starting, setStarting] = useState(false);
+  const [started, setStarted] = useState<StartedProgress | null>(null);
   const createEngagement = useCreateEngagementMutation();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -152,6 +170,10 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
       setChallengeError(undefined);
       setSubmitError(undefined);
       setStarting(false);
+      setStarted(null);
+      // Invalidate any in-flight file read so a late completion cannot
+      // repopulate the attachment after the reset.
+      challengeReadRef.current += 1;
       setFileKey((current) => current + 1);
       const returnFocus = returnFocusRef.current;
       returnFocusRef.current = null;
@@ -181,9 +203,12 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
       setFileKey((current) => current + 1);
       return;
     }
+    challengeReadRef.current += 1;
+    const readSeq = challengeReadRef.current;
     void file
       .text()
       .then((text) => {
+        if (challengeReadRef.current !== readSeq) return;
         const truncated = text.length > CHALLENGE_TEXT_MAX_CHARS;
         setChallenge({
           name: file.name,
@@ -193,6 +218,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
         setChallengeError(undefined);
       })
       .catch(() => {
+        if (challengeReadRef.current !== readSeq) return;
         setChallenge(null);
         setChallengeError("That file could not be read.");
         setFileKey((current) => current + 1);
@@ -200,6 +226,8 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
   };
 
   const clearChallenge = () => {
+    // A pending read for the removed file must not repopulate the attachment.
+    challengeReadRef.current += 1;
     setChallenge(null);
     setChallengeError(undefined);
     setFileKey((current) => current + 1);
@@ -282,12 +310,23 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
     setSubmitError(undefined);
     setStarting(true);
     try {
-      const engagement: Engagement = await createEngagement.mutateAsync(parsed.data);
-      storeLastEngagementId(window.localStorage, engagement.id);
+      // Creation, scope save, and the first scan are separate phases. Once
+      // the engagement exists, retries resume the follow-up phases on it
+      // instead of creating a duplicate engagement.
+      let progress = started;
+      if (progress === null) {
+        const engagement: Engagement = await createEngagement.mutateAsync(parsed.data);
+        storeLastEngagementId(browserStorage(), engagement.id);
+        progress = {
+          engagement,
+          revision: engagement.revision,
+          scopeId: engagement.activeScopeRevisionId,
+          scopeDone: !(fields.saveAsScope && targets.length > 0),
+        };
+        setStarted(progress);
+      }
 
-      let revision = engagement.revision;
-      let scopeId = engagement.activeScopeRevisionId;
-      if (fields.saveAsScope && targets.length > 0) {
+      if (fields.saveAsScope && targets.length > 0 && !progress.scopeDone) {
         const rules: SavedScopeRule[] = [];
         for (const target of targets) {
           const drafted = createDraftScopeRule({
@@ -299,70 +338,93 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
           rules.push(drafted.rule);
         }
         const scopeRevision = await appendScopeRevisionRequest(
-          engagement.id,
-          { expectedRevision: revision, rules },
+          progress.engagement.id,
+          { expectedRevision: progress.revision, rules },
           createIdempotencyKey(),
         );
-        revision += 1;
-        scopeId = scopeRevision.id;
+        progress = {
+          ...progress,
+          revision: progress.revision + 1,
+          scopeId: scopeRevision.id,
+          scopeDone: true,
+        };
+        setStarted(progress);
         upsertEngagementInCache(queryClient, {
-          ...engagement,
-          revision,
-          activeScopeRevisionId: scopeId,
+          ...progress.engagement,
+          revision: progress.revision,
+          activeScopeRevisionId: progress.scopeId,
           updatedAt: scopeRevision.createdAt,
         });
       }
 
       if (targets.length > 0) {
         const action = await createActionRequest(
-          engagement.id,
+          progress.engagement.id,
           {
-            expectedEngagementRevision: revision,
-            expectedActiveScopeRevisionId: scopeId,
+            expectedEngagementRevision: progress.revision,
+            expectedActiveScopeRevisionId: progress.scopeId,
             targets,
             declaredPorts: null,
           },
           createIdempotencyKey(),
         );
-        if (action.action.state === "paused_for_warning") {
+        // The readiness summary reads run history, so refresh it now instead
+        // of leaving "no runs yet" until a remount.
+        void queryClient.invalidateQueries({
+          queryKey: runHistoryQueryKey(progress.engagement.id),
+        });
+        const paused = action.action.state === "paused_for_warning";
+        if (paused) {
           announce(`Action ${action.action.actionId} needs one warning before it runs.`);
         } else {
           announce(
-            `Engagement ${engagement.name} created. First scan queued for ${targets[0] ?? ""}.`,
+            `Engagement ${progress.engagement.name} created. First scan queued for ${targets[0] ?? ""}.`,
           );
         }
         onOpenChange(false);
         void navigate({
           to: "/engagements/$engagementId",
-          params: { engagementId: engagement.id },
+          params: { engagementId: progress.engagement.id },
+          // A paused scan carries its action id along so the planner can load
+          // the warning card. Without it Continue would be unreachable.
+          ...(paused ? { search: { action: action.action.actionId } } : {}),
         });
         return;
       }
 
       if (challenge !== null) {
         try {
-          const notes = await fetchEngagementNotes(engagement.id);
+          const notes = await fetchEngagementNotes(progress.engagement.id);
           const fileNotes = buildChallengeNotes(challenge.name, challenge.text, challenge.truncated);
           const markdown =
             notes.markdown.trim() === "" ? fileNotes : `${notes.markdown}\n\n${fileNotes}`;
-          await saveEngagementNotesRequest(engagement.id, {
+          await saveEngagementNotesRequest(progress.engagement.id, {
             markdown,
             expectedRevision: notes.revision,
           });
         } catch {
           announce(
-            `Engagement ${engagement.name} created. Challenge notes were not saved; re-attach ${challenge.name} from the notes tab.`,
+            `Engagement ${progress.engagement.name} created. Challenge notes were not saved; re-attach ${challenge.name} from the notes tab.`,
           );
         }
       }
       onOpenChange(false);
       void navigate({
         to: "/engagements/$engagementId",
-        params: { engagementId: engagement.id },
+        params: { engagementId: progress.engagement.id },
         search: { tab: "notes" },
       });
     } catch (error) {
       setSubmitError(submitMessage(error));
+      if (error instanceof EngagementMutationClientError) {
+        if (error.code === "engagement_not_found" || error.code === "engagement_archived") {
+          // The retained engagement is gone; the next submit starts over.
+          setStarted(null);
+        } else if (isRevisionConflict(error)) {
+          const revision = error.currentRevision;
+          setStarted((current) => (current === null ? current : { ...current, revision }));
+        }
+      }
     } finally {
       setStarting(false);
     }

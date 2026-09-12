@@ -239,7 +239,8 @@ afterEach(() => {
 describe("CreateEngagementDialog start", () => {
   it("creates an engagement with a suggested name and queues the first scan", async () => {
     const fetchMock = stubFetch(engagementHandler("Lab 192-0-2-10"));
-    const { router } = await renderDialog();
+    const { queryClient, router } = await renderDialog();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
     fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
     expect(await screen.findByText("Suggested name: Lab 192-0-2-10")).toBeTruthy();
@@ -263,6 +264,10 @@ describe("CreateEngagementDialog start", () => {
       declaredPorts: null,
     });
     expect(window.localStorage.getItem("stonehush.lastEngagementId")).toBe(ENGAGEMENT_ID);
+    // The readiness summary reads run history, so the start refreshes it.
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["engagements", ENGAGEMENT_ID, "runs"],
+    });
   });
 
   it("accepts hostnames, URLs, and pasted lists", async () => {
@@ -380,5 +385,85 @@ describe("CreateEngagementDialog start", () => {
     fireEvent.click(screen.getByRole("button", { name: "open-for-test" }));
 
     expect((screen.getByLabelText(/Targets/) as HTMLTextAreaElement).value).toBe("");
+  });
+
+  it("ignores a stale file read when a newer file was picked", async () => {
+    stubFetch(engagementHandler("Lab brief"));
+    await renderDialog();
+
+    const resolvers: Array<(text: string) => void> = [];
+    vi.spyOn(File.prototype, "text").mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [new File(["first content"], "a.txt", { type: "text/plain" })] },
+    });
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [new File(["second content"], "b.txt", { type: "text/plain" })] },
+    });
+    expect(resolvers).toHaveLength(2);
+    resolvers[1]!("second content");
+    expect(await screen.findByText("b.txt")).toBeTruthy();
+    // The earlier read finishes last; it must not replace the attachment.
+    resolvers[0]!("first content");
+    await waitFor(() => expect(screen.queryByText("a.txt")).toBeNull());
+    expect(screen.getByText("b.txt")).toBeTruthy();
+  });
+
+  it("drops a pending file read when the dialog is closed and reopened", async () => {
+    stubFetch(engagementHandler("Lab brief"));
+    await renderDialog();
+
+    let resolveRead!: (text: string) => void;
+    vi.spyOn(File.prototype, "text").mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [new File(["late content"], "a.txt", { type: "text/plain" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "close-for-test" }));
+    resolveRead("late content");
+    fireEvent.click(screen.getByRole("button", { name: "open-for-test" }));
+
+    expect(await screen.findByRole("dialog", { name: "Start an engagement" })).toBeTruthy();
+    expect(screen.queryByText("a.txt")).toBeNull();
+  });
+
+  it("retries the scan on the same engagement instead of creating a second one", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let actionCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        actionCalls += 1;
+        if (actionCalls === 1) return response({ code: "storage_busy" }, 503);
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(router.state.location.pathname).toBe("/");
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(actionCalls).toBe(2);
   });
 });

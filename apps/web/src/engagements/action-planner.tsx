@@ -21,6 +21,7 @@ import {
 import {
   actionLifecycleStatusCopy,
   isTerminalActionState,
+  persistedActionQueryKey,
   persistedActionQueryOptions,
 } from "./action-query.js";
 import {
@@ -35,6 +36,7 @@ import {
 } from "./action-targets.js";
 import {
   FULLER_PORTS_PRESET,
+  browserStorage,
   readFirstActionDefaults,
   storeFirstActionDefaults,
   type FirstActionProfile,
@@ -48,9 +50,11 @@ import { useEngagementWorkspace } from "./workspace-context.js";
 export function ActionPlanner({
   archived,
   engagementId,
+  pendingActionId,
 }: {
   archived: boolean;
   engagementId: string;
+  pendingActionId?: string | undefined;
 }) {
   const detail = useEngagementDetailQuery(engagementId);
   const hasData = detail.data !== undefined;
@@ -77,6 +81,7 @@ export function ActionPlanner({
           engagementId={engagementId}
           expectedActiveScopeRevisionId={detail.data.activeScopeRevision?.id ?? null}
           expectedEngagementRevision={detail.data.engagement.revision}
+          pendingActionId={pendingActionId}
           scopeRules={detail.data.activeScopeRevision?.rules ?? []}
         />
       ) : null}
@@ -99,12 +104,14 @@ function PlannerBody({
   engagementId,
   expectedActiveScopeRevisionId,
   expectedEngagementRevision,
+  pendingActionId,
   scopeRules,
 }: {
   archived: boolean;
   engagementId: string;
   expectedActiveScopeRevisionId: string | null;
   expectedEngagementRevision: number;
+  pendingActionId?: string | undefined;
   scopeRules: readonly SavedScopeRule[];
 }) {
   const formId = useId();
@@ -117,11 +124,17 @@ function PlannerBody({
   // across profile switches so leaving fuller never discards it.
   const [rawTargets, setRawTargets] = useState("");
   const [profile, setProfile] = useState<FirstActionProfile>(
-    () => readFirstActionDefaults(window.localStorage).profile,
+    () => readFirstActionDefaults(browserStorage()).profile,
   );
-  const [fullerPorts, setFullerPorts] = useState(
-    () => readFirstActionDefaults(window.localStorage).declaredPorts,
-  );
+  // A restored fuller profile with an empty ports value would silently plan
+  // the default-port scan, so refill the advertised preset on the way in.
+  // selectProfile covers live switches; this covers remounts.
+  const [fullerPorts, setFullerPorts] = useState(() => {
+    const defaults = readFirstActionDefaults(browserStorage());
+    return defaults.profile === "fuller" && defaults.declaredPorts.trim() === ""
+      ? FULLER_PORTS_PRESET
+      : defaults.declaredPorts;
+  });
   const [fieldError, setFieldError] = useState<string | undefined>(undefined);
   const [portsFieldError, setPortsFieldError] = useState<string | undefined>(undefined);
   const [plannedTargets, setPlannedTargets] = useState<string[]>([]);
@@ -130,7 +143,12 @@ function PlannerBody({
   const [queuedBy, setQueuedBy] = useState<"continue" | "add_scope_and_run" | "plan" | undefined>(
     undefined,
   );
-  const [trackedActionId, setTrackedActionId] = useState<string | undefined>(undefined);
+  // A first scan that paused for a warning navigates here with its action id,
+  // so the warning card below can load it. Without this the Continue and
+  // Cancel controls would be unreachable after navigation.
+  const [trackedActionId, setTrackedActionId] = useState<string | undefined>(
+    () => pendingActionId,
+  );
   const queryClient = useQueryClient();
   const hasInvalidatedServicesRef = useRef<string | null>(null);
 
@@ -211,7 +229,7 @@ function PlannerBody({
       {
         onSuccess: (action) => {
           setResult(action);
-          storeFirstActionDefaults(window.localStorage, {
+          storeFirstActionDefaults(browserStorage(), {
             profile,
             declaredPorts: fullerPorts,
           });
@@ -241,12 +259,33 @@ function PlannerBody({
     setResult(action);
     setOutcome(nextOutcome);
     setQueuedBy(nextQueuedBy);
+    // Keep the polled cache newer than the last poll so a loaded warning
+    // card clears immediately instead of lingering on stale paused data.
+    queryClient.setQueryData(
+      persistedActionQueryKey(engagementId, action.action.actionId),
+      action,
+    );
     if (nextOutcome === "queued" && action.action.state === "queued") {
       setTrackedActionId(action.action.actionId);
     } else {
       setTrackedActionId(undefined);
     }
   };
+
+  // The warning card renders for a freshly planned pause and for a paused
+  // action loaded by id after navigation. Raw targets only exist for the
+  // fresh plan; the loaded path reuses the snapshot canonical targets, which
+  // is exactly what the scope-rule builder prefers.
+  const polledPausedAction =
+    trackedActionId !== undefined && displayAction?.action.state === "paused_for_warning"
+      ? displayAction
+      : undefined;
+  const warningAction =
+    result?.action.state === "paused_for_warning" ? result : polledPausedAction;
+  const warningTargets =
+    warningAction === undefined || warningAction === result
+      ? plannedTargets
+      : latestActionSnapshot(warningAction).canonicalTargets.map(formatCanonicalTarget);
 
   return (
     <div>
@@ -256,10 +295,7 @@ function PlannerBody({
         </p>
       )}
       <div className="mb-3">
-        <FirstActionReadiness
-          engagementId={engagementId}
-          nmapUnavailable={result?.action.state === "capability_error"}
-        />
+        <FirstActionReadiness engagementId={engagementId} />
       </div>
       <form className="grid gap-3" onSubmit={plan}>
         <fieldset className="m-0 grid gap-1 border-0 p-0">
@@ -389,12 +425,12 @@ function PlannerBody({
         </div>
       ) : null}
 
-      {result?.action.state === "paused_for_warning" ? (
+      {warningAction !== undefined ? (
         <WarningCard
-          action={result}
+          action={warningAction}
           engagementId={engagementId}
           expectedEngagementRevision={expectedEngagementRevision}
-          plannedTargets={plannedTargets}
+          plannedTargets={warningTargets}
           scopeRules={scopeRules}
           onAddScopeAndRun={(action) => applyResult(action, "queued", "add_scope_and_run")}
           onCancel={(action) => applyResult(action, "cancelled")}

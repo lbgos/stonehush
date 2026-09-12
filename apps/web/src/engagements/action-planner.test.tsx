@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
+import { browserStorage, readFirstActionDefaults } from "./first-action.js";
 
 const activeEngagement = {
   contractVersion: 1,
@@ -185,9 +186,9 @@ function operatorContinueAck() {
 
 const testQueryClients = new Set<QueryClient>();
 
-async function renderPlanner(engagement: TestEngagement = activeEngagement) {
+async function renderPlanner(engagement: TestEngagement = activeEngagement, search = "") {
   const router = createAppRouter(
-    createMemoryHistory({ initialEntries: [`/engagements/${engagement.id}`] }),
+    createMemoryHistory({ initialEntries: [`/engagements/${engagement.id}${search}`] }),
   );
   await router.load();
   const queryClient = createAppQueryClient();
@@ -508,6 +509,8 @@ describe("action planner", () => {
     expect(screen.getByText(/cannot be represented/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
     expect(screen.queryByRole("dialog", { name: "Action needs a warning" })).toBeNull();
+    // A DNS-style planning failure is not an Nmap outage: no Nmap diagnosis.
+    expect(screen.queryByText(/cannot run as an Nmap scan/)).toBeNull();
   });
 
   it("continues on Enter and cancels on Escape from the warning card", async () => {
@@ -768,6 +771,93 @@ describe("action planner", () => {
       expect((await screen.findByLabelText("Targets") as HTMLTextAreaElement).value).toBe("");
     });
 
+    it("refills the fuller preset when stored defaults pair fuller with empty ports", async () => {
+      stubWithHistory([]);
+      window.localStorage.setItem(
+        "stonehush.firstActionDefaults",
+        JSON.stringify({ profile: "fuller", declaredPorts: "" }),
+      );
+      await renderPlanner();
+
+      expect(
+        (await screen.findByRole("radio", { name: /Fuller port pass/ }) as HTMLInputElement).checked,
+      ).toBe(true);
+      expect((await screen.findByLabelText(/^TCP ports/i) as HTMLInputElement).value).toBe(
+        "22,80,443",
+      );
+    });
+
+    it("falls back when the storage object access itself throws", () => {
+      const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+      Object.defineProperty(window, "localStorage", {
+        configurable: true,
+        get() {
+          throw new Error("denied");
+        },
+      });
+      try {
+        // The planner must never evaluate the storage object directly; the
+        // guarded helper falls back instead of throwing during render.
+        const storage = browserStorage();
+        expect(storage.getItem("stonehush.firstActionDefaults")).toBeNull();
+        expect(() =>
+          storage.setItem("stonehush.firstActionDefaults", "{}"),
+        ).not.toThrow();
+        expect(readFirstActionDefaults(storage)).toEqual({
+          profile: "quick",
+          declaredPorts: "",
+        });
+      } finally {
+        if (descriptor !== undefined) Object.defineProperty(window, "localStorage", descriptor);
+      }
+    });
+
+    it("loads a paused first scan from the action search and offers Continue", async () => {
+      const paused = persistedAction("paused_for_warning");
+      const queued = persistedAction("queued", {
+        warningAcknowledgment: operatorContinueAck(),
+      });
+      let continued = false;
+      const fetchMock = stubFetch((url, init) => {
+        if (
+          url === `/api/v1/engagements/${activeEngagement.id}/actions/${ACTION_ID}` &&
+          (init?.method === undefined || init.method === "GET")
+        ) {
+          return response(continued ? queued : paused);
+        }
+        if (url.endsWith("/continue") && init?.method === "POST") {
+          continued = true;
+          return response(queued);
+        }
+        return readResponse(url, activeEngagement, emptyRevision) ?? response({ code: "invalid_request" }, 400);
+      });
+
+      await renderPlanner(activeEngagement, `?action=${ACTION_ID}`);
+
+      const dialog = await screen.findByRole("dialog", { name: "Action needs a warning" });
+      expect(within(dialog).getByText(/outside the saved scope/)).toBeTruthy();
+      expect(
+        fetchMock.mock.calls.some(
+          ([called, init]) =>
+            String(called).endsWith(`/actions/${ACTION_ID}`) &&
+            (init?.method === undefined || init.method === "GET"),
+        ),
+      ).toBe(true);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Continue" }));
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([called, init]) =>
+            String(called).endsWith("/continue") && init?.method === "POST",
+          ),
+        ).toBe(true),
+      );
+      expect(await screen.findByText(/Action queued/)).toBeTruthy();
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", { name: "Action needs a warning" })).toBeNull(),
+      );
+    });
+
     it("shows a specific readiness summary next to the first action", async () => {
       stubWithHistory([]);
       await renderPlanner();
@@ -826,22 +916,14 @@ describe("action planner", () => {
       await waitFor(() => expect(systemCalls()).toBeGreaterThan(before));
     });
 
-    it("explains Nmap unavailability next to the action", async () => {
-      const failed = persistedAction("capability_error");
-      stubFetch((url, init) => {
-        if (url.includes("/api/v1/advisor/status")) return response(unconfiguredAdvisor);
-        if (url.includes("/runs")) return response({ runs: [], nextCursor: null });
-        if (url.endsWith("/actions") && init?.method === "POST") return response(failed, 201);
-        return readResponse(url, { ...activeEngagement, revision: 1, activeScopeRevisionId: null }, null) ??
-          response({ code: "invalid_request" }, 400);
-      });
+    it("explains Nmap unavailability from the last run instead of the plan result", async () => {
+      stubWithHistory([
+        historyRow({ state: "failed", terminalKind: "failed", terminalReason: "nmap_unavailable" }),
+      ]);
+      await renderPlanner();
 
-      await renderPlanner({ ...activeEngagement, revision: 1, activeScopeRevisionId: null });
-      await planTarget();
-
-      expect(await screen.findByRole("heading", { name: "This action cannot run" })).toBeTruthy();
       expect(
-        await screen.findByText(/cannot run as an Nmap scan here/),
+        await screen.findByText(/Nmap is not available to the runner/),
       ).toBeTruthy();
     });
   });

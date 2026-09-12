@@ -2,6 +2,7 @@ import type { Engagement } from "@stonehush/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  browserStorage,
   buildChallengeNotes,
   FULLER_PORTS_PRESET,
   mergeStartDescription,
@@ -161,6 +162,18 @@ describe("last engagement storage", () => {
     storeLastEngagementId(storage, "10000000-0000-4000-8000-000000000001");
     expect(readLastEngagementId(storage)).toBe("10000000-0000-4000-8000-000000000001");
     expect(readLastEngagementId(memoryStorage({ "stonehush.lastEngagementId": "not an id!!" }))).toBeNull();
+  });
+});
+
+describe("browserStorage", () => {
+  it("falls back to inert storage when browser storage is unreachable", () => {
+    // This file runs outside jsdom, so window itself is unreachable here,
+    // which exercises the same guard as a denied storage object.
+    const storage = browserStorage();
+    expect(storage.getItem("stonehush.lastEngagementId")).toBeNull();
+    expect(() => storage.setItem("stonehush.lastEngagementId", "x")).not.toThrow();
+    expect(readLastEngagementId(storage)).toBeNull();
+    expect(readFirstActionDefaults(storage)).toEqual({ profile: "quick", declaredPorts: "" });
   });
 });
 
