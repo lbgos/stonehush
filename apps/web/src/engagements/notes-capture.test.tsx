@@ -318,6 +318,65 @@ describe("notes image capture", () => {
     expect(screen.getByText(/gamma-derived/)).toBeTruthy();
   });
 
+  it("reports rejected images instead of dropping them silently", async () => {
+    const posts = stubNotes(async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201));
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByLabelText("Markdown");
+
+    // An unsupported type pastes nothing but must say so.
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, {
+      target: { files: [new File(["%PDF-1.4"], "report.pdf", { type: "application/pdf" })] },
+    });
+    expect(
+      await screen.findByText("report.pdf: only PNG, JPEG, GIF, and WebP images are accepted."),
+    ).toBeTruthy();
+    expect(posts.length).toBe(0);
+    expect(screen.queryByLabelText("Proves (names the file)")).toBeNull();
+
+    // An oversized image names its bound instead of vanishing.
+    fireEvent.change(picker, {
+      target: { files: [new File([new Uint8Array(1_600_000)], "huge.png", { type: "image/png" })] },
+    });
+    expect(
+      await screen.findByText("huge.png: images must be between 1 byte and 1.5 MB."),
+    ).toBeTruthy();
+    expect(posts.length).toBe(0);
+  });
+
+  it("rejects oversized attachment rows through the shared schema", async () => {
+    // The shared contract bounds sizeBytes, so a caption-save response
+    // claiming more than the raw limit fails validation and surfaces the
+    // truthful save error instead of rendering the row.
+    stubNotes(
+      async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201),
+      async (attachmentId, _body) =>
+        response({ ...savedAttachment(), id: attachmentId, sizeBytes: 9_999_999 }, 200),
+    );
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByLabelText("Markdown");
+
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, {
+      target: { files: [new File([PNG_BYTES], "login.png", { type: "image/png" })] },
+    });
+    await screen.findByLabelText("Proves (names the file)");
+    fireEvent.click(screen.getByRole("button", { name: "Save image" }));
+    await screen.findByLabelText("Caption for admin-login-as-sa");
+
+    fireEvent.change(screen.getByLabelText("Caption for admin-login-as-sa"), {
+      target: { value: "edited caption" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save caption" }));
+
+    expect(await screen.findByText("Caption could not be saved. Retry.")).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Caption for admin-login-as-sa") as HTMLInputElement).value,
+    ).toBe("edited caption");
+  });
+
   it("cancels a non-image file drop instead of navigating away", async () => {
     const posts = stubNotes(async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201));
 

@@ -396,11 +396,12 @@ function RunOutputSearch({
     | { status: "idle" }
     | { status: "pending" }
     | { status: "error" }
-    | {
+      | {
         status: "ready";
         matches: Awaited<ReturnType<typeof searchRunOutput>>["matches"];
         searchedBytes: number;
         scanCapped: boolean;
+        unavailableArtifactIds: readonly string[];
       }
   >({ status: "idle" });
   const create = useCreateExcerptMutation(engagementId);
@@ -444,6 +445,7 @@ function RunOutputSearch({
           matches: result.matches,
           searchedBytes: result.searchedBytes,
           scanCapped: result.scanCapped,
+          unavailableArtifactIds: result.unavailableArtifactIds,
         });
       })
       .catch(() => {
@@ -530,6 +532,9 @@ function RunOutputSearch({
               ? `No matches for ${activeQuery} in the first ${searchState.searchedBytes} searched bytes.`
               : `${searchState.matches.length} match${searchState.matches.length === 1 ? "" : "es"} for ${activeQuery} in ${searchState.searchedBytes} searched bytes.`}{" "}
             {searchState.scanCapped ? "Scan stopped at the byte cap." : ""}
+            {searchState.unavailableArtifactIds.length > 0
+              ? ` ${searchState.unavailableArtifactIds.length} artifact${searchState.unavailableArtifactIds.length === 1 ? " was" : "s were"} skipped: bytes unavailable.`
+              : ""}
           </p>
           {create.isError ? (
             <p className="m-0 text-[12px] text-destructive" role="alert">
@@ -799,7 +804,9 @@ function RawStream({
       <pre
         className="mt-1 mb-0 max-h-64 overflow-auto rounded-md border border-border bg-muted/30 px-2.5 py-2 font-mono text-[12px] leading-5 break-all whitespace-pre-wrap"
         data-testid={`raw-output-${label}`}
+        tabIndex={0}
         onMouseUp={(event) => onSelect(event.currentTarget)}
+        onKeyUp={(event) => onSelect(event.currentTarget)}
       >
         {windowLines.join("\n")}
       </pre>

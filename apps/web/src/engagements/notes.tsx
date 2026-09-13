@@ -1,5 +1,6 @@
 import { Button, LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
 import type { Attachment } from "@stonehush/contracts";
+import { ATTACHMENT_RAW_MAX_BYTES, AttachmentSchema } from "@stonehush/contracts";
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
 
 import { engagementNotesMutationMessage, isNotesRevisionConflict } from "./errors.js";
@@ -323,96 +324,23 @@ function NotesEditorBody({
 
 const ATTACHMENT_MIME_ALLOWLIST = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
 type AttachmentMime = (typeof ATTACHMENT_MIME_ALLOWLIST)[number];
-// Raw bytes stay below the stored Base64 limit: Base64 expands by 4/3, so
-// 1.5M raw fits the 2M content_base64 column and contract bound. Accepting a
-// full 2M raw file would always fail at persistence with no successful retry.
-const ATTACHMENT_RAW_MAX_BYTES = 1_500_000;
+// Raw bound shared with contracts: 1.5M raw encodes to exactly the 2M
+// Base64 column and contract bound. Accepting more would always fail at
+// persistence with no successful retry.
 
 function isAttachmentMime(value: string): value is AttachmentMime {
   return (ATTACHMENT_MIME_ALLOWLIST as readonly string[]).includes(value);
 }
 
-// Structural validation for attachment payloads over the network. The web
-// layer carries no zod dependency by convention (see report-mask.ts), so
-// this guard mirrors the contract bounds instead: untrusted content is
-// never cast blindly into the render path. The server remains the schema
-// authority via AttachmentSchema.
+// Attachment payloads over the network validate against the shared
+// contract, following the report-mask pattern of importing schema objects
+// from contracts without taking a direct zod dependency. Untrusted content
+// is never cast blindly into the render path. The server remains the schema
+// authority and re-validates before sending.
 function parseAttachmentPayload(value: unknown): Attachment {
-  if (typeof value !== "object" || value === null) throw new Error("invalid attachment");
-  const record = value as Record<string, unknown>;
-  const text = (field: string, min: number, max: number): string => {
-    const candidate = record[field];
-    if (typeof candidate !== "string" || candidate.length < min || candidate.length > max) {
-      throw new Error(`invalid attachment field ${field}`);
-    }
-    return candidate;
-  };
-  const nullableText = (field: string, min: number, max: number): string | null => {
-    const candidate = record[field];
-    if (candidate === null) return null;
-    if (typeof candidate !== "string" || candidate.length < min || candidate.length > max) {
-      throw new Error(`invalid attachment field ${field}`);
-    }
-    return candidate;
-  };
-  if (record["contractVersion"] !== 1) throw new Error("invalid attachment version");
-  const mime = record["mime"];
-  if (typeof mime !== "string" || !isAttachmentMime(mime)) {
-    throw new Error("invalid attachment mime");
-  }
-  const sizeBytes = record["sizeBytes"];
-  if (
-    typeof sizeBytes !== "number" ||
-    !Number.isSafeInteger(sizeBytes) ||
-    sizeBytes < 1
-  ) {
-    throw new Error("invalid attachment size");
-  }
-  const digest = record["digest"];
-  if (typeof digest !== "string" || !/^sha256:[0-9a-f]{64}$/.test(digest)) {
-    throw new Error("invalid attachment digest");
-  }
-  const crop = record["crop"];
-  let parsedCrop: Attachment["crop"] = null;
-  if (crop !== null) {
-    if (typeof crop !== "object" || crop === null) throw new Error("invalid attachment crop");
-    const rect = crop as Record<string, unknown>;
-    const edges: { x: number; y: number; width: number; height: number } = {
-      x: 0,
-      y: 0,
-      width: 1,
-      height: 1,
-    };
-    for (const field of ["x", "y"] as const) {
-      const candidate = rect[field];
-      if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 0) {
-        throw new Error("invalid attachment crop");
-      }
-      edges[field] = candidate;
-    }
-    for (const field of ["width", "height"] as const) {
-      const candidate = rect[field];
-      if (typeof candidate !== "number" || !Number.isSafeInteger(candidate) || candidate < 1) {
-        throw new Error("invalid attachment crop");
-      }
-      edges[field] = candidate;
-    }
-    parsedCrop = edges;
-  }
-  return {
-    contractVersion: 1,
-    id: text("id", 1, 255),
-    engagementId: text("engagementId", 1, 255),
-    filename: text("filename", 1, 128),
-    mime,
-    sizeBytes,
-    digest,
-    caption: text("caption", 0, 280),
-    targetLabel: nullableText("targetLabel", 1, 120),
-    parentAttachmentId: nullableText("parentAttachmentId", 1, 255),
-    crop: parsedCrop,
-    createdAt: text("createdAt", 1, 255),
-  };
+  const parsed = AttachmentSchema.safeParse(value);
+  if (!parsed.success) throw new Error("invalid attachment");
+  return parsed.data;
 }
 
 function attachmentContentUrl(engagementId: string, attachmentId: string): string {
@@ -486,6 +414,10 @@ function NoteAttachmentsSection({
   const [attachments, setAttachments] = useState<Attachment[] | undefined>(undefined);
   const [loadError, setLoadError] = useState(false);
   const [pending, setPending] = useState<PendingUpload[]>([]);
+  // Rejection notice for pasted or dropped files outside the allowlist or
+  // size bound. Pastes otherwise vanish silently, and screenshots over the
+  // bound are common enough that the operator must see what happened.
+  const [rejected, setRejected] = useState<string | undefined>(undefined);
   const [engagementName, setEngagementName] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Tracks the engagement this section currently shows. Async FileReader and
@@ -535,6 +467,7 @@ function NoteAttachmentsSection({
     // persist A's target label or bytes under B after navigation.
     setPending([]);
     setEngagementName("");
+    setRejected(undefined);
     savedSeqRef.current.clear();
     const fetchSeq = ++opSeqRef.current;
     void fetchAttachments(engagementId)
@@ -570,10 +503,18 @@ function NoteAttachmentsSection({
     if (archived) return;
     const startedEngagementId = engagementIdRef.current;
     const startedEngagementName = engagementName;
+    let accepted = false;
     for (const file of files) {
       const mime = file.type;
-      if (!isAttachmentMime(mime)) continue;
-      if (file.size < 1 || file.size > ATTACHMENT_RAW_MAX_BYTES) continue;
+      if (!isAttachmentMime(mime)) {
+        setRejected(`${file.name}: only PNG, JPEG, GIF, and WebP images are accepted.`);
+        continue;
+      }
+      if (file.size < 1 || file.size > ATTACHMENT_RAW_MAX_BYTES) {
+        setRejected(`${file.name}: images must be between 1 byte and 1.5 MB.`);
+        continue;
+      }
+      accepted = true;
       const reader = new FileReader();
       const clientId = ++pendingUploadSeq;
       const proves = file.name.replace(/\.[a-z0-9]+$/i, "").slice(0, 128);
@@ -598,6 +539,8 @@ function NoteAttachmentsSection({
       };
       reader.readAsDataURL(file);
     }
+    // A successful accept clears a previous rejection notice.
+    if (accepted) setRejected(undefined);
   };
 
   useEffect(() => {
@@ -713,6 +656,11 @@ function NoteAttachmentsSection({
             }}
           />
         </div>
+      ) : null}
+      {rejected !== undefined ? (
+        <p className="mt-2 mb-0 text-[12px] text-destructive" role="alert">
+          {rejected}
+        </p>
       ) : null}
       {pending.map((entry) => (
         <div key={entry.clientId} className="mt-2 grid gap-2 rounded-md border border-border px-2.5 py-2">

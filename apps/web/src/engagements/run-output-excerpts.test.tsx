@@ -344,4 +344,71 @@ describe("run output fast capture", () => {
     expect(addToLead.hasAttribute("disabled")).toBe(true);
     expect(addToLead.getAttribute("title")).toBe("Leads arrive in STONE-4");
   });
+
+  it("states skipped artifacts instead of reporting a complete scan", async () => {
+    stubFetch(async (url) => {
+      if (url === "/api/v1/engagements") return response(engagementList());
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
+      if (url.endsWith("/services")) return response([]);
+      if (url.endsWith("/runs/latest/output")) return response(runOutput());
+      if (url.includes("/output/search")) {
+        return response({
+          matches: [],
+          searchedBytes: OUTPUT_CONTENT.length,
+          scanCapped: false,
+          unavailableArtifactIds: ["artifact-stderr"],
+        });
+      }
+      if (url === "/api/v1/system/status") {
+        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+
+    await renderAt(`/engagements/${ENGAGEMENT_ID}`);
+    fireEvent.click(screen.getByRole("tab", { name: "Raw output" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("raw-output-stdout")).toBeTruthy();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText("error, login, 10.0.0"), {
+      target: { value: "absent-term" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+    // Zero matches with a skipped artifact must not read as proof of
+    // absence: the summary names the skip.
+    expect(await screen.findByText(/No matches for absent-term/)).toBeTruthy();
+    expect(screen.getByText(/1 artifact was skipped: bytes unavailable\./)).toBeTruthy();
+  });
+
+  it("commits a keyboard selection for excerpt keeps", async () => {
+    stubFetch(async (url) => {
+      if (url === "/api/v1/engagements") return response(engagementList());
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
+      if (url.endsWith("/services")) return response([]);
+      if (url.endsWith("/runs/latest/output")) return response(runOutput());
+      if (url === "/api/v1/system/status") {
+        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+
+    await renderAt(`/engagements/${ENGAGEMENT_ID}`);
+    fireEvent.click(screen.getByRole("tab", { name: "Raw output" }));
+    const pre = (await screen.findByTestId("raw-output-stdout")) as HTMLElement;
+    // Keyboard selection (shift plus arrows) lands in the same element
+    // without a mouse event: the pre is focusable and commits on key up.
+    const textNode = pre.firstChild as Text;
+    const range = document.createRange();
+    range.setStart(textNode, 9);
+    range.setEnd(textNode, 17);
+    const selection = window.getSelection();
+    if (selection === null) throw new Error("jsdom selection missing");
+    selection.removeAllRanges();
+    selection.addRange(range);
+    fireEvent.keyUp(pre);
+
+    expect(await screen.findByText("Selected 8 bytes at offset 9.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Keep excerpt" })).toBeTruthy();
+  });
 });
