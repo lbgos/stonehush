@@ -9,6 +9,7 @@ import {
   AddScopeAndRunActionRequestSchema,
   CancelActionRequestSchema,
   ContinueActionRequestSchema,
+  ContinueLateWarningActionRequestSchema,
   CreateActionRequestSchema,
 } from "./action-api.js";
 import {
@@ -19,6 +20,7 @@ import {
   commandJsonV1ArchiveEngagementDigest,
   commandJsonV1CancelActionDigest,
   commandJsonV1ContinueActionDigest,
+  commandJsonV1ContinueLateWarningActionDigest,
   commandJsonV1CreateActionDigest,
   commandJsonV1CreateEngagementDigest,
   commandJsonV1EngagementRevisionDigest,
@@ -557,6 +559,21 @@ describe("command-json-v1 digest projection", () => {
         },
       },
       {
+        name: "continue late warning",
+        projection: commandJsonV1ContinueLateWarningActionDigest,
+        pathSchema: ActionIdParamsSchema,
+        querySchema: ActionMutationQuerySchema,
+        bodySchema: ContinueLateWarningActionRequestSchema,
+        path: actionPath,
+        query: {},
+        body: {
+          expectedRevision: 1,
+          snapshotVersion: 1,
+          snapshotBinding: "sha256:fixture-snapshot-1",
+          pendingEventId: 7,
+        },
+      },
+      {
         name: "add scope and run",
         projection: commandJsonV1AddScopeAndRunActionDigest,
         pathSchema: ActionIdParamsSchema,
@@ -593,6 +610,7 @@ describe("command-json-v1 digest projection", () => {
         commandJsonV1AppendScopeRevisionDigest,
         commandJsonV1CreateActionDigest,
         commandJsonV1ContinueActionDigest,
+        commandJsonV1ContinueLateWarningActionDigest,
         commandJsonV1AddScopeAndRunActionDigest,
         commandJsonV1CancelActionDigest,
       ]),

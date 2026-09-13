@@ -659,7 +659,10 @@ describe("action planner", () => {
     expect(await screen.findByText(/Action queued/)).toBeTruthy();
     expect(await screen.findByText("Status update failed.")).toBeTruthy();
     expect(screen.queryByText(/Action succeeded/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    // Scope to the poll-error status: the surface tab also renders its
+    // stale-data retry under the same accessible name when queries fail.
+    const pollError = screen.getByText("Status update failed.").closest("p")!;
+    fireEvent.click(within(pollError).getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.queryByText("Status update failed.")).toBeNull());
     expect(screen.getByText(/Action queued/)).toBeTruthy();
     releaseSecondPoll!(response(succeeded));
@@ -1194,7 +1197,11 @@ describe("action planner", () => {
 
       expect(await screen.findByText("Status update failed.")).toBeTruthy();
       expect(screen.queryByRole("dialog", { name: "Action needs a warning" })).toBeNull();
-      expect(await screen.findByRole("button", { name: "Refresh" })).toBeTruthy();
+      // Scoped to the Runs section: sibling surface sections render their own
+      // Refresh controls since the target context work landed.
+      const runs = document.getElementById("engagement-runs");
+      if (!runs) throw new Error("Runs section is missing.");
+      expect(await within(runs).findByRole("button", { name: "Refresh" })).toBeTruthy();
     });
 
     it("keeps the new route selection when an older plan resolves late", async () => {
