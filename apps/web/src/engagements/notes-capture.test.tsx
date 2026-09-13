@@ -246,6 +246,78 @@ describe("notes image capture", () => {
     ).toBe("edited caption");
   });
 
+  it("keeps every row when a derived copy lands beside existing rows", async () => {
+    // Union regression: merging a derived child must not drop rows that
+    // have no conflict. A recency merge that only copies newer-marked rows
+    // narrows the list to the child until the next reload.
+    const seeded = { ...savedAttachment(), filename: "alpha-screen" };
+    const uploadedRow = {
+      ...savedAttachment(),
+      id: "20000000-0000-4000-8000-0000000000b1",
+      filename: "beta-proof",
+      caption: "uploaded",
+      createdAt: "2026-08-13T12:00:00.000Z",
+    };
+    const child = {
+      ...savedAttachment(),
+      id: "20000000-0000-4000-8000-0000000000b2",
+      filename: "gamma-derived",
+      parentAttachmentId: seeded.id,
+      crop: { x: 0, y: 0, width: 100, height: 60 },
+      createdAt: "2026-08-14T12:00:00.000Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
+        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
+          return Promise.resolve(
+            response({ engagement: activeEngagement, activeScopeRevision: null }),
+          );
+        }
+        if (url.endsWith("/services")) return Promise.resolve(response([]));
+        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
+          return Promise.resolve(
+            response({
+              engagementId: ENGAGEMENT_ID,
+              markdown: "",
+              updatedAt: "2026-08-12T12:00:00.000Z",
+              revision: 0,
+            }),
+          );
+        }
+        if (url.endsWith("/attachments") && init?.method === "POST") {
+          return Promise.resolve(response(uploadedRow, 201));
+        }
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments/${seeded.id}/derived`) {
+          return Promise.resolve(response(child, 201));
+        }
+        if (url.endsWith("/attachments")) return Promise.resolve(response([seeded]));
+        return Promise.resolve(response([]));
+      }),
+    );
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByText(/alpha-screen/);
+
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [new File([PNG_BYTES], "proof.png", { type: "image/png" })] } });
+    await screen.findByLabelText("Proves (names the file)");
+    fireEvent.click(screen.getByRole("button", { name: "Save image" }));
+    await screen.findByText(/beta-proof/);
+
+    const deriveButtons = screen.getAllByRole("button", { name: "Create cropped copy" });
+    fireEvent.click(deriveButtons[0] as HTMLElement);
+    await screen.findByText(/gamma-derived/);
+
+    // All three rows stay rendered: the seed, the upload, and the child.
+    expect(screen.getByText(/alpha-screen/)).toBeTruthy();
+    expect(screen.getByText(/beta-proof/)).toBeTruthy();
+    expect(screen.getByText(/gamma-derived/)).toBeTruthy();
+  });
+
   it("cancels a non-image file drop instead of navigating away", async () => {
     const posts = stubNotes(async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201));
 

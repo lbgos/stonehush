@@ -495,13 +495,14 @@ function NoteAttachmentsSection({
   engagementIdRef.current = engagementId;
 
   // Union by id so a slow fetch never drops a row newer state already
-  // holds. Same-id conflicts resolve by recency instead of a fixed
-  // direction. Caption saves record their row id with a sequence mark, and
-  // each fetch captures the sequence at start. A row this tab saved after
-  // the fetch started keeps the local copy, because the fetch predates the
-  // save. Any other conflict takes the server copy, so a caption changed
-  // elsewhere surfaces on reload instead of being buried under stale local
-  // state. Order stays by creation.
+  // holds. Every id present on either side survives; same-id conflicts
+  // resolve by recency instead of a fixed direction. Caption saves record
+  // their row id with a sequence mark, and each fetch captures the sequence
+  // at start. A row this tab saved after the fetch started keeps the local
+  // copy, because the fetch predates the save. Any other conflict takes
+  // the server copy, so a caption changed elsewhere surfaces on reload
+  // instead of being buried under stale local state. Order stays by
+  // creation.
   const opSeqRef = useRef(0);
   const savedSeqRef = useRef(new Map<string, number>());
   const mergeAttachmentRows = (
@@ -512,6 +513,10 @@ function NoteAttachmentsSection({
     const byId = new Map<string, Attachment>();
     for (const row of incoming) byId.set(row.id, row);
     for (const row of current ?? []) {
+      if (!byId.has(row.id)) {
+        byId.set(row.id, row);
+        continue;
+      }
       const savedAt = savedSeqRef.current.get(row.id) ?? -1;
       if (savedAt > fetchSeq) byId.set(row.id, row);
     }
