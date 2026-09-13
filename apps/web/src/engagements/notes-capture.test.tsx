@@ -263,6 +263,65 @@ describe("notes image capture", () => {
     expect(posts.length).toBe(0);
   });
 
+  it("truncates a max-length caption when deriving so the request validates", async () => {
+    // A 280-character caption plus the `Crop: ` prefix sends 286
+    // characters, which the derived-attachment schema rejects on every
+    // retry. The client must fit the composed caption in the bound.
+    const derivedPosts: { url: string; body: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
+        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
+          return Promise.resolve(
+            response({ engagement: activeEngagement, activeScopeRevision: null }),
+          );
+        }
+        if (url.endsWith("/services")) return Promise.resolve(response([]));
+        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
+          return Promise.resolve(
+            response({
+              engagementId: ENGAGEMENT_ID,
+              markdown: "",
+              updatedAt: "2026-08-12T12:00:00.000Z",
+              revision: 0,
+            }),
+          );
+        }
+        if (url.endsWith("/attachments") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          return Promise.resolve(response({ ...savedAttachment(), caption: body["caption"] }, 201));
+        }
+        if (url.endsWith("/derived") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          derivedPosts.push({ url, body });
+          return Promise.resolve(response({ ...savedAttachment(), id: `${ATTACHMENT_ID}-crop` }, 201));
+        }
+        if (url.endsWith("/attachments")) return Promise.resolve(response([]));
+        return Promise.resolve(response([]));
+      }),
+    );
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByLabelText("Markdown");
+
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [new File([PNG_BYTES], "login.png", { type: "image/png" })] } });
+    await screen.findByLabelText("Proves (names the file)");
+    const longCaption = "c".repeat(280);
+    fireEvent.change(screen.getByLabelText("Caption"), { target: { value: longCaption } });
+    fireEvent.click(screen.getByRole("button", { name: "Save image" }));
+    await screen.findByLabelText("Caption for admin-login-as-sa");
+
+    fireEvent.click(screen.getByRole("button", { name: "Create cropped copy" }));
+    await waitFor(() => expect(derivedPosts.length).toBe(1));
+    const sent = String(derivedPosts[0]?.body["caption"] ?? "");
+    expect(sent.startsWith("Crop: ")).toBe(true);
+    expect(sent.length).toBeLessThanOrEqual(280);
+  });
+
   it("keeps a caption saved after upload when a stale initial fetch resolves after it", async () => {
     // Ordering pin for the recency merge: upload, then a caption save,
     // then the stale initial fetch. Both local writes postdate the fetch,

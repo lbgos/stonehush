@@ -854,9 +854,17 @@ function AttachmentCard({
   onInsert: (snippet: string) => void;
 }) {
   const [caption, setCaption] = useState(attachment.caption);
+  // Whether the operator typed since the last server caption landed. A
+  // reload that replaces the row syncs into an untouched input so the card
+  // never shows a stale caption; an edited input keeps the operator text
+  // so typing is never clobbered. The card remounts per row id, so no
+  // reset is needed here.
+  const captionEditedRef = useRef(false);
+  useEffect(() => {
+    if (!captionEditedRef.current) setCaption(attachment.caption);
+  }, [attachment.caption]);
   const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | undefined>(undefined);
-  const [crop, setCrop] = useState({ x: "0", y: "0", width: "100", height: "60" });
+  const [saveError, setSaveError] = useState<string | undefined>(undefined);  const [crop, setCrop] = useState({ x: "0", y: "0", width: "100", height: "60" });
   const [deriving, setDeriving] = useState(false);
   const [deriveError, setDeriveError] = useState<string | undefined>(undefined);
   const [natural, setNatural] = useState<{ width: number; height: number } | undefined>(undefined);
@@ -866,7 +874,12 @@ function AttachmentCard({
     setSaving(true);
     setSaveError(undefined);
     void patchAttachmentCaption(engagementId, attachment.id, caption)
-      .then(onChanged)
+      .then((saved) => {
+        // The save reconciled local and server text; later server captions
+        // may sync into the input again.
+        captionEditedRef.current = false;
+        onChanged(saved);
+      })
       .catch(() => setSaveError("Caption could not be saved. Retry."))
       .finally(() => setSaving(false));
   };
@@ -894,8 +907,19 @@ function AttachmentCard({
     }
     setDeriving(true);
     setDeriveError(undefined);
+    // The `Crop: ` prefix counts against the 280-character contract bound,
+    // so a max-length caption would send 286 characters and fail
+    // validation on every retry. Truncate the composed caption to fit,
+    // backing off a trailing lead surrogate so multibyte captions stay
+    // intact.
+    const composedCaption =
+      caption.length > 0 ? `Crop: ${caption}` : `Crop of ${attachment.filename}`;
+    let derivedEnd = Math.min(composedCaption.length, 280);
+    while (derivedEnd > 0 && /[\uD800-\uDBFF]/.test(composedCaption[derivedEnd - 1] ?? "")) {
+      derivedEnd -= 1;
+    }
     void deriveAttachment(engagementId, attachment.id, {
-      caption: caption.length > 0 ? `Crop: ${caption}` : `Crop of ${attachment.filename}`,
+      caption: composedCaption.slice(0, derivedEnd),
       crop: rect,
     })
       .then(onDerived)
@@ -946,7 +970,10 @@ function AttachmentCard({
               maxLength={280}
               aria-label={`Caption for ${attachment.filename}`}
               className="w-full rounded-md border border-input bg-transparent px-2 py-1.5 text-[12px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              onChange={(event) => setCaption(event.target.value)}
+              onChange={(event) => {
+                captionEditedRef.current = true;
+                setCaption(event.target.value);
+              }}
             />
           </label>
           {saveError !== undefined ? (
