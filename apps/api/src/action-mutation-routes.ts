@@ -5,12 +5,14 @@ import {
   AddScopeAndRunActionRequestSchema,
   CancelActionRequestSchema,
   ContinueActionRequestSchema,
+  ContinueLateWarningActionRequestSchema,
   CreateActionRequestSchema,
   EngagementIdParamsSchema,
   JsonValueSchema,
   commandJsonV1AddScopeAndRunActionDigest,
   commandJsonV1CancelActionDigest,
   commandJsonV1ContinueActionDigest,
+  commandJsonV1ContinueLateWarningActionDigest,
   commandJsonV1CreateActionDigest,
   type ActionMutationError,
   type JsonValue,
@@ -162,6 +164,43 @@ export function registerActionMutationRoutes(
               expectedRevision: body.data.expectedRevision,
               snapshotVersion: body.data.snapshotVersion,
               snapshotBinding: body.data.snapshotBinding,
+              occurredAt: transaction.now().toISOString(),
+            }),
+            200,
+            { resourceType: "action", resourceId: params.data.actionId },
+          );
+        },
+      });
+    },
+  );
+
+  app.post(
+    "/api/v1/engagements/:engagementId/actions/:actionId/continue-late-warning",
+    async (request, reply) => {
+      const engagementId = readPathParam(request.params, "engagementId");
+      const actionId = readPathParam(request.params, "actionId");
+      if (engagementId === undefined || actionId === undefined) {
+        return sendFixedOperatorError(reply, 400, "invalid_request");
+      }
+      return dispatchOperatorMutation(request, reply, repository, {
+        route: `/api/v1/engagements/${engagementId}/actions/${actionId}/continue-late-warning`,
+        operation: "continue_late_warning",
+        digest: commandJsonV1ContinueLateWarningActionDigest,
+        mutate: (transaction: EngagementWriteTransaction) => {
+          const params = ActionIdParamsSchema.safeParse(request.params);
+          const body = ContinueLateWarningActionRequestSchema.safeParse(request.body);
+          const query = ActionMutationQuerySchema.safeParse(request.query);
+          if (!params.success || !body.success || !query.success) {
+            return invalidRequest();
+          }
+          return definitiveResponse(
+            transaction.continueLateWarning({
+              engagementId: params.data.engagementId,
+              actionId: params.data.actionId,
+              expectedRevision: body.data.expectedRevision,
+              snapshotVersion: body.data.snapshotVersion,
+              snapshotBinding: body.data.snapshotBinding,
+              pendingEventId: body.data.pendingEventId,
               occurredAt: transaction.now().toISOString(),
             }),
             200,

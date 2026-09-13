@@ -4,6 +4,7 @@ import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -15,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
+import { ExecutionTray } from "./workspace-tabs.js";
 import { resolveEngagementTab } from "./workspace.js";
 
 const activeEngagement = {
@@ -561,5 +563,137 @@ describe("engagement tabs", () => {
     fireEvent.click(within(releave).getByRole("button", { name: "Leave" }));
     const targets = await screen.findByLabelText("Targets");
     expect(document.activeElement).toBe(targets);
+  });
+});
+
+describe("ExecutionTray coverage", () => {
+  function renderTray() {
+    const queryClient = createAppQueryClient();
+    testQueryClients.add(queryClient);
+    const onOpenRun = vi.fn();
+    const view = render(
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <ExecutionTray engagementId={activeEngagement.id} onOpenRun={onOpenRun} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    return { ...view, onOpenRun, queryClient };
+  }
+
+  it("keeps paging past the first active run so older concurrent actives stay visible", async () => {
+    const fetchMock = stubFetch((url, init) => {
+      if (init?.method !== undefined && init.method !== "GET") {
+        return response({ code: "invalid_request" }, 400);
+      }
+      if (url.includes("/runs?")) {
+        if (url.includes("before=")) {
+          return response({
+            runs: [runSummary("run-active-old", "2026-08-10T11:00:00.000Z", "running")],
+            nextCursor: null,
+          });
+        }
+        return response({
+          runs: [
+            runSummary("run-active-new", "2026-08-10T12:00:00.000Z", "running"),
+            runSummary("run-old-terminal", "2026-08-09T12:00:00.000Z"),
+          ],
+          nextCursor: "cursor-1",
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+
+    renderTray();
+
+    expect(await screen.findByTitle("run-active-new")).toBeTruthy();
+    expect(await screen.findByTitle("run-active-old")).toBeTruthy();
+    const tray = screen.getByLabelText("Execution tray");
+    expect(tray.textContent).toMatch(/2 active/);
+    expect(fetchUrls(fetchMock).some((entry) => entry.includes("before=cursor-1"))).toBe(true);
+  });
+
+  it("declares partial coverage with a working continue when older history remains unchecked", async () => {
+    const fetchMock = stubFetch((url, init) => {
+      if (init?.method !== undefined && init.method !== "GET") {
+        return response({ code: "invalid_request" }, 400);
+      }
+      if (url.includes("/runs?")) {
+        const match = url.match(/before=(cursor-\d+)/);
+        if (match === null) {
+          return response({
+            runs: [runSummary("run-terminal-1", "2026-08-10T12:00:00.000Z")],
+            nextCursor: "cursor-1",
+          });
+        }
+        const page = Number(match[1]?.split("-")[1] ?? "0");
+        if (page >= 8) return response({ runs: [], nextCursor: null });
+        return response({
+          runs: [runSummary(`run-terminal-${page + 1}`, "2026-08-10T11:00:00.000Z")],
+          nextCursor: `cursor-${page + 1}`,
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+
+    renderTray();
+
+    const continueButton = await screen.findByRole("button", { name: "Check older runs" });
+    expect(screen.getByText(/older history unchecked/)).toBeTruthy();
+    // Auto-paged older terminals are history, not newly finished work.
+    expect(screen.queryByText(/finished/)).toBeNull();
+
+    fireEvent.click(continueButton);
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Check older runs" })).toBeNull();
+    });
+    expect(fetchUrls(fetchMock).some((entry) => entry.includes("before=cursor-8"))).toBe(true);
+  });
+
+  it("does not announce appended historical terminals but still detects later completion", async () => {
+    let completed = false;
+    const fetchMock = stubFetch((url, init) => {
+      if (init?.method !== undefined && init.method !== "GET") {
+        return response({ code: "invalid_request" }, 400);
+      }
+      if (url.includes("/runs?")) {
+        if (!url.includes("before=")) {
+          return response({
+            runs: [runSummary("run-terminal-a", "2026-08-10T12:00:00.000Z")],
+            nextCursor: "cursor-1",
+          });
+        }
+        return response({
+          runs: [
+            runSummary("run-terminal-old", "2026-08-09T12:00:00.000Z"),
+            runSummary(
+              "run-active-old",
+              "2026-08-08T12:00:00.000Z",
+              completed ? "succeeded" : "running",
+            ),
+          ],
+          nextCursor: null,
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    const { queryClient } = renderTray();
+
+    // The appended page arrives with an old terminal and an older active run.
+    // The historical terminal must never read as newly finished work.
+    expect(await screen.findByTitle("run-active-old")).toBeTruthy();
+    expect(screen.getByText(/1 active/)).toBeTruthy();
+    expect(screen.queryByText(/finished/)).toBeNull();
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // The older active run completes; the tray announces that transition.
+    completed = true;
+    await act(async () => {
+      await queryClient.refetchQueries();
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/1 finished/)).toBeTruthy();
+    });
+    expect(screen.getByText(/0 active/)).toBeTruthy();
   });
 });

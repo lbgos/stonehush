@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { ENGAGEMENT_SERVICES_QUERY_ERROR_MESSAGE } from "./errors.js";
+import { probeSelectionKey, serviceSelectionKey } from "./inspector.js";
 import { EngagementServicesSection } from "./service-surface.js";
 
 const engagementId = "10000000-0000-4000-8000-000000000001";
@@ -43,6 +44,57 @@ const serviceB = {
 
 function response(payload: unknown, status = 200): Response {
   return { json: async () => payload, ok: status >= 200 && status < 300, status } as Response;
+}
+
+function ffufPath(url: string, artifactId = "artifact-9") {
+  return {
+    source: "ffuf" as const,
+    parserVersion: "ffuf-json-v1" as const,
+    url,
+    status: 200,
+    length: 1234,
+    words: 10,
+    lines: 5,
+    redirectlocation: null,
+    fuzz: "admin",
+    runId: "run-1",
+    artifactId,
+    artifactDigest: `sha256:${"c".repeat(64)}`,
+    observedAt: "2026-08-13T12:00:00.000Z",
+  };
+}
+
+function httpProbe(url: string, artifactId = "artifact-7") {
+  return {
+    parserVersion: "http-probe-raw-v1" as const,
+    url,
+    fetchedAt: "2026-08-13T12:00:00.000Z",
+    finalUrl: url,
+    status: 200,
+    title: "lab",
+    selectedHeaders: { contentType: "text/html", server: null, poweredBy: null },
+    hops: [],
+    error: null,
+    source: "http-probe" as const,
+    runId: "run-1",
+    artifactId,
+    artifactDigest: `sha256:${"d".repeat(64)}`,
+    observedAt: "2026-08-13T12:00:00.000Z",
+  };
+}
+
+function routeSurfaceResponses(
+  services: readonly unknown[],
+  probes: readonly unknown[] = [],
+  paths: readonly unknown[] = [],
+) {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/services")) return Promise.resolve(response(services));
+    if (url.endsWith("/http-probes")) return Promise.resolve(response(probes));
+    if (url.endsWith("/ffuf-results")) return Promise.resolve(response(paths));
+    return Promise.resolve(response({ code: "invalid_request" }, 400));
+  });
 }
 
 let queryClient: ReturnType<typeof createAppQueryClient>;
@@ -97,24 +149,31 @@ describe("EngagementServicesSection", () => {
     expect(screen.queryByText("Runs")).toBeNull();
   });
 
-  it("derives truthful stats and renders deduplicated identity with provenance", async () => {
+  it("organizes services by selected target and renders identity with provenance", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([serviceA, serviceB]))));
     renderSurface();
-    const addresses = (await screen.findAllByText(/192\.0\.2\./)).map((element) => element.textContent);
-    expect(addresses[0]).toBe("192.0.2.2");
-    expect(addresses[1]).toBe("192.0.2.10");
+    expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
+    expect((await screen.findAllByRole("button", { name: /192\.0\.2\.2/ })).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /192\.0\.2\.10/ })).toBeTruthy();
     expect(screen.getByText("Services").previousElementSibling?.textContent).toBe("2");
     expect(screen.getByText("Hosts").previousElementSibling?.textContent).toBe("2");
     expect(screen.getByText("Evidence artifacts").previousElementSibling?.textContent).toBe("2");
     expect(screen.getByText("Latest observation").previousElementSibling?.textContent).toMatch(/11:00/);
     expect(screen.getAllByText(/13 Aug 2026/i).length).toBeGreaterThanOrEqual(1);
+
+    // The first target sorts first and shows alone: no reconciling tables.
+    expect(screen.getByText("443/tcp")).toBeTruthy();
+    expect(screen.getAllByText("unknown").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("22/tcp")).toBeNull();
+    expect(screen.getAllByText("Provenance")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /192\.0\.2\.10/ }));
     expect(screen.getByText("host-a.test")).toBeTruthy();
     expect(screen.getByText("22/tcp")).toBeTruthy();
-    expect(screen.getByText("443/tcp")).toBeTruthy();
+    expect(screen.queryByText("443/tcp")).toBeNull();
     expect(screen.getByText("OpenSSH 9.6")).toBeTruthy();
     expect(screen.getAllByText("ssh").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("unknown").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("Provenance").length).toBe(2);
+    expect(screen.getAllByText("Provenance").length).toBe(1);
     expect(screen.getAllByText("run-1").length).toBeGreaterThan(0);
     expect(screen.getAllByText(`sha256:${"a".repeat(64)}`).length).toBeGreaterThan(0);
     expect(screen.getAllByText("artifactDigest").length).toBeGreaterThan(0);
@@ -123,14 +182,19 @@ describe("EngagementServicesSection", () => {
   it("links each service row to its source XML evidence", async () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([serviceA, serviceB]))));
     renderSurface();
-    const links = await screen.findAllByRole("link", { name: "XML" });
-    expect(links).toHaveLength(2);
-    const hrefs = links.map((link) => link.getAttribute("href")).sort();
-    expect(hrefs).toEqual(
-      [
-        `/api/v1/engagements/${engagementId}/artifacts/artifact-1/content`,
-        `/api/v1/engagements/${engagementId}/artifacts/artifact-2/content`,
-      ].sort(),
+    expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
+
+    let links = await screen.findAllByRole("link", { name: "XML" });
+    expect(links).toHaveLength(1);
+    expect(links[0]?.getAttribute("href")).toBe(
+      `/api/v1/engagements/${engagementId}/artifacts/artifact-2/content`,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /192\.0\.2\.10/ }));
+    links = screen.getAllByRole("link", { name: "XML" });
+    expect(links).toHaveLength(1);
+    expect(links[0]?.getAttribute("href")).toBe(
+      `/api/v1/engagements/${engagementId}/artifacts/artifact-1/content`,
     );
     for (const link of links) {
       expect(link.hasAttribute("download")).toBe(true);
@@ -152,13 +216,13 @@ describe("EngagementServicesSection", () => {
     const fetchMock = vi.fn(() => Promise.resolve(response([serviceA])));
     vi.stubGlobal("fetch", fetchMock);
     renderSurface();
-    expect(await screen.findByText("192.0.2.10")).toBeTruthy();
+    expect((await screen.findAllByText("192.0.2.10")).length).toBeGreaterThanOrEqual(1);
     fetchMock.mockImplementation(
       () => Promise.resolve({ json: async () => ({ code: "storage_busy" }), ok: false, status: 503 } as Response),
     );
     await queryClient.refetchQueries();
     await waitFor(() => expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy());
-    expect(screen.getByText("192.0.2.10")).toBeTruthy();
+    expect(screen.getAllByText("192.0.2.10").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
   });
 
@@ -168,5 +232,423 @@ describe("EngagementServicesSection", () => {
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.queryByText("secret")).toBeNull();
     expect(screen.queryByText("private")).toBeNull();
+  });
+
+  it("keys service rows by the canonical selection identity including protocol", async () => {
+    const first = {
+      ...serviceA,
+      port: 53,
+      serviceName: "domain",
+      runId: "run-1",
+      artifactId: "artifact-1",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const second = {
+      ...serviceA,
+      port: 53,
+      serviceName: "domain",
+      runId: "run-2",
+      artifactId: "artifact-2",
+      artifactDigest: `sha256:${"b".repeat(64)}`,
+    };
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([first, second]))));
+    const { container } = renderSurface();
+    expect((await screen.findAllByText("53/tcp")).length).toBe(2);
+    const rowKeys = [...container.querySelectorAll("[data-surface-row]")]
+      .map((node) => node.getAttribute("data-surface-row"))
+      .filter((key) => key?.startsWith("service:"));
+    expect(rowKeys).toHaveLength(2);
+    expect(rowKeys).toContain(
+      serviceSelectionKey(first.address, first.port, first.protocol, first.artifactId),
+    );
+    expect(rowKeys).toContain(
+      serviceSelectionKey(second.address, second.port, second.protocol, second.artifactId),
+    );
+  });
+
+  it("retains the observed https scheme for ffuf-only discoveries on nonstandard ports", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([web8080], [], [ffufPath("https://192.0.2.10:8080/admin")]),
+    );
+    renderSurface();
+    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
+    expect(browserLink.getAttribute("href")).toBe("https://192.0.2.10:8080");
+    expect(screen.getByLabelText("Scheme for https://192.0.2.10:8080")).toHaveProperty("value", "https");
+  });
+
+  it("keeps disagreeing probe and path origins as separate blocks", async () => {
+    const probe = httpProbe("http://192.0.2.10:8080/");
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([], [probe], [ffufPath("https://192.0.2.10:8080/admin")]),
+    );
+    renderSurface();
+    const links = await screen.findAllByRole("link", { name: "Open in browser" });
+    const hrefs = links.map((link) => link.getAttribute("href")).sort();
+    expect(hrefs).toEqual(["http://192.0.2.10:8080", "https://192.0.2.10:8080"]);
+  });
+
+  it("keeps the observed scheme when several runs probe one origin", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web8080],
+        [
+          httpProbe("https://192.0.2.10:8080/", "artifact-7"),
+          httpProbe("https://192.0.2.10:8080/", "artifact-8"),
+        ],
+        [],
+      ),
+    );
+    renderSurface();
+    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
+    expect(browserLink.getAttribute("href")).toBe("https://192.0.2.10:8080");
+  });
+
+  it("renders hostname-addressed observations under the observed hostname", async () => {
+    const web443 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 443,
+      serviceName: "https",
+      hostname: "app.example.test",
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([web443], [httpProbe("https://app.example.test/")], []),
+    );
+    renderSurface();
+    const browserLink = await screen.findByRole("link", { name: "Open in browser" });
+    expect(browserLink.getAttribute("href")).toBe("https://app.example.test");
+  });
+
+  it("keeps mixed IP and hostname observations on one service as separate origins", async () => {
+    const web443 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 443,
+      serviceName: "https",
+      hostname: "app.example.test",
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web443],
+        [
+          httpProbe("https://192.0.2.10/", "artifact-7"),
+          httpProbe("https://192.0.2.10/", "artifact-8"),
+          httpProbe("https://app.example.test/", "artifact-9"),
+        ],
+        [],
+      ),
+    );
+    renderSurface();
+    const links = await screen.findAllByRole("link", { name: "Open in browser" });
+    const hrefs = links.map((link) => link.getAttribute("href")).sort();
+    // Repeated IP observations share one block; the hostname observation
+    // keeps its own authority instead of falling back to the IP.
+    expect(hrefs).toEqual(["https://192.0.2.10", "https://app.example.test"]);
+  });
+
+  it("calls stale cached web observations stale instead of absent", async () => {
+    const probe = httpProbe("https://192.0.2.10:8443/");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/http-probes")) return Promise.resolve(response([probe]));
+      if (url.endsWith("/ffuf-results")) return Promise.resolve(response([]));
+      return Promise.resolve(response({ code: "invalid_request" }, 400));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSurface();
+    expect(await screen.findByText("Services")).toBeTruthy();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/http-probes")) {
+        return Promise.resolve(response({ code: "storage_busy" }, 503));
+      }
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/ffuf-results")) return Promise.resolve(response([]));
+      return Promise.resolve(response({ code: "invalid_request" }, 400));
+    });
+    await queryClient.refetchQueries();
+    await waitFor(() => {
+      expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
+    });
+    expect(screen.getByText(/Web probes are stale/)).toBeTruthy();
+    expect(screen.queryByText(/Showing services only/)).toBeNull();
+  });
+
+  it("reports never-loaded web observations as absent", async () => {
+    vi.stubGlobal("fetch", (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/ffuf-results")) return Promise.resolve(response([]));
+      return Promise.resolve(response({ code: "storage_busy" }, 503));
+    });
+    renderSurface();
+    await waitFor(() => {
+      expect(screen.getByText(/could not be loaded\. Showing services only/)).toBeTruthy();
+    });
+  });
+
+  it("names which result set is stale when only one side has cached data", async () => {
+    const probe = httpProbe("https://192.0.2.10:8443/");
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      if (url.endsWith("/http-probes")) return Promise.resolve(response([probe]));
+      return Promise.resolve(response({ code: "storage_busy" }, 503));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSurface();
+    expect(await screen.findByText("Services")).toBeTruthy();
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));
+      return Promise.resolve(response({ code: "storage_busy" }, 503));
+    });
+    await queryClient.refetchQueries();
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Web probes are stale\. Path discovery results could not be loaded/),
+      ).toBeTruthy();
+    });
+    expect(screen.queryByText(/results are stale\. Showing the last successful load/)).toBeNull();
+  });
+
+  it("counts web origins by scheme and authority, not host and port", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web8080],
+        [httpProbe("http://192.0.2.10:8080/")],
+        [ffufPath("https://192.0.2.10:8080/admin")],
+      ),
+    );
+    renderSurface();
+    const target = await screen.findByRole("button", { name: /192\.0\.2\.10.*2 web/ });
+    expect(target.textContent).toMatch(/1 paths/);
+  });
+
+  it("keeps overridden and observed scheme blocks on distinct controls", async () => {
+    const web8080 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 8080,
+      serviceName: "http-proxy",
+      hostname: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses(
+        [web8080],
+        [httpProbe("http://192.0.2.10:8080/")],
+        [ffufPath("https://192.0.2.10:8080/admin")],
+      ),
+    );
+    const { container } = renderSurface();
+    const httpLabel = "Scheme for http://192.0.2.10:8080";
+    const httpsLabel = "Scheme for https://192.0.2.10:8080";
+    expect(await screen.findByLabelText(httpLabel)).toBeTruthy();
+    expect(screen.getByLabelText(httpsLabel)).toBeTruthy();
+    // Overriding the HTTP block to HTTPS must not merge control identity
+    // with the already observed HTTPS block.
+    fireEvent.change(screen.getByLabelText(httpLabel), { target: { value: "https" } });
+    await waitFor(() => {
+      expect(screen.getByLabelText(httpLabel)).toBeTruthy();
+    });
+    expect(screen.getByLabelText(httpsLabel)).toBeTruthy();
+    const rows = [...container.querySelectorAll("[data-surface-row]")].map((node) =>
+      node.getAttribute("data-surface-row"),
+    );
+    expect(new Set(rows).size).toBe(rows.length);
+  });
+
+  it("renders a shared-hostname observation once under its own target", async () => {
+    const first = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: "shared.test",
+      artifactId: "artifact-1",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const second = {
+      ...serviceA,
+      address: "192.0.2.20",
+      port: 80,
+      serviceName: "http",
+      hostname: "shared.test",
+      artifactId: "artifact-2",
+      artifactDigest: `sha256:${"b".repeat(64)}`,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([first, second], [httpProbe("https://shared.test:80/")], []),
+    );
+    const { container } = renderSurface();
+    const targets = await screen.findByRole("group", { name: "Targets" });
+    const targetButton = (pattern: RegExp) => within(targets).getByRole("button", { name: pattern });
+    expect(targetButton(/192\.0\.2\.10/)).toBeTruthy();
+    const sharedOrigin = 'a[href="https://shared.test:80"]';
+    expect(container.querySelector(sharedOrigin)).toBeNull();
+    expect(screen.getByText(/Not probed yet/)).toBeTruthy();
+
+    fireEvent.click(targetButton(/shared\.test/));
+    await waitFor(() => {
+      expect(container.querySelectorAll(sharedOrigin)).toHaveLength(1);
+    });
+
+    fireEvent.click(targetButton(/192\.0\.2\.20/));
+    await waitFor(() => {
+      expect(container.querySelector(sharedOrigin)).toBeNull();
+    });
+  });
+
+  it("renders one origin block for repeated artifacts sharing an endpoint", async () => {
+    const first = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+      artifactId: "artifact-1",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const second = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+      artifactId: "artifact-2",
+      artifactDigest: `sha256:${"b".repeat(64)}`,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([first, second], [httpProbe("http://192.0.2.10:80/")], []),
+    );
+    const { container } = renderSurface();
+    const label = "Scheme for http://192.0.2.10:80";
+    expect(await screen.findByLabelText(label)).toBeTruthy();
+    expect(screen.queryAllByLabelText(label)).toHaveLength(1);
+    const rows = [...container.querySelectorAll("[data-surface-row]")].map((node) =>
+      node.getAttribute("data-surface-row"),
+    );
+    expect(new Set(rows).size).toBe(rows.length);
+    // Both artifacts keep their own service row.
+    expect(rows).toContain(serviceSelectionKey("192.0.2.10", 80, "tcp", "artifact-1"));
+    expect(rows).toContain(serviceSelectionKey("192.0.2.10", 80, "tcp", "artifact-2"));
+  });
+
+  it("restores focus to an externally opened probe row on inspector close", async () => {
+    const web80 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+    };
+    const probe = httpProbe("http://192.0.2.10:80/");
+    const rowKey = probeSelectionKey(probe.url, probe.artifactId);
+    vi.stubGlobal("fetch", routeSurfaceResponses([web80], [probe], []));
+    const onSelectKey = vi.fn();
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <EngagementServicesSection
+          engagementId={engagementId}
+          onSelectKey={onSelectKey}
+          selectedKey={rowKey}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Close inspector" }));
+    expect(onSelectKey).toHaveBeenCalledWith(undefined);
+    // The route owner clears the selection, unmounting the inspector.
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <EngagementServicesSection engagementId={engagementId} onSelectKey={onSelectKey} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      const active = document.activeElement;
+      expect(
+        active instanceof HTMLElement
+          ? active.closest("[data-surface-row]")?.getAttribute("data-surface-row")
+          : null,
+      ).toBe(rowKey);
+    });
+  });
+
+  it("clears launcher return context so inspector close targets its own row", async () => {
+    const web80 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+    };
+    const probe = httpProbe("http://192.0.2.10:80/");
+    const rowKey = probeSelectionKey(probe.url, probe.artifactId);
+    vi.stubGlobal("fetch", routeSurfaceResponses([web80], [probe], []));
+    const onSelectKey = vi.fn();
+    const surface = (selectedKey: string | undefined) => (
+      <QueryClientProvider client={queryClient}>
+        <EngagementServicesSection
+          engagementId={engagementId}
+          onSelectKey={onSelectKey}
+          selectedKey={selectedKey}
+        />
+      </QueryClientProvider>
+    );
+    const { container, rerender } = render(surface(rowKey));
+    await screen.findByRole("button", { name: "Close inspector" });
+    // Borrow the shared return context through the launcher, then close it.
+    const originBlock = container.querySelector('[data-surface-row^="origin:"]');
+    expect(originBlock instanceof HTMLElement).toBe(true);
+    fireEvent.click(
+      within(originBlock as HTMLElement).getByRole("button", { name: "Discover paths" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog as HTMLElement).getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    // Close the inspector for the externally opened probe selection.
+    fireEvent.click(screen.getByRole("button", { name: "Close inspector" }));
+    expect(onSelectKey).toHaveBeenCalledWith(undefined);
+    rerender(surface(undefined));
+    await waitFor(() => {
+      const active = document.activeElement;
+      expect(
+        active instanceof HTMLElement
+          ? active.closest("[data-surface-row]")?.getAttribute("data-surface-row")
+          : null,
+      ).toBe(rowKey);
+    });
   });
 });

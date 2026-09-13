@@ -14,6 +14,7 @@ import { formatEngagementTimestamp } from "./format.js";
 import { useRunHistoryQuery } from "./run-history-query.js";
 import { RunNotFoundError, useRunOutputQuery } from "./run-output-query.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
+import { splitHeldBackIds } from "./workspace-tabs.js";
 
 export interface RunHistoryPanelProps {
   readonly engagementId: string | undefined;
@@ -56,6 +57,20 @@ export function RunHistoryPanel({
   const historyRef = useRef(history);
   const inFlightRef = useRef<number | null>(null);
   const callSeqRef = useRef(0);
+  // Stable-order baseline: ids visible the last time the operator opted into
+  // fresh results. New arrivals stay held back behind Show new results so rows
+  // never shift while reading or selecting text. Updates to already visible
+  // rows still render immediately. Explicit refreshes and Load more merge.
+  const [held, setHeld] = useState<
+    { key: string; baseline: readonly string[] | undefined } | undefined
+  >(undefined);
+  const mergeNextRef = useRef(false);
+  const listRef = useRef<HTMLUListElement>(null);
+  const focusListAfterMergeRef = useRef(false);
+  const heldKey = engagementId ?? "";
+  if (held !== undefined && held.key !== heldKey) {
+    setHeld(undefined);
+  }
   if (poll.key !== sessionKey) {
     const fresh = { key: sessionKey, used: 0, locked: false };
     pollRef.current = fresh;
@@ -76,6 +91,7 @@ export function RunHistoryPanel({
     setPoll(fresh);
   };
   const startManualRefetch = () => {
+    mergeNextRef.current = true;
     const callId = callSeqRef.current + 1;
     callSeqRef.current = callId;
     inFlightRef.current = callId;
@@ -95,7 +111,47 @@ export function RunHistoryPanel({
     fetchingRef.current = history.isFetching;
     historyRef.current = history;
   });
-  const loadedRuns = history.data?.pages.flatMap((page) => page.runs) ?? [];
+  useEffect(() => {
+    if (history.data === undefined) return;
+    const ids = history.data.pages.flatMap((page) => page.runs).map((run) => run.id);
+    if (held === undefined || held.key !== heldKey) {
+      mergeNextRef.current = false;
+      setHeld({ key: heldKey, baseline: ids });
+      return;
+    }
+    if (mergeNextRef.current && !history.isFetching && !history.isFetchingNextPage) {
+      mergeNextRef.current = false;
+      setHeld({ key: heldKey, baseline: ids });
+    }
+  });
+  const currentRuns = history.data?.pages.flatMap((page) => page.runs) ?? [];
+  const olderPageIds = new Set(
+    history.data?.pages.slice(1).flatMap((page) => page.runs).map((run) => run.id) ?? [],
+  );
+  const baselineWithOlder =
+    held?.baseline === undefined ? undefined : [...held.baseline, ...olderPageIds];
+  const split = splitHeldBackIds(
+    currentRuns.map((run) => run.id),
+    baselineWithOlder,
+    selectedRunId,
+  );
+  const visibleIds = new Set(split.visibleIds);
+  const loadedRuns = currentRuns.filter((run) => visibleIds.has(run.id));
+  const heldBackCount = split.heldBackCount;
+  const showNewResults = () => {
+    if (history.data === undefined) return;
+    focusListAfterMergeRef.current = true;
+    setHeld({
+      key: heldKey,
+      baseline: history.data.pages.flatMap((page) => page.runs).map((run) => run.id),
+    });
+  };
+  useEffect(() => {
+    if (focusListAfterMergeRef.current && heldBackCount === 0) {
+      focusListAfterMergeRef.current = false;
+      listRef.current?.focus({ preventScroll: true });
+    }
+  });
   const selectedRow =
     selectedRunId === undefined
       ? undefined
@@ -186,7 +242,7 @@ export function RunHistoryPanel({
     );
   }
 
-  const runs = history.data.pages.flatMap((page) => page.runs);
+  const runs = loadedRuns;
   const filterText = filters.text.trim().toLowerCase();
   const filtersActive = filters.runState !== "all" || filterText !== "";
   const visibleRuns = runs.filter(
@@ -199,6 +255,18 @@ export function RunHistoryPanel({
   const clearFilters = () => {
     setFilters({ engagementId, runState: "all", text: "" });
   };
+  const heldBackBanner =
+    heldBackCount > 0 ? (
+      <div className="mb-2 flex flex-wrap items-center gap-2" aria-live="polite">
+        <span className="text-[12px] text-muted-foreground">
+          {heldBackCount} new {heldBackCount === 1 ? "run" : "runs"} arrived. Order stays
+          stable until you opt in.
+        </span>
+        <Button type="button" variant="secondary" onClick={showNewResults}>
+          Show new results
+        </Button>
+      </div>
+    ) : null;
   const listBody =
     runs.length === 0 && !filtersActive ? (
       <div>
@@ -206,6 +274,7 @@ export function RunHistoryPanel({
         <p className="mt-1 mb-0 text-[12px] leading-5 text-muted-foreground">
           Queue an action to produce preserved runs for this engagement.
         </p>
+        {heldBackBanner}
       </div>
     ) : (
       <div>
@@ -220,6 +289,7 @@ export function RunHistoryPanel({
             ? `${visibleRuns.length} of ${runs.length} ${runs.length === 1 ? "run" : "runs"} shown, newest first. Filters match loaded runs only.`
             : `${runs.length} ${runs.length === 1 ? "run" : "runs"} shown, newest first`}
         </p>
+        {heldBackBanner}
         {visibleRuns.length === 0 ? (
           <div>
             <h3 className="m-0 text-[13px] font-semibold">No matching runs</h3>
@@ -233,7 +303,7 @@ export function RunHistoryPanel({
             </div>
           </div>
         ) : (
-          <ul className="m-0 list-none divide-y divide-border border-y border-border p-0">
+          <ul ref={listRef} tabIndex={-1} className="m-0 list-none divide-y divide-border border-y border-border p-0 outline-none">
             {visibleRuns.map((run) => {
             const selected = run.id === selectedRunId;
             return (
@@ -276,10 +346,12 @@ export function RunHistoryPanel({
                 // A second loaded page ends single-page auto-checking before
                 // it can refetch; further updates come from manual refresh.
                 // The lock persists (even if the page fetch fails) until a
-                // manual Refresh restarts the session.
+                // manual Refresh restarts the session. Loading more is an
+                // explicit opt-in, so newly paged rows merge immediately.
                 const locked = { ...pollRef.current, locked: true };
                 pollRef.current = locked;
                 setPoll(locked);
+                mergeNextRef.current = true;
                 void history.fetchNextPage();
               }}
             >
