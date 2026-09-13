@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { ENGAGEMENT_SERVICES_QUERY_ERROR_MESSAGE } from "./errors.js";
-import { serviceSelectionKey } from "./inspector.js";
+import { probeSelectionKey, serviceSelectionKey } from "./inspector.js";
 import { EngagementServicesSection } from "./service-surface.js";
 
 const engagementId = "10000000-0000-4000-8000-000000000001";
@@ -563,5 +563,44 @@ describe("EngagementServicesSection", () => {
     // Both artifacts keep their own service row.
     expect(rows).toContain(serviceSelectionKey("192.0.2.10", 80, "tcp", "artifact-1"));
     expect(rows).toContain(serviceSelectionKey("192.0.2.10", 80, "tcp", "artifact-2"));
+  });
+
+  it("restores focus to an externally opened probe row on inspector close", async () => {
+    const web80 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+    };
+    const probe = httpProbe("http://192.0.2.10:80/");
+    const rowKey = probeSelectionKey(probe.url, probe.artifactId);
+    vi.stubGlobal("fetch", routeSurfaceResponses([web80], [probe], []));
+    const onSelectKey = vi.fn();
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <EngagementServicesSection
+          engagementId={engagementId}
+          onSelectKey={onSelectKey}
+          selectedKey={rowKey}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Close inspector" }));
+    expect(onSelectKey).toHaveBeenCalledWith(undefined);
+    // The route owner clears the selection, unmounting the inspector.
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <EngagementServicesSection engagementId={engagementId} onSelectKey={onSelectKey} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => {
+      const active = document.activeElement;
+      expect(
+        active instanceof HTMLElement
+          ? active.closest("[data-surface-row]")?.getAttribute("data-surface-row")
+          : null,
+      ).toBe(rowKey);
+    });
   });
 });

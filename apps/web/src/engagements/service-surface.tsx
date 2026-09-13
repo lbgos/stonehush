@@ -157,10 +157,13 @@ export function EngagementServicesSection({
     selectKey(key);
   };
   const closeInspector = () => {
-    const key = returnKeyRef.current;
+    // Selections opened from the probe or path sections (or a shared link)
+    // bypass openSelection, so fall back to the current key and scroll
+    // position instead of resetting to the top with no focus target.
+    const key = returnKeyRef.current ?? effectiveKey;
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     selectKey(undefined);
-    const savedY = scrollRestoreRef.current;
+    const savedY = returnKeyRef.current === undefined ? window.scrollY : scrollRestoreRef.current;
     returnKeyRef.current = undefined;
     requestAnimationFrame(() => {
       restoreSurfacePosition(savedY, undefined);
