@@ -71,6 +71,7 @@ export {
   maskExcerptText,
   projectMaskedSelection,
   selectionBytesFromText,
+  selectionLooksLikeHiddenAssignmentValue,
   selectionStartsMidToken,
   utf8ByteLength as excerptUtf8ByteLength,
   validateExcerptRange,

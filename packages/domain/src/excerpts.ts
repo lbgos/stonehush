@@ -122,6 +122,24 @@ export function selectionStartsMidToken(prefixText: string, requestedText: strin
   return isSecretContinuationChar(before) && isSecretContinuationChar(first);
 }
 
+// True when a cut lookback cannot rule out a hidden assignment key. The
+// credential pattern spans arbitrary whitespace between key and value, so a
+// key such as `password` may sit beyond the truncated window while the
+// selection holds only the value side (`password` + 9000 spaces +
+// `=hunter2` keeping `=hunter2`, or keeping `hunter2` right after a visible
+// `=`). Neither the mid-token check nor span projection can see the key,
+// and narrow masking alone persists the value raw. Callers reject rather
+// than guess. Ordinary `key = value` keeps with a visible space after `=`
+// still pass; widening a rejected selection left to a boundary fixes it.
+export function selectionLooksLikeHiddenAssignmentValue(
+  prefixText: string,
+  requestedText: string,
+): boolean {
+  if (/^\s*=\s*\S/.test(requestedText)) return true;
+  if (/=$/.test(prefixText) && /^\S/.test(requestedText)) return true;
+  return false;
+}
+
 export interface SelectionMaskProjection {
   readonly text: string;
   readonly redactions: number;

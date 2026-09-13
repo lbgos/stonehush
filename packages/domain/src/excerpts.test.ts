@@ -10,6 +10,7 @@ import {
   maskExcerptText,
   projectMaskedSelection,
   selectionBytesFromText,
+  selectionLooksLikeHiddenAssignmentValue,
   selectionStartsMidToken,
   validateExcerptRange,
   windowSnippetFromChars,
@@ -133,6 +134,20 @@ describe("secret masking for excerpts", () => {
     expect(selectionStartsMidToken("", "abc")).toBe(false);
     expect(selectionStartsMidToken("abc", "")).toBe(false);
     expect(selectionStartsMidToken("target: ", "10.0.0.5")).toBe(false);
+  });
+
+  it("spots assignment values whose key may sit beyond a cut lookback", () => {
+    // Value side with the `=` inside the selection.
+    expect(selectionLooksLikeHiddenAssignmentValue("   ", "=hunter2")).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue("password", "=hunter2")).toBe(true);
+    // Value starting immediately after a visible `=`.
+    expect(selectionLooksLikeHiddenAssignmentValue("key=", "hunter2")).toBe(true);
+    // Ordinary shapes still pass: visible space after `=`, URL-ish text,
+    // plain words.
+    expect(selectionLooksLikeHiddenAssignmentValue("key = ", "hunter2")).toBe(false);
+    expect(selectionLooksLikeHiddenAssignmentValue("count = ", "42")).toBe(false);
+    expect(selectionLooksLikeHiddenAssignmentValue("login ok\n", "flag{abc}")).toBe(false);
+    expect(selectionLooksLikeHiddenAssignmentValue("target: ", "10.0.0.5")).toBe(false);
   });
 
   it("masks inner credential and bearer values from context", () => {

@@ -34,6 +34,7 @@ import {
   isCropRectValid,
   isSecretContinuationChar,
   projectMaskedSelection,
+  selectionLooksLikeHiddenAssignmentValue,
   selectionStartsMidToken,
   validateExcerptRange,
   windowSnippetFromChars,
@@ -243,6 +244,13 @@ export function registerExcerptRoutes(
     // at a safe boundary: a secret prefix may sit beyond the window. Reject
     // instead of persisting a possible inner secret slice.
     if (contextStart > 0 && selectionStartsMidToken(prefixText, requestedText)) {
+      return sendExcerptError(reply, 400, "range_rejected");
+    }
+    // A cut lookback can also hide an assignment key across a wide gap:
+    // `password` plus thousands of spaces plus `=hunter2` leaves no span
+    // and no token boundary at the selection start. Reject value-side
+    // selections rather than persisting a possible secret value.
+    if (contextStart > 0 && selectionLooksLikeHiddenAssignmentValue(prefixText, requestedText)) {
       return sendExcerptError(reply, 400, "range_rejected");
     }
     // Mask before persistence. Spans found in the expanded context project

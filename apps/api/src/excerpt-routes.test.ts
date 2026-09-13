@@ -404,6 +404,42 @@ describe("excerpt routes", () => {
     expect((allowed.json() as { content: string }).content).toBe("login ok");
   });
 
+  it("rejects value-side selections whose assignment key may sit beyond a cut lookback", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-wide-gap";
+    // The credential pattern spans arbitrary whitespace, so full-file
+    // policy would mask this value; the excerpt window cannot see the key
+    // past the 8192-byte lookback.
+    const content = `password${" ".repeat(9000)}=hunter2\nlogin page ok\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const keep = (byteOffset: number, byteLength: number) =>
+      harness.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+        payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
+      });
+
+    const valueSide = content.indexOf("=hunter2");
+    // Narrow masking alone would persist `=hunter2` verbatim with the key
+    // beyond the lookback: reject instead.
+    const led = await keep(valueSide, "=hunter2".length);
+    expect(led.statusCode).toBe(400);
+    expect(led.json()).toEqual({ code: "range_rejected" });
+
+    // One char over, starting right after the visible `=`, leaks the same
+    // way without the fix.
+    const bare = await keep(valueSide + 1, "hunter2".length);
+    expect(bare.statusCode).toBe(400);
+    expect(bare.json()).toEqual({ code: "range_rejected" });
+
+    // Ordinary text past the same cut still keeps verbatim.
+    const loginStart = content.indexOf("login page ok");
+    const login = await keep(loginStart, "login page ok".length);
+    expect(login.statusCode).toBe(201);
+    expect((login.json() as { content: string }).content).toBe("login page ok");
+  });
+
   it("masks search snippets for inner secret matches", async () => {
     const harness = await createHarness();
     const artifactId = "artifact-secret-search";
