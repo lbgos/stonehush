@@ -1,5 +1,5 @@
 import type { Attachment, Excerpt } from "@stonehush/contracts";
-import { AttachmentCropSchema, ExcerptSchema } from "@stonehush/contracts";
+import { AttachmentCropSchema, EXCERPT_CONTENT_MAX_BYTES, ExcerptSchema } from "@stonehush/contracts";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
@@ -172,6 +172,12 @@ export class ExcerptRepository {
     if (!ExcerptSchema.safeParse({ ...row }).success) {
       return { ok: false, error: { code: "invalid_repository_input" } };
     }
+    // The schema bound counts characters while the column constrains UTF-8
+    // bytes: multibyte content can pass the schema yet exceed the column.
+    // Reject up front instead of letting the CHECK fail the insert.
+    if (Buffer.byteLength(row.content, "utf8") > EXCERPT_CONTENT_MAX_BYTES) {
+      return { ok: false, error: { code: "invalid_repository_input" } };
+    }
     // The archived check and the insert run in one immediate transaction so
     // an archive racing this write cannot slip between a separate gate read
     // and the insert, on any connection. Reads stay available on archived
@@ -247,20 +253,6 @@ export class ExcerptRepository {
   }
 
   createAttachment(input: CreateAttachmentInput): ExcerptResult<Attachment> {
-    // Order note: the parent check runs before the engagement check, so an
-    // input naming both a missing engagement and a dangling parent reports
-    // attachment_not_found. No route sends a parent id on plain create and
-    // the derive path pre-verifies its parent, so nothing reachable changes.
-    if (input.parentAttachmentId !== null) {
-      const parent = this.db
-        .select({ id: evidenceAttachments.id, engagementId: evidenceAttachments.engagementId })
-        .from(evidenceAttachments)
-        .where(eq(evidenceAttachments.id, input.parentAttachmentId))
-        .get();
-      if (parent === undefined || parent.engagementId !== input.engagementId) {
-        return { ok: false, error: { code: "attachment_not_found" } };
-      }
-    }
     const row = {
       id: this.createId(),
       contractVersion: 1,
@@ -291,9 +283,26 @@ export class ExcerptRepository {
     }
     // Same atomicity as createExcerpt: the archived check and the insert
     // run in one immediate transaction so an archive racing this write
-    // cannot slip between a separate gate read and the insert.
+    // cannot slip between a separate gate read and the insert. The parent
+    // check runs inside the same transaction (and its try boundary) so a
+    // read failure maps to storage_busy or invalid_repository_input
+    // instead of escaping. Order note: the parent check runs before the
+    // engagement check, so an input naming both a missing engagement and
+    // a dangling parent reports attachment_not_found. No route sends a
+    // parent id on plain create and the derive path pre-verifies its
+    // parent, so nothing reachable changes.
     try {
       return this.db.transaction((client) => {
+        if (input.parentAttachmentId !== null) {
+          const parent = client
+            .select({ id: evidenceAttachments.id, engagementId: evidenceAttachments.engagementId })
+            .from(evidenceAttachments)
+            .where(eq(evidenceAttachments.id, input.parentAttachmentId))
+            .get();
+          if (parent === undefined || parent.engagementId !== input.engagementId) {
+            return { ok: false as const, error: { code: "attachment_not_found" as const } };
+          }
+        }
         const engagement = client
           .select({ status: engagements.status })
           .from(engagements)

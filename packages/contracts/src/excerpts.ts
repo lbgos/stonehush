@@ -6,12 +6,21 @@ import { EvidenceDigestSchema, OpaqueArtifactIdSchema } from "./evidence.js";
 export const EXCERPT_CONTRACT_VERSION = 1 as const;
 export const EXCERPT_MAX_BYTES = 8_192 as const;
 export const EXCERPT_CONTENT_MAX_CHARS = 16_384 as const;
+// Stored content is TEXT but constrained by UTF-8 byte length in SQLite,
+// so the byte bound is enforced separately before insertion: a 16384-char
+// multibyte string can exceed the 16384-byte column constraint.
+export const EXCERPT_CONTENT_MAX_BYTES = 16_384 as const;
 export const EXCERPT_DECLARED_SIZE_MAX = 1_073_741_824 as const;
 export const EXCERPT_TARGET_NOTE_MAX = 120 as const;
 export const EXCERPT_SEARCH_QUERY_MAX = 120 as const;
 export const EXCERPT_SEARCH_MATCHES_MAX = 20 as const;
 export const EXCERPT_SEARCH_SCAN_MAX_BYTES = 262_144 as const;
 export const ATTACHMENT_CONTENT_BASE64_MAX = 2_000_000 as const;
+// Raw image bytes stay below the stored Base64 bound: Base64 expands by
+// 4/3, so 1.5M raw bytes encode to exactly 2M characters. Larger raw
+// uploads cannot pass the Base64 bound, so the reachable raw limit is
+// stated separately instead of reusing the Base64 constant.
+export const ATTACHMENT_RAW_MAX_BYTES = 1_500_000 as const;
 export const ATTACHMENT_CAPTION_MAX = 280 as const;
 export const ATTACHMENT_FILENAME_MAX = 128 as const;
 export const ATTACHMENT_TARGET_LABEL_MAX = 120 as const;
@@ -166,7 +175,7 @@ export const AttachmentSchema = z.strictObject({
   engagementId: EngagementIdentifierSchema,
   filename: z.string().min(1).max(ATTACHMENT_FILENAME_MAX),
   mime: AttachmentMimeSchema,
-  sizeBytes: z.number().int().safe().positive().max(ATTACHMENT_CONTENT_BASE64_MAX),
+  sizeBytes: z.number().int().safe().positive().max(ATTACHMENT_RAW_MAX_BYTES),
   digest: EvidenceDigestSchema,
   caption: z.string().max(ATTACHMENT_CAPTION_MAX),
   targetLabel: z.string().min(1).max(ATTACHMENT_TARGET_LABEL_MAX).nullable(),

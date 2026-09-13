@@ -156,6 +156,33 @@ describe("excerpt persistence", () => {
     expect(listed.value).toHaveLength(0);
   });
 
+  it("rejects multibyte content past the byte bound before inserting", () => {
+    // 8200 CJK chars pass the 16384-character schema bound but encode to
+    // 16400 bytes, past the 16384-byte column constraint. The repository
+    // must refuse before the CHECK fails the insert.
+    const { engagements, excerpts } = createFixture();
+    const engagementId = createEngagement(engagements);
+    const content = "密".repeat(8200);
+    expect(content.length).toBeLessThanOrEqual(16_384);
+    expect(Buffer.byteLength(content, "utf8")).toBeGreaterThan(16_384);
+    const created = excerpts.createExcerpt({
+      engagementId,
+      runId: "run-1",
+      artifactId: "artifact-stdout",
+      artifactDigest: DIGEST,
+      stream: "stdout",
+      byteOffset: 0,
+      byteLength: 16,
+      content,
+      redactions: 0,
+      targetNote: null,
+    });
+    expect(created).toEqual({ ok: false, error: { code: "invalid_repository_input" } });
+    const listed = excerpts.listExcerpts(engagementId);
+    if (!listed.ok) throw new Error(`Excerpt list failed: ${listed.error.code}`);
+    expect(listed.value).toHaveLength(0);
+  });
+
   it("refuses excerpt inserts on archived engagements without persisting", () => {
     const { engagements, excerpts } = createFixture();
     const createdEngagement = engagements.createEngagement({

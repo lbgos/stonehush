@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   AttachmentSchema,
   ATTACHMENT_CAPTION_MAX,
+  ATTACHMENT_RAW_MAX_BYTES,
   CreateAttachmentRequestSchema,
   CreateDerivedAttachmentRequestSchema,
   CreateExcerptRequestSchema,
@@ -216,5 +217,28 @@ describe("attachment contracts", () => {
         createdAt: "2026-08-12T12:00:00.000Z",
       }).success,
     ).toBe(true);
+  });
+
+  it("bounds stored sizeBytes by the reachable raw limit", () => {
+    // sizeBytes counts raw bytes, and raw uploads cannot pass the Base64
+    // bound above 1.5M: the declared range ends there, not at 2M.
+    const row = {
+      contractVersion: 1 as const,
+      id: EXCERPT_ID,
+      engagementId: ENGAGEMENT_ID,
+      filename: "admin-login-as-sa",
+      mime: "image/png",
+      sizeBytes: ATTACHMENT_RAW_MAX_BYTES,
+      digest: DIGEST,
+      caption: "login form",
+      targetLabel: null,
+      parentAttachmentId: null,
+      crop: null,
+      createdAt: "2026-08-12T12:00:00.000Z",
+    };
+    expect(AttachmentSchema.safeParse(row).success).toBe(true);
+    expect(
+      AttachmentSchema.safeParse({ ...row, sizeBytes: ATTACHMENT_RAW_MAX_BYTES + 1 }).success,
+    ).toBe(false);
   });
 });

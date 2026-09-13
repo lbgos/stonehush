@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   AttachmentErrorSchema,
   AttachmentListResponseSchema,
+  ATTACHMENT_RAW_MAX_BYTES,
   AttachmentSchema,
   CreateAttachmentRequestSchema,
   CreateDerivedAttachmentRequestSchema,
@@ -592,7 +593,7 @@ export function registerExcerptRoutes(
     } catch {
       return sendAttachmentError(reply, 400, "invalid_request");
     }
-    if (raw.length < 1 || raw.length > 2_000_000) {
+    if (raw.length < 1 || raw.length > ATTACHMENT_RAW_MAX_BYTES) {
       return sendAttachmentError(reply, 400, "invalid_request");
     }
     const created = excerpts.createAttachment({
