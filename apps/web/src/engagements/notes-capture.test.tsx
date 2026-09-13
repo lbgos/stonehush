@@ -263,6 +263,77 @@ describe("notes image capture", () => {
     expect(posts.length).toBe(0);
   });
 
+  it("keeps a caption saved after upload when a stale initial fetch resolves after it", async () => {
+    // Ordering pin for the recency merge: upload, then a caption save,
+    // then the stale initial fetch. Both local writes postdate the fetch,
+    // so the saved caption must survive. A later fetch that started after
+    // the save would take the server copy instead.
+    const uploaded = { ...savedAttachment(), caption: "just uploaded" };
+    const saved = { ...savedAttachment(), caption: "saved after upload" };
+    const stale = { ...savedAttachment(), caption: "old" };
+    let resolveInitial: ((value: Response) => void) | undefined;
+    const initialGate = new Promise<Response>((resolve) => {
+      resolveInitial = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
+        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
+        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
+          return Promise.resolve(
+            response({ engagement: activeEngagement, activeScopeRevision: null }),
+          );
+        }
+        if (url.endsWith("/services")) return Promise.resolve(response([]));
+        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
+          return Promise.resolve(
+            response({
+              engagementId: ENGAGEMENT_ID,
+              markdown: "",
+              updatedAt: "2026-08-12T12:00:00.000Z",
+              revision: 0,
+            }),
+          );
+        }
+        if (url.endsWith("/attachments") && init?.method === "POST") {
+          return Promise.resolve(response(uploaded, 201));
+        }
+        if (/\/attachments\/[^/]+$/.test(url) && init?.method === "PATCH") {
+          return Promise.resolve(response(saved, 200));
+        }
+        if (url.endsWith("/attachments")) return initialGate;
+        return Promise.resolve(response([]));
+      }),
+    );
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByLabelText("Markdown");
+
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, { target: { files: [new File([PNG_BYTES], "login.png", { type: "image/png" })] } });
+    await screen.findByLabelText("Proves (names the file)");
+    fireEvent.change(screen.getByLabelText("Caption"), {
+      target: { value: "just uploaded" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save image" }));
+    await screen.findByLabelText("Caption for admin-login-as-sa");
+
+    fireEvent.change(screen.getByLabelText("Caption for admin-login-as-sa"), {
+      target: { value: "saved after upload" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save caption" }));
+    await screen.findByAltText("saved after upload");
+
+    await act(async () => {
+      resolveInitial?.(response([stale]));
+    });
+    expect(screen.getByAltText("saved after upload")).toBeTruthy();
+    expect(screen.queryByAltText("old")).toBeNull();
+    expect(screen.queryByAltText("just uploaded")).toBeNull();
+  });
+
   it("ignores a stale attachment reload after navigating engagements", async () => {
     // Black-box isolation: the notes section remounts per engagement
     // (keyed in the workspace), so React already discards A's late update;

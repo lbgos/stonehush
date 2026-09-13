@@ -495,14 +495,26 @@ function NoteAttachmentsSection({
   engagementIdRef.current = engagementId;
 
   // Union by id so a slow fetch never drops a row newer state already
-  // holds. Local rows win id conflicts: caption saves and uploads land
-  // through onChanged and onDerived with fresh server data, so a reload
-  // that started before them must not overwrite newer captions with stale
-  // copies. Order stays by creation.
-  const mergeAttachmentRows = (current: Attachment[] | undefined, incoming: Attachment[]) => {
+  // holds. Same-id conflicts resolve by recency instead of a fixed
+  // direction. Caption saves record their row id with a sequence mark, and
+  // each fetch captures the sequence at start. A row this tab saved after
+  // the fetch started keeps the local copy, because the fetch predates the
+  // save. Any other conflict takes the server copy, so a caption changed
+  // elsewhere surfaces on reload instead of being buried under stale local
+  // state. Order stays by creation.
+  const opSeqRef = useRef(0);
+  const savedSeqRef = useRef(new Map<string, number>());
+  const mergeAttachmentRows = (
+    current: Attachment[] | undefined,
+    incoming: Attachment[],
+    fetchSeq: number,
+  ) => {
     const byId = new Map<string, Attachment>();
     for (const row of incoming) byId.set(row.id, row);
-    for (const row of current ?? []) byId.set(row.id, row);
+    for (const row of current ?? []) {
+      const savedAt = savedSeqRef.current.get(row.id) ?? -1;
+      if (savedAt > fetchSeq) byId.set(row.id, row);
+    }
     return [...byId.values()].sort((left, right) =>
       left.createdAt === right.createdAt
         ? (left.id < right.id ? -1 : 1)
@@ -518,12 +530,14 @@ function NoteAttachmentsSection({
     // persist A's target label or bytes under B after navigation.
     setPending([]);
     setEngagementName("");
+    savedSeqRef.current.clear();
+    const fetchSeq = ++opSeqRef.current;
     void fetchAttachments(engagementId)
       .then((rows) => {
         if (cancelled) return;
         // Merge instead of replacing: an upload that finished while this
         // fetch was in flight already appended to current state.
-        setAttachments((current) => mergeAttachmentRows(current, rows));
+        setAttachments((current) => mergeAttachmentRows(current, rows, fetchSeq));
       })
       .catch(() => {
         if (!cancelled) setLoadError(true);
@@ -620,7 +634,16 @@ function NoteAttachmentsSection({
       .then((saved) => {
         if (engagementIdRef.current !== startedEngagementId) return;
         setPending((current) => current.filter((candidate) => candidate.clientId !== clientId));
-        setAttachments((current) => mergeAttachmentRows(current, [saved]));
+        // The upload completed after any in-flight fetch started, so its
+        // row counts as a local write: mark it before merging, or a stale
+        // fetch resolving next would bury it.
+        savedSeqRef.current.set(saved.id, ++opSeqRef.current);
+        // The upload completed after any in-flight fetch started, so its
+        // row counts as a local write: mark it before merging, or a stale
+        // fetch resolving next would bury it.
+        // Fresh uploads carry new ids, so no conflict is possible here;
+        // pass the live sequence so any same-id row resolves server-newest.
+        setAttachments((current) => mergeAttachmentRows(current, [saved], opSeqRef.current));
         onInsert(
           `![${saved.caption.length > 0 ? saved.caption : saved.filename}](attachment:${saved.id})`,
         );
@@ -647,11 +670,12 @@ function NoteAttachmentsSection({
     // started it. Navigation (including A-B-A) before it resolves must not
     // merge A's rows or errors into B.
     const startedEngagementId = engagementIdRef.current;
+    const fetchSeq = ++opSeqRef.current;
     setLoadError(false);
     void fetchAttachments(startedEngagementId)
       .then((rows) => {
         if (engagementIdRef.current !== startedEngagementId) return;
-        setAttachments((current) => mergeAttachmentRows(current, rows));
+        setAttachments((current) => mergeAttachmentRows(current, rows, fetchSeq));
       })
       .catch(() => {
         if (engagementIdRef.current !== startedEngagementId) return;
@@ -795,6 +819,9 @@ function NoteAttachmentsSection({
             // navigates mid-request. The child carries its own engagement,
             // so a late A completion never rewrites B rows.
             if (next.engagementId !== engagementIdRef.current) return;
+            // Mark the row so a fetch that started before this save cannot
+            // overwrite it with a stale copy when it resolves.
+            savedSeqRef.current.set(next.id, ++opSeqRef.current);
             setAttachments((current) =>
               (current ?? []).map((row) => (row.id === next.id ? next : row)),
             );
@@ -803,7 +830,10 @@ function NoteAttachmentsSection({
             // Same guard for derived copies: A's child must not appear
             // under B after navigation.
             if (child.engagementId !== engagementIdRef.current) return;
-            setAttachments((current) => mergeAttachmentRows(current, [child]));
+            savedSeqRef.current.set(child.id, ++opSeqRef.current);
+            setAttachments((current) =>
+              mergeAttachmentRows(current, [child], opSeqRef.current),
+            );
           }}
           onInsert={onInsert}
         />
