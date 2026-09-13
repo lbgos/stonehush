@@ -359,6 +359,26 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
     setSubmitError(undefined);
     setStarting(true);
     let attempted: StartedProgress | null = started;
+    // Best-effort challenge notes save shared by both start paths. A file
+    // attached alongside targets must not lose its contents when the action
+    // branch below returns before the notes block.
+    const persistChallengeNotes = async (engagementId: string, engagementName: string) => {
+      if (challenge === null) return;
+      try {
+        const notes = await fetchEngagementNotes(engagementId);
+        const fileNotes = buildChallengeNotes(challenge.name, challenge.text, challenge.truncated);
+        const markdown =
+          notes.markdown.trim() === "" ? fileNotes : `${notes.markdown}\n\n${fileNotes}`;
+        await saveEngagementNotesRequest(engagementId, {
+          markdown,
+          expectedRevision: notes.revision,
+        });
+      } catch {
+        announce(
+          `Engagement ${engagementName} created. Challenge notes were not saved; re-attach ${challenge.name} from the notes tab.`,
+        );
+      }
+    };
     try {
       // Creation, scope save, and the first scan are separate phases. Once
       // the engagement exists, retries resume the follow-up phases on it
@@ -479,6 +499,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
             `Engagement ${progress.engagement.name} created. First scan queued for ${targets[0] ?? ""}.`,
           );
         }
+        await persistChallengeNotes(progress.engagement.id, progress.engagement.name);
         onOpenChange(false);
         void navigate({
           to: "/engagements/$engagementId",
@@ -491,20 +512,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
       }
 
       if (challenge !== null) {
-        try {
-          const notes = await fetchEngagementNotes(progress.engagement.id);
-          const fileNotes = buildChallengeNotes(challenge.name, challenge.text, challenge.truncated);
-          const markdown =
-            notes.markdown.trim() === "" ? fileNotes : `${notes.markdown}\n\n${fileNotes}`;
-          await saveEngagementNotesRequest(progress.engagement.id, {
-            markdown,
-            expectedRevision: notes.revision,
-          });
-        } catch {
-          announce(
-            `Engagement ${progress.engagement.name} created. Challenge notes were not saved; re-attach ${challenge.name} from the notes tab.`,
-          );
-        }
+        await persistChallengeNotes(progress.engagement.id, progress.engagement.name);
       }
       onOpenChange(false);
       void navigate({

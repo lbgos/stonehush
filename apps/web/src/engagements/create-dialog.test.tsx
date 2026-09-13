@@ -339,6 +339,32 @@ describe("CreateEngagementDialog start", () => {
     expect(String(notesCall?.[1]?.body)).toContain("find the flag");
   });
 
+  it("saves challenge notes when targets and a file are combined", async () => {
+    const fetchMock = stubFetch(engagementHandler("Lab brief"));
+    const { router } = await renderDialog();
+
+    const file = new File(["find the flag"], "brief.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText(/Challenge file/), { target: { files: [file] } });
+    expect(await screen.findByText("brief.txt")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: "Lab brief" } });
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) => String(url).endsWith("/actions") && init?.method === "POST",
+      ),
+    ).toBe(true);
+    const notesCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/notes") && init?.method === "PUT",
+    );
+    expect(notesCall).toBeTruthy();
+    expect(String(notesCall?.[1]?.body)).toContain("find the flag");
+  });
+
   it("announces when challenge notes cannot be saved", async () => {
     const fallback = engagementHandler("Lab brief");
     stubFetch((url, init) => {
