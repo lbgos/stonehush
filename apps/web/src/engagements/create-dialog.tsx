@@ -161,6 +161,10 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [challenge, setChallenge] = useState<ChallengeDraft | null>(null);
   const [challengeError, setChallengeError] = useState<string | undefined>(undefined);
+  // True while a picked file's text() read is in flight. Submit stays blocked
+  // until the read settles so a replacement pick cannot silently use the
+  // previously loaded draft.
+  const [challengePending, setChallengePending] = useState(false);
   const [fileKey, setFileKey] = useState(0);
   // Sequence guard for async file reads. A slow read from an earlier file
   // (or a read that finishes after the dialog closed) must not overwrite or
@@ -198,6 +202,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
       setFieldErrors({});
       setChallenge(null);
       setChallengeError(undefined);
+      setChallengePending(false);
       setSubmitError(undefined);
       setStarting(false);
       setStarted(null);
@@ -233,11 +238,13 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
     challengeReadRef.current += 1;
     if (file.size > CHALLENGE_FILE_MAX_BYTES) {
       setChallenge(null);
+      setChallengePending(false);
       setChallengeError("That file is larger than 256 KB. Paste the relevant part instead.");
       setFileKey((current) => current + 1);
       return;
     }
     const readSeq = challengeReadRef.current;
+    setChallengePending(true);
     void file
       .text()
       .then((text) => {
@@ -249,10 +256,12 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
           truncated,
         });
         setChallengeError(undefined);
+        setChallengePending(false);
       })
       .catch(() => {
         if (challengeReadRef.current !== readSeq) return;
         setChallenge(null);
+        setChallengePending(false);
         setChallengeError("That file could not be read.");
         setFileKey((current) => current + 1);
       });
@@ -262,6 +271,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
     // A pending read for the removed file must not repopulate the attachment.
     challengeReadRef.current += 1;
     setChallenge(null);
+    setChallengePending(false);
     setChallengeError(undefined);
     setFileKey((current) => current + 1);
   };
@@ -273,6 +283,12 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
 
   const runSubmit = async () => {
     if (pending) return;
+    if (challengePending) {
+      // A replacement file is still loading. Submitting now would persist the
+      // previously loaded draft instead of the picked file.
+      setSubmitError("Still reading the challenge file. Wait a moment and try again.");
+      return;
+    }
     const nextErrors: Partial<Record<FieldKey, string>> = {};
 
     // Targets accept an IP, hostname, URL, or a pasted list. Empty is only
@@ -686,6 +702,11 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   </Button>
                 </span>
               )}
+              {challengePending && (
+                <span className="text-muted-foreground" role="status">
+                  Reading file…
+                </span>
+              )}
               {challengeError && (
                 <span className="text-destructive" role="alert">
                   {challengeError}
@@ -872,7 +893,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
             </p>
           ) : null}
           <div className="mt-1 flex flex-wrap gap-2">
-            <Button disabled={pending} type="submit">
+            <Button disabled={pending || challengePending} type="submit">
               {pending ? "Starting" : "Start engagement"}
             </Button>
             <Button

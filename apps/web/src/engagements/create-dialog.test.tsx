@@ -441,6 +441,59 @@ describe("CreateEngagementDialog start", () => {
     expect(screen.queryByText("a.txt")).toBeNull();
   });
 
+  it("blocks submit while a replacement file read is pending", async () => {
+    const fetchMock = stubFetch(engagementHandler("Lab brief"));
+    const { router } = await renderDialog();
+
+    const resolvers: Array<(text: string) => void> = [];
+    vi.spyOn(File.prototype, "text").mockImplementation(
+      () =>
+        new Promise<string>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [new File(["first content"], "a.txt", { type: "text/plain" })] },
+    });
+    resolvers[0]!("first content");
+    expect(await screen.findByText("a.txt")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: "Lab brief" } });
+
+    // Pick a replacement and submit before its read settles. The previously
+    // loaded draft must not be persisted under the new pick.
+    fireEvent.change(screen.getByLabelText(/Challenge file/), {
+      target: { files: [new File(["second content"], "b.txt", { type: "text/plain" })] },
+    });
+    expect(await screen.findByText("Reading file…")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Start engagement" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    submitStart();
+    expect(
+      await screen.findByText("Still reading the challenge file. Wait a moment and try again."),
+    ).toBeTruthy();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+      ),
+    ).toHaveLength(0);
+
+    // Once the replacement resolves, retry persists the new file, not the old one.
+    resolvers[1]!("second content");
+    expect(await screen.findByText("b.txt")).toBeTruthy();
+    submitStart();
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+    const notesCall = fetchMock.mock.calls.find(
+      ([url, init]) => String(url).endsWith("/notes") && init?.method === "PUT",
+    );
+    expect(notesCall).toBeTruthy();
+    expect(String(notesCall?.[1]?.body)).toContain("second content");
+    expect(String(notesCall?.[1]?.body)).not.toContain("first content");
+  });
+
   it("retries the scan on the same engagement instead of creating a second one", async () => {
     const fallback = engagementHandler("Lab 192-0-2-10");
     let actionCalls = 0;
