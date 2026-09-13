@@ -142,10 +142,17 @@ describe("secret masking for excerpts", () => {
     expect(selectionLooksLikeHiddenAssignmentValue("password", "=hunter2")).toBe(true);
     // Value starting immediately after a visible `=`.
     expect(selectionLooksLikeHiddenAssignmentValue("key=", "hunter2")).toBe(true);
-    // Ordinary shapes still pass: visible space after `=`, URL-ish text,
-    // plain words.
+    // JSON colon assignments: separator-led, adjacent, and quoted.
+    expect(selectionLooksLikeHiddenAssignmentValue('"key"', ': "value"')).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue('"key":', '"value"')).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue('"key": ', '"value"')).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue('"key":\n  ', "'value'")).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue("key = ", '"v"')).toBe(true);
+    // Ordinary shapes still pass: bare values after a spaced separator,
+    // quoted strings after commas, plain words, timestamps by shape.
     expect(selectionLooksLikeHiddenAssignmentValue("key = ", "hunter2")).toBe(false);
     expect(selectionLooksLikeHiddenAssignmentValue("count = ", "42")).toBe(false);
+    expect(selectionLooksLikeHiddenAssignmentValue('", "', '"b"')).toBe(false);
     expect(selectionLooksLikeHiddenAssignmentValue("login ok\n", "flag{abc}")).toBe(false);
     expect(selectionLooksLikeHiddenAssignmentValue("target: ", "10.0.0.5")).toBe(false);
   });

@@ -440,6 +440,49 @@ describe("excerpt routes", () => {
     expect((login.json() as { content: string }).content).toBe("login page ok");
   });
 
+  it("rejects JSON colon value sides whose key may sit beyond a cut lookback", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-json-gap";
+    // Wide whitespace including newlines between key and value: the
+    // credential pattern spans the gap, so full-file policy would mask the
+    // quoted value while the excerpt window cannot see the key.
+    const gap = `${" ".repeat(4500)}\n${" ".repeat(100)}\n${" ".repeat(4395)}`;
+    const content = `{"api_key"${gap}: "hunter2-value"}\ncount = 42\n"a", "b"\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const keep = (byteOffset: number, byteLength: number) =>
+      harness.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+        payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
+      });
+
+    // Separator-led selection covering the colon and quoted value.
+    const colonSide = content.indexOf(': "hunter2-value"');
+    expect(colonSide).toBeGreaterThan(8192);
+    const led = await keep(colonSide, ': "hunter2-value"'.length);
+    expect(led.statusCode).toBe(400);
+    expect(led.json()).toEqual({ code: "range_rejected" });
+
+    // Quoted value right after the visible colon and space.
+    const quotedStart = content.indexOf('"hunter2-value"');
+    const quoted = await keep(quotedStart, '"hunter2-value"'.length);
+    expect(quoted.statusCode).toBe(400);
+    expect(quoted.json()).toEqual({ code: "range_rejected" });
+
+    // Ordinary evidence past the same cut stays keepable: a bare value
+    // after a spaced separator and a quoted string after a comma carry no
+    // assignment shape of their own.
+    const countStart = content.indexOf("42");
+    const count = await keep(countStart, "42".length);
+    expect(count.statusCode).toBe(201);
+    expect((count.json() as { content: string }).content).toBe("42");
+    const bStart = content.indexOf('"b"');
+    const bKeep = await keep(bStart, '"b"'.length);
+    expect(bKeep.statusCode).toBe(201);
+    expect((bKeep.json() as { content: string }).content).toBe('"b"');
+  });
+
   it("masks search snippets for inner secret matches", async () => {
     const harness = await createHarness();
     const artifactId = "artifact-secret-search";

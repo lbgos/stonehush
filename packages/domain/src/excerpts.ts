@@ -129,14 +129,25 @@ export function selectionStartsMidToken(prefixText: string, requestedText: strin
 // `=hunter2` keeping `=hunter2`, or keeping `hunter2` right after a visible
 // `=`). Neither the mid-token check nor span projection can see the key,
 // and narrow masking alone persists the value raw. Callers reject rather
-// than guess. Ordinary `key = value` keeps with a visible space after `=`
-// still pass; widening a rejected selection left to a boundary fixes it.
+// than guess. Four shapes count as value-side, mirroring the policy's own
+// assignment operators: a selection opening with `=`-led or `:`-led value
+// syntax (JSON `"key": "value"` keeping `: "value"`), a value starting
+// immediately after a visible `=` or `:` (`"key":"value"` keeping
+// `value`), and a quoted value after a spaced separator (`"key": "value"`
+// keeping `"value"`). Bare values after a spaced separator (`count = 42`
+// keeping `42`) carry no assignment shape of their own and stay allowed:
+// without the key they are indistinguishable from ordinary evidence, and
+// the full-context policy itself needs the key to recognize them. That
+// line keeps ordinary evidence working; widening a rejected selection left
+// to a boundary fixes it.
 export function selectionLooksLikeHiddenAssignmentValue(
   prefixText: string,
   requestedText: string,
 ): boolean {
   if (/^\s*=\s*\S/.test(requestedText)) return true;
-  if (/=$/.test(prefixText) && /^\S/.test(requestedText)) return true;
+  if (/^\s*:\s*\S/.test(requestedText)) return true;
+  if (/[:=]$/.test(prefixText) && /^\S/.test(requestedText)) return true;
+  if (/[:=]\s+$/.test(prefixText) && /^["']/.test(requestedText)) return true;
   return false;
 }
 
