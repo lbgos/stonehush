@@ -634,15 +634,11 @@ function NoteAttachmentsSection({
       .then((saved) => {
         if (engagementIdRef.current !== startedEngagementId) return;
         setPending((current) => current.filter((candidate) => candidate.clientId !== clientId));
-        // The upload completed after any in-flight fetch started, so its
-        // row counts as a local write: mark it before merging, or a stale
-        // fetch resolving next would bury it.
+        // The upload completed after any in-flight fetch started, so mark
+        // its row as a local write before merging: a stale fetch resolving
+        // next must not bury it. Fresh uploads carry new ids, so the mark
+        // only matters against older in-flight fetches.
         savedSeqRef.current.set(saved.id, ++opSeqRef.current);
-        // The upload completed after any in-flight fetch started, so its
-        // row counts as a local write: mark it before merging, or a stale
-        // fetch resolving next would bury it.
-        // Fresh uploads carry new ids, so no conflict is possible here;
-        // pass the live sequence so any same-id row resolves server-newest.
         setAttachments((current) => mergeAttachmentRows(current, [saved], opSeqRef.current));
         onInsert(
           `![${saved.caption.length > 0 ? saved.caption : saved.filename}](attachment:${saved.id})`,

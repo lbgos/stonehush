@@ -247,6 +247,10 @@ export class ExcerptRepository {
   }
 
   createAttachment(input: CreateAttachmentInput): ExcerptResult<Attachment> {
+    // Order note: the parent check runs before the engagement check, so an
+    // input naming both a missing engagement and a dangling parent reports
+    // attachment_not_found. No route sends a parent id on plain create and
+    // the derive path pre-verifies its parent, so nothing reachable changes.
     if (input.parentAttachmentId !== null) {
       const parent = this.db
         .select({ id: evidenceAttachments.id, engagementId: evidenceAttachments.engagementId })
