@@ -481,6 +481,37 @@ describe("opening screen", () => {
     expect(keys[0]).not.toBe(keys[1]);
   });
 
+  it("disables Discard and start over while the follow-up scan is pending", async () => {
+    const base = openingHandler();
+    let releaseAction!: (value: Response) => void;
+    stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          releaseAction = resolve;
+        });
+      }
+      return base(url, init);
+    });
+    const { router } = await renderOpening();
+
+    await screen.findByLabelText("Target");
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.change(screen.getByLabelText("Target"), { target: { value: "192.0.2.10" } });
+    fireEvent.submit(form);
+
+    // The engagement exists while its first scan is still in flight. Discard
+    // must stay disabled so the pending request cannot land on an abandoned
+    // engagement.
+    const discard = await screen.findByRole("button", { name: "Discard and start over" });
+    expect((discard as HTMLButtonElement).disabled).toBe(true);
+
+    releaseAction(response(queuedAction(), 201));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+  });
+
   it("offers Retry status when the control plane store is not ready", async () => {
     const base = openingHandler();
     stubFetch((url, init) => {

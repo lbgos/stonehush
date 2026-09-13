@@ -901,7 +901,8 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
               </button>{" "}
               <button
                 type="button"
-                className="cursor-pointer text-foreground underline outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                disabled={pending}
+                className="cursor-pointer text-foreground underline outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-50"
                 onClick={() => setStarted(null)}
               >
                 Discard and start over

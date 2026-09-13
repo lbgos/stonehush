@@ -769,6 +769,34 @@ describe("CreateEngagementDialog start", () => {
     expect(screen.getByRole("button", { name: "Open engagement" })).toBeTruthy();
   });
 
+  it("disables Discard and start over while the follow-up scan is pending", async () => {
+    const fallback = engagementHandler("Lab 192-0-2-10");
+    let releaseAction!: (value: Response) => void;
+    stubFetch((url, init) => {
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          releaseAction = resolve;
+        });
+      }
+      return fallback(url, init);
+    });
+    const { router } = await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+
+    // The engagement exists while its first scan is still in flight. Discard
+    // must stay disabled so the pending request cannot land on an abandoned
+    // engagement.
+    const discard = await screen.findByRole("button", { name: "Discard and start over" });
+    expect((discard as HTMLButtonElement).disabled).toBe(true);
+
+    releaseAction(response(queuedAction(), 201));
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(`/engagements/${ENGAGEMENT_ID}`),
+    );
+  });
+
   it("locks scope inputs after the scope revision is saved", async () => {
     const fallback = engagementHandler("Lab 192-0-2-10");
     let actionCalls = 0;
