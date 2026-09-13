@@ -21,6 +21,7 @@ import {
   parseEngagementMutationError,
 } from "./errors.js";
 import { createIdempotencyKey, createIntentKeyHolder, requestFingerprint } from "./idempotency.js";
+import { canonicalTargetIdentities } from "./action-targets.js";
 import { ENGAGEMENTS_QUERY_KEY, engagementDetailQueryKey } from "./query.js";
 
 const SUCCESS_STATUSES = new Set([200, 201]);
@@ -242,15 +243,21 @@ export function useCreateEngagementMutation() {
   // The creation intent covers the first scan targets alongside the stored
   // metadata. Two starts that differ only in targets are different intents:
   // reopening after a lost response with a new target must create a fresh
-  // engagement instead of replaying the abandoned one. Identical retries keep
-  // the same key so a committed create still replays.
+  // engagement instead of replaying the abandoned one. Targets enter in
+  // canonical sorted form so equivalent inputs and reorderings keep the same
+  // key and still replay. Identical retries keep the same key so a committed
+  // create still replays.
   const keyFor = (body: CreateEngagementInput, targets?: readonly string[]) =>
     keys.current.keyFor(
-      requestFingerprint(targets === undefined ? body : { ...body, targets: [...targets] }),
+      requestFingerprint(
+        targets === undefined ? body : { ...body, targets: canonicalTargetIdentities(targets) },
+      ),
     );
   const resetKey = (body: CreateEngagementInput, targets?: readonly string[]) =>
     keys.current.reset(
-      requestFingerprint(targets === undefined ? body : { ...body, targets: [...targets] }),
+      requestFingerprint(
+        targets === undefined ? body : { ...body, targets: canonicalTargetIdentities(targets) },
+      ),
     );
 
   return useMutation({

@@ -481,6 +481,47 @@ describe("opening screen", () => {
     expect(keys[0]).not.toBe(keys[1]);
   });
 
+  it("reuses the engagement key for reordered equivalent targets", async () => {
+    const base = openingHandler();
+    let createCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === "/api/v1/engagements" && init?.method === "POST") {
+        createCalls += 1;
+        if (createCalls === 1) throw new Error("offline");
+        return base(url, init);
+      }
+      return base(url, init);
+    });
+    await renderOpening();
+
+    await screen.findByLabelText("Target");
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Same name" } });
+    fireEvent.change(screen.getByLabelText("Target"), {
+      target: { value: "198.51.100.10\n192.0.2.10" },
+    });
+    fireEvent.submit(form);
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Target"), {
+      target: { value: "192.0.2.10\n198.51.100.10" },
+    });
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+        ),
+      ).toHaveLength(2),
+    );
+    const keys = fetchMock.mock.calls
+      .filter(([url, init]) => url === "/api/v1/engagements" && init?.method === "POST")
+      .map(([, init]) => (init?.headers as Record<string, string>)["Idempotency-Key"]);
+    expect(keys[0]).toBe(keys[1]);
+  });
+
   it("disables Discard and start over while the follow-up scan is pending", async () => {
     const base = openingHandler();
     let releaseAction!: (value: Response) => void;

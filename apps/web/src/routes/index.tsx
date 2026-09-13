@@ -10,7 +10,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 
 import { createActionRequest } from "../engagements/action-mutations.js";
-import { parsePlannedTargets } from "../engagements/action-targets.js";
+import { canonicalTargetIdentities, parsePlannedTargets } from "../engagements/action-targets.js";
 import {
   EngagementMutationClientError,
   engagementMutationMessage,
@@ -103,9 +103,11 @@ function OpeningScreen() {
     // unchanged body, so a lost response replays instead of duplicating.
     // Targets ride along in the engagement intent so a new target after
     // discard means a new engagement instead of replaying the abandoned one.
+    // Canonical sorted form keeps equivalent inputs and reorderings on the
+    // same key.
     const engagementIntent = requestFingerprint({
       ...validated.data,
-      targets: parsedTargets.targets,
+      targets: canonicalTargetIdentities(parsedTargets.targets),
     });
     let attempted: Engagement | null = started;
     try {
