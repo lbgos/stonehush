@@ -798,6 +798,113 @@ describe("CreateEngagementDialog start", () => {
     });
   });
 
+  it("ignores a stale conflict refresh after discard and a new start", async () => {
+    const ENGAGEMENT_ID_B = "10000000-0000-4000-8000-000000000009";
+    let createCalls = 0;
+    let actionBCalls = 0;
+    let releaseDetailA!: (value: Response) => void;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === "/api/v1/engagements" && init?.method === "POST") {
+        createCalls += 1;
+        if (createCalls === 1) {
+          return response({ ...createdEngagement("Lab A"), id: ENGAGEMENT_ID }, 201);
+        }
+        return response(
+          { ...createdEngagement("Lab B"), id: ENGAGEMENT_ID_B, activeScopeRevisionId: null },
+          201,
+        );
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        return response(
+          {
+            code: "revision_conflict",
+            resourceType: "engagement",
+            resourceId: ENGAGEMENT_ID,
+            currentRevision: 5,
+          },
+          409,
+        );
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}` && init?.method !== "POST") {
+        return new Promise<Response>((resolve) => {
+          releaseDetailA = resolve;
+        });
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID_B}/actions` && init?.method === "POST") {
+        actionBCalls += 1;
+        if (actionBCalls === 1) return Promise.reject(new Error("offline"));
+        return response(
+          PersistedActionSchema.parse({ ...queuedAction(), engagementId: ENGAGEMENT_ID_B }),
+          201,
+        );
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    await renderDialog();
+
+    // Start engagement A. Its follow-up scan conflicts, and the detail
+    // refresh stays pending while the dialog is closed and reopened.
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+    expect(await screen.findByText("This engagement changed. Showing the latest revision.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "close-for-test" }));
+    fireEvent.click(screen.getByRole("button", { name: "open-for-test" }));
+
+    // Start engagement B on the reopened dialog. Its first scan fails without
+    // a conflict, so B stays retained with revision 1 and no scope id.
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+
+    // The stale refresh for discarded engagement A resolves now. It must not
+    // overwrite B's retained revision and scope id. Flush first so the retry
+    // below reads whatever the refresh left behind, the way a later operator
+    // retry would.
+    releaseDetailA(
+      response({
+        engagement: {
+          ...createdEngagement("Lab A"),
+          id: ENGAGEMENT_ID,
+          revision: 5,
+          activeScopeRevisionId: SCOPE_ID,
+          updatedAt: "2026-08-12T12:07:00.000Z",
+        },
+        activeScopeRevision: {
+          contractVersion: 1,
+          id: SCOPE_ID,
+          engagementId: ENGAGEMENT_ID,
+          version: 2,
+          rules: [],
+          createdAt: "2026-08-12T12:07:00.000Z",
+        },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Retry B. The follow-up scan must carry B's own concurrency values.
+    submitStart();
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([called, init]) =>
+            String(called) === `/api/v1/engagements/${ENGAGEMENT_ID_B}/actions` &&
+            init?.method === "POST",
+        ),
+      ).toHaveLength(2),
+    );
+    const bodies = fetchMock.mock.calls
+      .filter(
+        ([called, init]) =>
+          String(called) === `/api/v1/engagements/${ENGAGEMENT_ID_B}/actions` &&
+          init?.method === "POST",
+      )
+      .map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[1]).toMatchObject({
+      expectedEngagementRevision: 1,
+      expectedActiveScopeRevisionId: null,
+    });
+  });
+
   it("reveals More options when a nested field fails validation", async () => {
     stubFetch(engagementHandler("Lab 192-0-2-10"));
     await renderDialog();

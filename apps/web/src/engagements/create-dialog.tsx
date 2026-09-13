@@ -510,10 +510,19 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
             try {
               const detail = await fetchEngagementDetail(retainedProgress.engagement.id);
               if (detail.engagement.status === "archived") {
-                setStarted(null);
-              } else {
+                // Only clear our own retained engagement. A discard plus a
+                // new start may have replaced it while the fetch was in flight.
                 setStarted((current) =>
-                  current === null
+                  current === null || current.engagement.id !== retainedProgress.engagement.id
+                    ? current
+                    : null,
+                );
+              } else {
+                // Apply the refresh only to the engagement that requested it.
+                // A stale fetch for a discarded engagement must not overwrite
+                // a newer retained engagement's revision and scope id.
+                setStarted((current) =>
+                  current === null || current.engagement.id !== retainedProgress.engagement.id
                     ? current
                     : {
                         ...current,

@@ -172,7 +172,9 @@ function OpeningScreen() {
             try {
               const detail = await fetchEngagementDetail(retained.id);
               if (detail.engagement.status === "archived") {
-                setStarted(null);
+                // Only clear our own retained engagement. A discard plus a
+                // new start may have replaced it while the fetch was in flight.
+                setStarted((current) => (current?.id !== retained.id ? current : null));
               } else {
                 const fresh: Engagement = {
                   ...retained,
@@ -180,7 +182,10 @@ function OpeningScreen() {
                   activeScopeRevisionId: detail.engagement.activeScopeRevisionId,
                   updatedAt: detail.engagement.updatedAt,
                 };
-                setStarted(fresh);
+                // Apply the refresh only to the engagement that requested it.
+                // A stale fetch for a discarded engagement must not overwrite
+                // a newer retained engagement's revision and scope id.
+                setStarted((current) => (current?.id !== retained.id ? current : fresh));
                 upsertEngagementInCache(queryClient, fresh);
               }
             } catch {
