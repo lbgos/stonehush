@@ -123,6 +123,53 @@ export function findAdvisorSecretSpans(value: string): AdvisorSecretSpan[] {
   return merged;
 }
 
+const PRIVATE_KEY_END_PATTERN = /-----END [A-Z0-9 ]*PRIVATE KEY-----/g;
+
+// Starts (UTF-16 offsets) of private-key BEGIN markers with no END marker
+// pairing them: no END sits between the BEGIN and the next BEGIN (or the
+// text end). The shapes mirror the redaction policy above, so projection
+// and policy agree on what counts as a marker. Fresh RegExp objects keep
+// the shared module patterns free of lastIndex races.
+export function findUnterminatedPrivateKeyStarts(value: string): number[] {
+  const beginPattern = new RegExp(PRIVATE_KEY_BEGIN_PATTERN.source, "g");
+  const begins: number[] = [];
+  for (;;) {
+    const found = beginPattern.exec(value);
+    if (found === null) break;
+    begins.push(found.index);
+  }
+  const endPattern = new RegExp(PRIVATE_KEY_END_PATTERN.source, "g");
+  const ends: number[] = [];
+  for (;;) {
+    const found = endPattern.exec(value);
+    if (found === null) break;
+    ends.push(found.index);
+  }
+  const unterminated: number[] = [];
+  let endCursor = 0;
+  for (let beginCursor = 0; beginCursor < begins.length; beginCursor += 1) {
+    const begin = begins[beginCursor] ?? 0;
+    const nextBegin = beginCursor + 1 < begins.length ? (begins[beginCursor + 1] ?? 0) : Number.POSITIVE_INFINITY;
+    while (endCursor < ends.length && (ends[endCursor] ?? 0) < begin) endCursor += 1;
+    if (endCursor < ends.length && (ends[endCursor] ?? 0) < nextBegin) {
+      endCursor += 1;
+    } else {
+      unterminated.push(begin);
+    }
+  }
+  return unterminated;
+}
+
+// Marker tests using the same policy shapes, for selections that hold one
+// end of a key block without the other.
+export function containsPrivateKeyBeginMarker(value: string): boolean {
+  return new RegExp(PRIVATE_KEY_BEGIN_PATTERN.source).test(value);
+}
+
+export function containsPrivateKeyEndMarker(value: string): boolean {
+  return new RegExp(PRIVATE_KEY_END_PATTERN.source).test(value);
+}
+
 // Strip userinfo (credentials) from every http(s) URL occurrence, embedded or
 // standalone, any scheme case. Non-URL text, emails without a scheme, and
 // `@` inside paths pass through unchanged.

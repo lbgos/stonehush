@@ -7,15 +7,22 @@ import {
   findTextMatches,
   formatExcerptSourceLabel,
   isCropRectValid,
+  isSecretContinuationChar,
   maskExcerptText,
   projectMaskedSelection,
   selectionBytesFromText,
+  selectionHasDanglingKeyEnd,
   selectionLooksLikeHiddenAssignmentValue,
   selectionStartsMidToken,
   validateExcerptRange,
   windowSnippetFromChars,
 } from "./excerpts.js";
-import { findAdvisorSecretSpans } from "./advisor-redact.js";
+import {
+  containsPrivateKeyBeginMarker,
+  containsPrivateKeyEndMarker,
+  findAdvisorSecretSpans,
+  findUnterminatedPrivateKeyStarts,
+} from "./advisor-redact.js";
 
 const DIGEST = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -155,6 +162,70 @@ describe("secret masking for excerpts", () => {
     expect(selectionLooksLikeHiddenAssignmentValue('", "', '"b"')).toBe(false);
     expect(selectionLooksLikeHiddenAssignmentValue("login ok\n", "flag{abc}")).toBe(false);
     expect(selectionLooksLikeHiddenAssignmentValue("target: ", "10.0.0.5")).toBe(false);
+  });
+
+  it("treats percent as a token continuation but keeps colons as boundaries", () => {
+    // Percent-encoded secret bytes stay one token across a cut lookback.
+    expect(selectionStartsMidToken("abc%", "20def")).toBe(true);
+    expect(isSecretContinuationChar("%")).toBe(true);
+    // Colons stay boundaries so host:port and timestamp keeps keep working.
+    expect(selectionStartsMidToken("host:", "8080")).toBe(false);
+    expect(selectionStartsMidToken("12:", "30")).toBe(false);
+    expect(isSecretContinuationChar(":")).toBe(false);
+  });
+
+  it("rejects value shapes with a whitespace-only window behind them", () => {
+    // Full 8192-byte lookback with no key candidate: the key may sit beyond
+    // the cut no matter which side the separator fell on.
+    expect(selectionLooksLikeHiddenAssignmentValue(" ".repeat(8192), "hunter2")).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue(" ".repeat(8191) + "= ", "hunter2")).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue(" ".repeat(8192), '"v"')).toBe(true);
+    expect(selectionLooksLikeHiddenAssignmentValue("\uFFFD".repeat(8192), "hunter2")).toBe(true);
+    // Any visible key candidate disables the rule.
+    expect(selectionLooksLikeHiddenAssignmentValue(`${" ".repeat(8180)}count = `, "42")).toBe(false);
+    expect(selectionLooksLikeHiddenAssignmentValue(`${" ".repeat(8180)}"a", `, '"b"')).toBe(false);
+    expect(selectionLooksLikeHiddenAssignmentValue("x".repeat(8192), "y")).toBe(false);
+  });
+
+  it("locates unterminated private-key blocks", () => {
+    const complete =
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n";
+    expect(findUnterminatedPrivateKeyStarts(complete)).toEqual([]);
+    const dangling = "-----BEGIN RSA PRIVATE KEY-----\nMIIB\ntrailing\n";
+    expect(findUnterminatedPrivateKeyStarts(dangling)).toEqual([0]);
+    expect(findUnterminatedPrivateKeyStarts("ordinary output\n")).toEqual([]);
+    const endOnly = "MIIB\n-----END RSA PRIVATE KEY-----\n";
+    expect(findUnterminatedPrivateKeyStarts(endOnly)).toEqual([]);
+    expect(containsPrivateKeyBeginMarker(dangling)).toBe(true);
+    expect(containsPrivateKeyEndMarker(dangling)).toBe(false);
+    expect(containsPrivateKeyEndMarker(endOnly)).toBe(true);
+    expect(containsPrivateKeyBeginMarker(endOnly)).toBe(false);
+  });
+
+  it("spots key-block tails holding an END marker without its BEGIN", () => {
+    expect(selectionHasDanglingKeyEnd("MIIB\n-----END RSA PRIVATE KEY-----\n")).toBe(true);
+    expect(
+      selectionHasDanglingKeyEnd(
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n",
+      ),
+    ).toBe(false);
+    expect(selectionHasDanglingKeyEnd("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n")).toBe(false);
+    expect(selectionHasDanglingKeyEnd("ordinary output\n")).toBe(false);
+  });
+
+  it("masks key-block bodies past an unterminated BEGIN only when truncated", () => {
+    const expanded = "-----BEGIN RSA PRIVATE KEY-----\nMIIBAA==\nmore\n";
+    const bodyStart = Array.from("-----BEGIN RSA PRIVATE KEY-----\n").length;
+    const bodyLength = Array.from("MIIBAA==\n").length;
+    // Window cut on the right: the block may continue past it.
+    const masked = projectMaskedSelection(expanded, bodyStart, bodyLength, true);
+    expect(masked.overlapped).toBe(true);
+    expect(masked.text).not.toContain("MIIBAA");
+    // Fully visible dangling marker: the policy misses it too, so the
+    // projection must not mask ordinary trailing text.
+    const plain = projectMaskedSelection(expanded, bodyStart, bodyLength, false);
+    expect(plain.overlapped).toBe(false);
+    expect(plain.text).toBe("MIIBAA==\n");
   });
 
   it("masks inner credential and bearer values from context", () => {

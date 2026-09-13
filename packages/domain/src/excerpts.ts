@@ -1,4 +1,4 @@
-import { ADVISOR_REDACTION_TOKEN, findAdvisorSecretSpans, redactAdvisorText } from "./advisor-redact.js";
+import { ADVISOR_REDACTION_TOKEN, containsPrivateKeyBeginMarker, containsPrivateKeyEndMarker, findAdvisorSecretSpans, findUnterminatedPrivateKeyStarts, redactAdvisorText } from "./advisor-redact.js";
 import type { Excerpt } from "@stonehush/contracts";
 
 /**
@@ -98,10 +98,11 @@ export function maskExcerptText(value: string): MaskedExcerptText {
 }
 
 // Characters that can continue a secret token value (bearer material, sk
-// values, base64 key bodies, long hashes). Pattern syntax such as braces,
-// quotes, whitespace, and replacement characters are not in this class, so
-// they always count as boundaries.
-const SECRET_CONTINUATION_PATTERN = /^[A-Za-z0-9\-_.~+/=]$/;
+// values, base64 key bodies, long hashes, percent-encoded bytes). Pattern
+// syntax such as braces, quotes, whitespace, and replacement characters are
+// not in this class, so they always count as boundaries. Colons stay out:
+// `host:port` and timestamp keeps must not read as token continuations.
+const SECRET_CONTINUATION_PATTERN = /^[A-Za-z0-9\-_.~+/=%]$/;
 
 export function isSecretContinuationChar(char: string): boolean {
   return SECRET_CONTINUATION_PATTERN.test(char);
@@ -148,7 +149,26 @@ export function selectionLooksLikeHiddenAssignmentValue(
   if (/^\s*:\s*\S/.test(requestedText)) return true;
   if (/[:=]$/.test(prefixText) && /^\S/.test(requestedText)) return true;
   if (/[:=]\s+$/.test(prefixText) && /^["']/.test(requestedText)) return true;
+  // Whole-window gap: the full bounded lookback holds only whitespace
+  // (plus one optional trailing separator) while the selection is
+  // value-shaped. No key candidate is visible, so an assignment key may sit
+  // beyond the cut no matter which side the separator fell on. Callers only
+  // invoke this with a full cut lookback, where the precondition holds.
+  // Ordinary keeps always show non-whitespace inside 8192 bytes.
+  if (/^["']?\S/.test(requestedText) && /^[\s\uFFFD]*[:=]*[\s\uFFFD]*$/.test(prefixText)) {
+    return true;
+  }
   return false;
+}
+
+// True when the selection holds a private-key END marker but no BEGIN
+// marker: the block's head sits beyond a cut lookback, so no span can cover
+// the body and narrow masking persists it raw. Selections holding a
+// complete block (both markers) mask through the block span instead.
+export function selectionHasDanglingKeyEnd(requestedText: string): boolean {
+  return (
+    containsPrivateKeyEndMarker(requestedText) && !containsPrivateKeyBeginMarker(requestedText)
+  );
 }
 
 export interface SelectionMaskProjection {
@@ -163,15 +183,22 @@ export interface SelectionMaskProjection {
 // chars), so each span extends rightward while token characters continue: a
 // selection past the cap is still the same secret value and must mask, not
 // persist verbatim. Extension only ever masks more; ordinary text beside a
-// boundary still passes through narrow masking unchanged. Non-overlapping
-// selections come back byte-identical to narrow masking; overlapping ones
-// keep ordinary prefix and suffix text while each contiguous secret overlap
-// becomes one redaction token. Never invents bytes: output derives only
-// from the requested substring.
+// boundary still passes through narrow masking unchanged. A private-key
+// BEGIN marker with no END after it extends to the context end when
+// truncatedAfter is set: the block may continue past the visible window,
+// and a body-line selection would otherwise persist raw. Callers pass
+// truncatedAfter only when more bytes exist beyond the context; a dangling
+// BEGIN in fully visible text is a policy miss too, so extending there
+// would mask ordinary trailing text the policy leaves alone.
+// Non-overlapping selections come back byte-identical to narrow masking;
+// overlapping ones keep ordinary prefix and suffix text while each
+// contiguous secret overlap becomes one redaction token. Never invents
+// bytes: output derives only from the requested substring.
 export function projectMaskedSelection(
   expandedText: string,
   requestedStart: number,
   requestedLength: number,
+  truncatedAfter = false,
 ): SelectionMaskProjection {
   const points = Array.from(expandedText);
   const start = Math.max(0, requestedStart);
@@ -190,6 +217,14 @@ export function projectMaskedSelection(
     const clipStart = Math.max(spanStart, start) - start;
     const clipEnd = Math.min(spanEnd, end) - start;
     if (clipEnd > clipStart) overlaps.push({ start: clipStart, end: clipEnd });
+  }
+  if (truncatedAfter) {
+    for (const begin of findUnterminatedPrivateKeyStarts(expandedText)) {
+      const beginStart = toCodePoints(begin);
+      const clipStart = Math.max(beginStart, start) - start;
+      const clipEnd = end - start;
+      if (clipEnd > clipStart) overlaps.push({ start: clipStart, end: clipEnd });
+    }
   }
   overlaps.sort((left, right) => left.start - right.start || left.end - right.end);
   const merged: { start: number; end: number }[] = [];

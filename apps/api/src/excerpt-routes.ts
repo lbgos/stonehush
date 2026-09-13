@@ -34,6 +34,7 @@ import {
   isCropRectValid,
   isSecretContinuationChar,
   projectMaskedSelection,
+  selectionHasDanglingKeyEnd,
   selectionLooksLikeHiddenAssignmentValue,
   selectionStartsMidToken,
   validateExcerptRange,
@@ -253,10 +254,28 @@ export function registerExcerptRoutes(
     if (contextStart > 0 && selectionLooksLikeHiddenAssignmentValue(prefixText, requestedText)) {
       return sendExcerptError(reply, 400, "range_rejected");
     }
+    // A selection holding a private-key END marker without its BEGIN
+    // marker is the tail of a block whose head sits beyond the cut
+    // lookback: no span can cover the body, so narrow masking persists it
+    // raw. Selections holding the whole block mask through the block span
+    // and never reach this reject. Widening left to include the BEGIN
+    // marker fixes it.
+    if (contextStart > 0 && selectionHasDanglingKeyEnd(requestedText)) {
+      return sendExcerptError(reply, 400, "range_rejected");
+    }
     // Mask before persistence. Spans found in the expanded context project
     // onto the selection, so inner secret bytes stay masked. Selections with
-    // no overlap come back identical to narrow masking.
-    const masked = projectMaskedSelection(expandedText, requestedStartChars, requestedLengthChars);
+    // no overlap come back identical to narrow masking. truncatedAfter is
+    // set only when bytes exist beyond the window, so an unterminated BEGIN
+    // marker extends masking to the window end without touching ordinary
+    // trailing text of fully visible files.
+    const truncatedAfter = contextEnd < artifact.sizeBytes;
+    const masked = projectMaskedSelection(
+      expandedText,
+      requestedStartChars,
+      requestedLengthChars,
+      truncatedAfter,
+    );
     const created = excerpts.createExcerpt({
       engagementId: params.data.engagementId,
       runId: body.data.runId,
@@ -526,7 +545,12 @@ export function registerExcerptRoutes(
             redactions = 1;
           } else {
             const window = windowSnippetFromChars(text, hit.charOffset, hit.charLength);
-            const projected = projectMaskedSelection(ctxText, winStart - ctxStart, winEnd - winStart);
+            const projected = projectMaskedSelection(
+              ctxText,
+              winStart - ctxStart,
+              winEnd - winStart,
+              taken < download.sizeBytes,
+            );
             snippet = `${window.truncatedBefore ? "..." : ""}${projected.text}${window.truncatedAfter ? "..." : ""}`;
             redactions = projected.redactions;
           }
