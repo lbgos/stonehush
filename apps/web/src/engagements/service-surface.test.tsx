@@ -603,4 +603,52 @@ describe("EngagementServicesSection", () => {
       ).toBe(rowKey);
     });
   });
+
+  it("clears launcher return context so inspector close targets its own row", async () => {
+    const web80 = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+    };
+    const probe = httpProbe("http://192.0.2.10:80/");
+    const rowKey = probeSelectionKey(probe.url, probe.artifactId);
+    vi.stubGlobal("fetch", routeSurfaceResponses([web80], [probe], []));
+    const onSelectKey = vi.fn();
+    const surface = (selectedKey: string | undefined) => (
+      <QueryClientProvider client={queryClient}>
+        <EngagementServicesSection
+          engagementId={engagementId}
+          onSelectKey={onSelectKey}
+          selectedKey={selectedKey}
+        />
+      </QueryClientProvider>
+    );
+    const { container, rerender } = render(surface(rowKey));
+    await screen.findByRole("button", { name: "Close inspector" });
+    // Borrow the shared return context through the launcher, then close it.
+    const originBlock = container.querySelector('[data-surface-row^="origin:"]');
+    expect(originBlock instanceof HTMLElement).toBe(true);
+    fireEvent.click(
+      within(originBlock as HTMLElement).getByRole("button", { name: "Discover paths" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog as HTMLElement).getByRole("button", { name: "Close" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    // Close the inspector for the externally opened probe selection.
+    fireEvent.click(screen.getByRole("button", { name: "Close inspector" }));
+    expect(onSelectKey).toHaveBeenCalledWith(undefined);
+    rerender(surface(undefined));
+    await waitFor(() => {
+      const active = document.activeElement;
+      expect(
+        active instanceof HTMLElement
+          ? active.closest("[data-surface-row]")?.getAttribute("data-surface-row")
+          : null,
+      ).toBe(rowKey);
+    });
+  });
 });

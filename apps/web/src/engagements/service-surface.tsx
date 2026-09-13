@@ -186,6 +186,10 @@ export function EngagementServicesSection({
     const returnElement = returnFocusRef.current;
     setLauncher(null);
     returnFocusRef.current = null;
+    // The launcher borrowed the shared return context. Clear it so a later
+    // inspector close falls back to its own selection instead of this
+    // launcher's stale row and scroll position.
+    returnKeyRef.current = undefined;
     const savedY = scrollRestoreRef.current;
     requestAnimationFrame(() => {
       restoreSurfacePosition(savedY, undefined);
