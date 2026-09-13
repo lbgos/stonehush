@@ -175,7 +175,7 @@ describe("secret masking for excerpts", () => {
   });
 
   it("rejects value shapes with a whitespace-only window behind them", () => {
-    // Full 8192-byte lookback with no key candidate: the key may sit beyond
+    // Full bounded lookback with no key candidate: the key may sit beyond
     // the cut no matter which side the separator fell on.
     expect(selectionLooksLikeHiddenAssignmentValue(" ".repeat(8192), "hunter2")).toBe(true);
     expect(selectionLooksLikeHiddenAssignmentValue(" ".repeat(8191) + "= ", "hunter2")).toBe(true);

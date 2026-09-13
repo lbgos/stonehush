@@ -12,11 +12,15 @@ import type { Excerpt } from "@stonehush/contracts";
 export const EXCERPT_RANGE_MAX_BYTES = 8_192 as const;
 export const EXCERPT_SNIPPET_RADIUS_CHARS = 160 as const;
 // Bytes of original evidence read on each side of a requested excerpt range
-// so redaction sees secret wrappers the selection alone would strip. 8192
-// covers the widest bounded policy shape (4096-char key blocks plus
-// markers) with margin; unbounded token values rely on the token-continuity
+// so redaction sees secret wrappers the selection alone would strip. The
+// bound is byte-based while the policy caps are character-based, so it must
+// cover the worst case in bytes: the 4096-unit key-block cap at 3 bytes per
+// unit (BMP multibyte; astral pairs cost fewer bytes per unit) plus markers
+// lands near 12.4KB, and 16384 keeps margin. Any policy-matching secret
+// then keeps its trigger inside the window, and cut lookbacks only reject
+// past the real bound. Unbounded token values rely on the token-continuity
 // check below when this window is cut short of the artifact edge.
-export const EXCERPT_REDACTION_CONTEXT_BYTES = 8_192 as const;
+export const EXCERPT_REDACTION_CONTEXT_BYTES = 16_384 as const;
 // Chars of already-scanned output kept on each side of a search snippet for
 // the same purpose. Snippets reuse this projection, never narrow masking.
 export const EXCERPT_REDACTION_CONTEXT_CHARS = 8_192 as const;
@@ -154,7 +158,7 @@ export function selectionLooksLikeHiddenAssignmentValue(
   // value-shaped. No key candidate is visible, so an assignment key may sit
   // beyond the cut no matter which side the separator fell on. Callers only
   // invoke this with a full cut lookback, where the precondition holds.
-  // Ordinary keeps always show non-whitespace inside 8192 bytes.
+  // Ordinary keeps always show non-whitespace inside the window.
   if (/^["']?\S/.test(requestedText) && /^[\s\uFFFD]*[:=]*[\s\uFFFD]*$/.test(prefixText)) {
     return true;
   }

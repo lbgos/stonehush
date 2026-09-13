@@ -374,32 +374,32 @@ describe("excerpt routes", () => {
   it("rejects mid-token selections whose lookback is cut instead of guessing", async () => {
     const harness = await createHarness();
     const artifactId = "artifact-long-token";
-    const content = `${"x".repeat(9_000)}\nlogin ok\n`;
+    const content = `${"x".repeat(20_000)}\nlogin ok\n`;
     harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
     harness.extraArtifacts.push({ artifactId, kind: "stdout" });
-    // 8500 sits inside a token run with the 8192-byte lookback cut short of
-    // the artifact start: no safe boundary is visible.
-    const rejected = await harness.inject({
-      method: "POST",
-      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
-      payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset: 8500, byteLength: 10 },
-    });
+    const keep = (byteOffset: number, byteLength: number) =>
+      harness.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+        payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
+      });
+
+    // 8500 sits inside a token run but the widened 16384-byte lookback
+    // reaches the artifact start, so no boundary doubt exists: the slice
+    // keeps verbatim instead of rejecting.
+    const inside = await keep(8500, 10);
+    expect(inside.statusCode).toBe(201);
+    expect((inside.json() as { content: string }).content).toBe("x".repeat(10));
+
+    // 17500 sits inside the same run with the lookback genuinely cut:
+    // no safe boundary is visible, so reject instead of guessing.
+    const rejected = await keep(17_500, 10);
     expect(rejected.statusCode).toBe(400);
     expect(rejected.json()).toEqual({ code: "range_rejected" });
 
     // The same artifact stays excerptable from a real boundary.
     const boundaryStart = content.indexOf("login ok");
-    const allowed = await harness.inject({
-      method: "POST",
-      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
-      payload: {
-        runId: RUN_ID,
-        artifactId,
-        stream: "stdout",
-        byteOffset: boundaryStart,
-        byteLength: "login ok".length,
-      },
-    });
+    const allowed = await keep(boundaryStart, "login ok".length);
     expect(allowed.statusCode).toBe(201);
     expect((allowed.json() as { content: string }).content).toBe("login ok");
   });
@@ -407,9 +407,9 @@ describe("excerpt routes", () => {
   it("rejects value-side selections whose assignment key may sit beyond a cut lookback", async () => {
     const harness = await createHarness();
     const artifactId = "artifact-wide-gap";
-    // The credential pattern spans arbitrary whitespace, so full-file
-    // policy would mask this value; the excerpt window cannot see the key
-    // past the 8192-byte lookback.
+    // The credential pattern spans arbitrary whitespace. With the widened
+    // 16384-byte lookback the key at offset 0 stays visible for selections
+    // near offset 9000, so the expanded context masks instead of rejecting.
     const content = `password${" ".repeat(9000)}=hunter2\nlogin page ok\n`;
     harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
     harness.extraArtifacts.push({ artifactId, kind: "stdout" });
@@ -421,26 +421,43 @@ describe("excerpt routes", () => {
       });
 
     const valueSide = content.indexOf("=hunter2");
-    // Narrow masking alone would persist `=hunter2` verbatim with the key
-    // beyond the lookback: reject instead.
+    // Inner flag-style value with its key visible in the window: masked.
     const led = await keep(valueSide, "=hunter2".length);
-    expect(led.statusCode).toBe(400);
-    expect(led.json()).toEqual({ code: "range_rejected" });
+    expect(led.statusCode).toBe(201);
+    expect((led.json() as { content: string }).content).not.toContain("hunter2");
 
-    // One char over, starting right after the visible `=`, leaks the same
-    // way without the fix.
+    // One char over, starting right after the visible `=`: masked too.
     const bare = await keep(valueSide + 1, "hunter2".length);
-    expect(bare.statusCode).toBe(400);
-    expect(bare.json()).toEqual({ code: "range_rejected" });
+    expect(bare.statusCode).toBe(201);
+    expect((bare.json() as { content: string }).content).not.toContain("hunter2");
 
-    // Ordinary text past the same cut still keeps verbatim.
+    // Ordinary text past the same region still keeps verbatim.
     const loginStart = content.indexOf("login page ok");
     const login = await keep(loginStart, "login page ok".length);
     expect(login.statusCode).toBe(201);
     expect((login.json() as { content: string }).content).toBe("login page ok");
   });
 
-  it("rejects JSON colon value sides whose key may sit beyond a cut lookback", async () => {
+  it("rejects =-led value sides past the wider bound", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-wider-gap";
+    // Same shape with the key 17000 bytes back, beyond the widened
+    // lookback: fail closed as before.
+    const content = `password${" ".repeat(17_000)}=hunter2\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const valueSide = content.indexOf("=hunter2");
+    expect(valueSide).toBeGreaterThan(16_384);
+    const led = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset: valueSide, byteLength: "=hunter2".length },
+    });
+    expect(led.statusCode).toBe(400);
+    expect(led.json()).toEqual({ code: "range_rejected" });
+  });
+
+  it("keeps quoted-key JSON past the wider window exactly like policy does", async () => {
     const harness = await createHarness();
     const artifactId = "artifact-json-gap";
     // Wide whitespace including newlines between key and value. Note the
@@ -459,18 +476,21 @@ describe("excerpt routes", () => {
         payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
       });
 
-    // Separator-led selection covering the colon and quoted value.
+    // Separator-led selection covering the colon and quoted value. The
+    // widened window holds the whole artifact, and the quoted key never
+    // matched policy with or without a gap, so this keeps raw exactly as
+    // full-file redaction does: a documented policy limit, not a bypass.
     const colonSide = content.indexOf(': "hunter2-value"');
-    expect(colonSide).toBeGreaterThan(8192);
     const led = await keep(colonSide, ': "hunter2-value"'.length);
-    expect(led.statusCode).toBe(400);
-    expect(led.json()).toEqual({ code: "range_rejected" });
+    expect(led.statusCode).toBe(201);
+    expect((led.json() as { content: string }).content).toContain("hunter2-value");
 
-    // Quoted value right after the visible colon and space.
+    // Quoted value right after the visible colon and space: same policy
+    // limit, kept raw like full-file redaction keeps it.
     const quotedStart = content.indexOf('"hunter2-value"');
     const quoted = await keep(quotedStart, '"hunter2-value"'.length);
-    expect(quoted.statusCode).toBe(400);
-    expect(quoted.json()).toEqual({ code: "range_rejected" });
+    expect(quoted.statusCode).toBe(201);
+    expect((quoted.json() as { content: string }).content).toBe('"hunter2-value"');
 
     // Ordinary evidence past the same cut stays keepable: a bare value
     // after a spaced separator and a quoted string after a comma carry no
@@ -488,11 +508,13 @@ describe("excerpt routes", () => {
   it("masks key-block bodies when the END marker falls beyond the window", async () => {
     const harness = await createHarness();
     const artifactId = "artifact-key-cut";
-    // The END marker sits past the 8192-byte window, so no block span can
-    // cover a body-line selection. Narrow masking alone would persist the
-    // body verbatim.
+    // The END marker sits past the widened window, so no block span can
+    // cover a body-line selection: only the unterminated-BEGIN extension
+    // masks it. Narrow masking alone would persist the body verbatim. (A
+    // 17000-char body also exceeds the 4096-char policy cap, so this pins
+    // the fail-closed extension machinery rather than a policy case.)
     const content =
-      `-----BEGIN RSA PRIVATE KEY-----\n${"B".repeat(9000)}\n-----END RSA PRIVATE KEY-----\n`;
+      `-----BEGIN RSA PRIVATE KEY-----\n${"B".repeat(17_000)}\n-----END RSA PRIVATE KEY-----\n`;
     harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
     harness.extraArtifacts.push({ artifactId, kind: "stdout" });
     const body = await harness.inject({
@@ -506,11 +528,36 @@ describe("excerpt routes", () => {
     expect(bodyJson.redactions).toBeGreaterThan(0);
   });
 
+  it("masks multibyte key bodies whose BEGIN marker the old window hid", async () => {
+    const harness = await createHarness();
+    const artifactId = "artifact-key-multibyte";
+    // 3000 CJK chars fit the 4096-char policy cap (3063 units with
+    // markers) but span 9000 bytes, past the old 8192-byte lookback. The
+    // widened window sees BEGIN, so the block span masks the body.
+    // Byte offset 8501 is char-aligned (32 ASCII bytes plus 2823 CJK chars).
+    const content =
+      `-----BEGIN RSA PRIVATE KEY-----\n${"密".repeat(3000)}\n-----END RSA PRIVATE KEY-----\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const body = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset: 8501, byteLength: 99 },
+    });
+    expect(body.statusCode).toBe(201);
+    const bodyJson = body.json() as { content: string; redactions: number };
+    expect(bodyJson.content).not.toContain("密".repeat(5));
+    expect(bodyJson.redactions).toBeGreaterThan(0);
+  });
+
   it("rejects key-block tails holding an END marker without its BEGIN", async () => {
     const harness = await createHarness();
     const artifactId = "artifact-key-tail";
-    // The block head sits beyond the cut lookback: no span covers the body.
-    const content = `${"M".repeat(9000)}\n-----END RSA PRIVATE KEY-----\ntail\n`;
+    // No BEGIN marker exists anywhere in this file, so full-file policy
+    // misses the tail too. The reject is fail-closed defense beyond policy:
+    // a tail keep past a cut lookback cannot prove its head is absent, and
+    // widening left to a visible BEGIN clears it into masking.
+    const content = `${"M".repeat(18_000)}\n-----END RSA PRIVATE KEY-----\ntail\n`;
     harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
     harness.extraArtifacts.push({ artifactId, kind: "stdout" });
     const tailStart = content.indexOf("-----END");
@@ -555,15 +602,14 @@ describe("excerpt routes", () => {
         url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
         payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
       });
-    // Immediately after the visible `:` the value side cannot be told from
-    // a port keep, so fail closed on the cut.
+    // Immediately after the visible `:` the scheme stays in the widened
+    // window, so the userinfo span masks the value instead of rejecting.
     const valueSide = content.indexOf("SUPERSECRET9");
     const led = await keep(valueSide, "SUPERSECRET9@host.example/path".length);
-    expect(led.statusCode).toBe(400);
-    expect(led.json()).toEqual({ code: "range_rejected" });
+    expect(led.statusCode).toBe(201);
+    expect((led.json() as { content: string }).content).not.toContain("SUPERSECRET9");
 
-    // Percent-encoded split: the password continues past a `%` the
-    // lookback ends with.
+    // Percent-encoded split with the scheme visible: masked the same way.
     const encodedId = "artifact-userinfo-encoded";
     const encoded = `https://user:${"A".repeat(9000)}%20SECRETVALUE@host/x`;
     harness.artifacts.set(encodedId, Buffer.from(encoded, "utf8"));
@@ -575,6 +621,31 @@ describe("excerpt routes", () => {
       payload: {
         runId: RUN_ID,
         artifactId: encodedId,
+        stream: "stdout",
+        byteOffset: splitAt + 1,
+        byteLength: "20SECRETVALUE".length,
+      },
+    });
+    expect(split.statusCode).toBe(201);
+    expect((split.json() as { content: string }).content).not.toContain("SECRETVALUE");
+  });
+
+  it("rejects percent splits past the wider bound", async () => {
+    const harness = await createHarness();
+    // Scheme hidden beyond the widened window: no span, and `%` keeps the
+    // token-continuity reject firing where `:` alone would read a boundary.
+    const artifactId = "artifact-userinfo-far";
+    const encoded = `https://user:${"A".repeat(17_000)}%20SECRETVALUE@host/x`;
+    harness.artifacts.set(artifactId, Buffer.from(encoded, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const splitAt = encoded.indexOf("%20SECRETVALUE");
+    expect(splitAt).toBeGreaterThan(16_384);
+    const split = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: {
+        runId: RUN_ID,
+        artifactId,
         stream: "stdout",
         byteOffset: splitAt + 1,
         byteLength: "20SECRETVALUE".length,
@@ -596,31 +667,46 @@ describe("excerpt routes", () => {
           payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
         });
     };
-    // Case 1: `password` plus 9000 spaces plus `= hunter2`, keep [9010, 7).
-    const content1 = `password${" ".repeat(9000)}= hunter2\ncount = 42\n`;
+    // Cases use 17000-byte gaps, past the widened 16384-byte lookback, so
+    // the whole-window rule still fails closed beyond the new bound.
+    // Case 1: `password` plus gap plus `= hunter2`, keep [17010, 7).
+    const content1 = `password${" ".repeat(17_000)}= hunter2\ncount = 42\n`;
     const keep1 = await keepOn("artifact-gap-1", content1);
-    const refused1 = await keep1(9010, 7);
+    const refused1 = await keep1(17_010, 7);
     expect(refused1.statusCode).toBe(400);
     expect(refused1.json()).toEqual({ code: "range_rejected" });
     // Case 2: same shape with a colon separator.
-    const keep2 = await keepOn("artifact-gap-2", `password${" ".repeat(9000)}: hunter2\n`);
-    const refused2 = await keep2(9010, 7);
+    const keep2 = await keepOn("artifact-gap-2", `password${" ".repeat(17_000)}: hunter2\n`);
+    const refused2 = await keep2(17_010, 7);
     expect(refused2.statusCode).toBe(400);
     expect(refused2.json()).toEqual({ code: "range_rejected" });
     // Case 3: key and separator both beyond the window.
-    const keep3 = await keepOn("artifact-gap-3", `password =${" ".repeat(9000)}hunter2\n`);
-    const refused3 = await keep3(9010, 7);
+    const keep3 = await keepOn("artifact-gap-3", `password =${" ".repeat(17_000)}hunter2\n`);
+    const refused3 = await keep3(17_010, 7);
     expect(refused3.statusCode).toBe(400);
     expect(refused3.json()).toEqual({ code: "range_rejected" });
     // Case 4: quoted value with a hidden colon.
-    const keep4 = await keepOn("artifact-gap-4", `password :${" ".repeat(9000)}"hunter2-value"\n`);
-    const refused4 = await keep4(9010, '"hunter2-value"'.length);
+    const keep4 = await keepOn("artifact-gap-4", `password :${" ".repeat(17_000)}"hunter2-value"\n`);
+    const refused4 = await keep4(17_010, '"hunter2-value"'.length);
     expect(refused4.statusCode).toBe(400);
     expect(refused4.json()).toEqual({ code: "range_rejected" });
+    // Separator-led keeps past the bound fail closed too.
+    const keep5 = await keepOn("artifact-gap-5", `password${" ".repeat(17_000)}: hunter2\n`);
+    const ledColon = await keep5(17_008, ": hunter2".length);
+    expect(ledColon.statusCode).toBe(400);
+    expect(ledColon.json()).toEqual({ code: "range_rejected" });
+    const keep6 = await keepOn("artifact-gap-6", `password${" ".repeat(17_000)}:hunter2\n`);
+    const adjacent = await keep6(17_009, "hunter2".length);
+    expect(adjacent.statusCode).toBe(400);
+    expect(adjacent.json()).toEqual({ code: "range_rejected" });
+    const keep7 = await keepOn("artifact-gap-7", `password${" ".repeat(17_000)}: "v"\n`);
+    const quotedLed = await keep7(17_010, '"v"'.length);
+    expect(quotedLed.statusCode).toBe(400);
+    expect(quotedLed.json()).toEqual({ code: "range_rejected" });
 
     // Ordinary twins in the same cut region stay keepable: the `count`
     // key is visible inside the window, so no hidden-key doubt exists.
-    const twinStart = content1.indexOf("42", 9018);
+    const twinStart = content1.indexOf("42", 17_018);
     const twin = await keep1(twinStart, 2);
     expect(twin.statusCode).toBe(201);
     expect((twin.json() as { content: string }).content).toBe("42");
@@ -938,6 +1024,27 @@ describe("excerpt routes", () => {
     expect(body.matches[0]?.snippet).toContain("[redacted]");
     expect(body.matches[0]?.snippet).not.toContain("supersecret");
     expect(body.matches[0]?.redactions).toBe(1);
+  });
+
+  it("reports exact byte offsets for matches after multibyte text", async () => {
+    const harness = await createHarness();
+    // Snippet protection shares the excerpt projection over char offsets,
+    // so multibyte text must not shift the published byte provenance.
+    const head = "prefix-登录\n";
+    const content = `${head}flag{snippet-secret}\n`;
+    harness.artifacts.set(ARTIFACT_ID, Buffer.from(content, "utf8"));
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=snippet-secret`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as {
+      matches: { snippet: string; byteOffset: number; byteLength: number }[];
+    };
+    expect(body.matches).toHaveLength(1);
+    expect(body.matches[0]?.snippet).not.toContain("snippet-secret");
+    expect(body.matches[0]?.byteOffset).toBe(Buffer.byteLength(`${head}flag{`, "utf8"));
+    expect(body.matches[0]?.byteLength).toBe(Buffer.byteLength("snippet-secret", "utf8"));
   });
 });
 
