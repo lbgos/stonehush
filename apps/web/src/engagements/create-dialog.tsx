@@ -385,7 +385,12 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
       // instead of creating a duplicate engagement.
       let progress = started;
       if (progress === null) {
-        const engagement: Engagement = await createEngagement.mutateAsync(parsed.data);
+        // Targets ride along in the creation intent so a new target means a
+        // new engagement instead of replaying an abandoned create.
+        const engagement: Engagement = await createEngagement.mutateAsync({
+          ...parsed.data,
+          targets,
+        });
         storeLastEngagementId(browserStorage(), engagement.id);
         progress = {
           engagement,
@@ -690,7 +695,10 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                 name="challengeFile"
                 type="file"
                 accept=".txt,.md,.markdown,.text,text/plain"
-                disabled={pending}
+                // Locked once the engagement exists: creation already stored
+                // the Challenge file description line, so a replacement before
+                // retry would persist notes the description does not name.
+                disabled={pending || retained}
                 className="min-h-11 w-full text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
                 onChange={onChallengeFile}
               />
@@ -700,7 +708,7 @@ export function CreateEngagementDialog({ onOpenChange, open }: CreateEngagementD
                   <Button
                     type="button"
                     variant="quiet"
-                    disabled={pending}
+                    disabled={pending || retained}
                     onClick={(event) => {
                       event.preventDefault();
                       clearChallenge();

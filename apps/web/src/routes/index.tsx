@@ -101,7 +101,12 @@ function OpeningScreen() {
     setStarting(true);
     // Fingerprints for this attempt. The holders return the same key for an
     // unchanged body, so a lost response replays instead of duplicating.
-    const engagementIntent = requestFingerprint(validated.data);
+    // Targets ride along in the engagement intent so a new target after
+    // discard means a new engagement instead of replaying the abandoned one.
+    const engagementIntent = requestFingerprint({
+      ...validated.data,
+      targets: parsedTargets.targets,
+    });
     let attempted: Engagement | null = started;
     try {
       let engagement = started;

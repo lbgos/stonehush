@@ -435,6 +435,52 @@ describe("opening screen", () => {
     ).toHaveLength(1);
   });
 
+  it("creates a fresh engagement when targets change after a lost create response", async () => {
+    const base = openingHandler();
+    let createCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === "/api/v1/engagements" && init?.method === "POST") {
+        createCalls += 1;
+        // First attempt may have committed server side but its response never
+        // arrived. The holder keeps its key for an identical retry.
+        if (createCalls === 1) throw new Error("offline");
+        return base(url, init);
+      }
+      return base(url, init);
+    });
+    await renderOpening();
+
+    await screen.findByLabelText("Target");
+    const form = screen.getByRole("button", { name: "Start scan" }).closest("form");
+    if (!form) throw new Error("Start scan form is missing.");
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Same name" } });
+    fireEvent.change(screen.getByLabelText("Target"), { target: { value: "192.0.2.10" } });
+    fireEvent.submit(form);
+    expect(await screen.findByText("The engagement request failed.")).toBeTruthy();
+
+    // Retry with the same name but a new target. The abandoned create must not
+    // be replayed onto the new target.
+    fireEvent.change(screen.getByLabelText("Target"), { target: { value: "198.51.100.10" } });
+    fireEvent.submit(form);
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+        ),
+      ).toHaveLength(2),
+    );
+    const createPosts = fetchMock.mock.calls.filter(
+      ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+    );
+    const keys = createPosts.map(
+      ([, init]) => (init?.headers as Record<string, string>)["Idempotency-Key"],
+    );
+    expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(keys[1]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(keys[0]).not.toBe(keys[1]);
+  });
+
   it("offers Retry status when the control plane store is not ready", async () => {
     const base = openingHandler();
     stubFetch((url, init) => {

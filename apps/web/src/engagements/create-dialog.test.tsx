@@ -749,12 +749,22 @@ describe("CreateEngagementDialog start", () => {
     });
     await renderDialog();
 
+    const file = new File(["find the flag"], "brief.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText(/Challenge file/), { target: { files: [file] } });
+    expect(await screen.findByText("brief.txt")).toBeTruthy();
     fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
     submitStart();
 
     expect(await screen.findByText("Storage is busy. Try again.")).toBeTruthy();
     expect((screen.getByLabelText(/Name/) as HTMLInputElement).disabled).toBe(true);
     expect((screen.getByLabelText(/Type/) as HTMLSelectElement).disabled).toBe(true);
+    // The attached file is persisted metadata too: creation stored its name in
+    // the description, so it stays locked alongside the other saved options.
+    expect((screen.getByLabelText(/Challenge file/) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "Remove" })).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Remove" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expect(await screen.findByText(/is created/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Open engagement" })).toBeTruthy();
   });
@@ -982,6 +992,54 @@ describe("CreateEngagementDialog start", () => {
       expectedEngagementRevision: 1,
       expectedActiveScopeRevisionId: null,
     });
+  });
+
+  it("creates a fresh engagement when targets change after a lost create response", async () => {
+    let createCalls = 0;
+    const fetchMock = stubFetch((url, init) => {
+      if (url === "/api/v1/engagements" && init?.method === "POST") {
+        createCalls += 1;
+        // First attempt commits server side but its response is lost.
+        if (createCalls === 1) return Promise.reject(new Error("offline"));
+        return response(createdEngagement("Same name"), 201);
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/actions` && init?.method === "POST") {
+        return response(queuedAction(), 201);
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    await renderDialog();
+
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: "Same name" } });
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "192.0.2.10" } });
+    submitStart();
+    // Both the mutation error and the submit error report the lost response.
+    expect(await screen.findAllByText("The engagement request failed.")).toHaveLength(2);
+
+    // Close and reopen, then start again with the same name but a new target.
+    // The abandoned create must not be replayed onto the new target.
+    fireEvent.click(screen.getByRole("button", { name: "close-for-test" }));
+    fireEvent.click(screen.getByRole("button", { name: "open-for-test" }));
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: "Same name" } });
+    fireEvent.change(screen.getByLabelText(/Targets/), { target: { value: "198.51.100.10" } });
+    submitStart();
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+        ),
+      ).toHaveLength(2),
+    );
+    const createPosts = fetchMock.mock.calls.filter(
+      ([url, init]) => url === "/api/v1/engagements" && init?.method === "POST",
+    );
+    const keys = createPosts.map(
+      ([, init]) => (init?.headers as Record<string, string>)["Idempotency-Key"],
+    );
+    expect(keys[0]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(keys[1]).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(keys[0]).not.toBe(keys[1]);
   });
 
   it("reveals More options when a nested field fails validation", async () => {

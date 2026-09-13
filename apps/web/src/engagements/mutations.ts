@@ -239,15 +239,30 @@ export function useCreateEngagementMutation() {
   const queryClient = useQueryClient();
   const keys = useRef(createIntentKeyHolder());
 
+  // The creation intent covers the first scan targets alongside the stored
+  // metadata. Two starts that differ only in targets are different intents:
+  // reopening after a lost response with a new target must create a fresh
+  // engagement instead of replaying the abandoned one. Identical retries keep
+  // the same key so a committed create still replays.
+  const keyFor = (body: CreateEngagementInput, targets?: readonly string[]) =>
+    keys.current.keyFor(
+      requestFingerprint(targets === undefined ? body : { ...body, targets: [...targets] }),
+    );
+  const resetKey = (body: CreateEngagementInput, targets?: readonly string[]) =>
+    keys.current.reset(
+      requestFingerprint(targets === undefined ? body : { ...body, targets: [...targets] }),
+    );
+
   return useMutation({
-    mutationFn: (input: CreateEngagementInput) => {
-      const body = CreateEngagementRequestSchema.parse(input);
-      const intent = requestFingerprint(body);
-      return createEngagementRequest(body, keys.current.keyFor(intent));
+    mutationFn: (input: CreateEngagementInput & { targets?: readonly string[] }) => {
+      const { targets, ...rest } = input;
+      const body = CreateEngagementRequestSchema.parse(rest);
+      return createEngagementRequest(body, keyFor(body, targets));
     },
     onSuccess: (engagement, input) => {
       upsertEngagementInCache(queryClient, engagement);
-      keys.current.reset(requestFingerprint(CreateEngagementRequestSchema.parse(input)));
+      const { targets, ...rest } = input;
+      resetKey(CreateEngagementRequestSchema.parse(rest), targets);
     },
   });
 }
