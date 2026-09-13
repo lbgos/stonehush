@@ -528,4 +528,40 @@ describe("EngagementServicesSection", () => {
       expect(container.querySelector(sharedOrigin)).toBeNull();
     });
   });
+
+  it("renders one origin block for repeated artifacts sharing an endpoint", async () => {
+    const first = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+      artifactId: "artifact-1",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const second = {
+      ...serviceA,
+      address: "192.0.2.10",
+      port: 80,
+      serviceName: "http",
+      hostname: null,
+      artifactId: "artifact-2",
+      artifactDigest: `sha256:${"b".repeat(64)}`,
+    };
+    vi.stubGlobal(
+      "fetch",
+      routeSurfaceResponses([first, second], [httpProbe("http://192.0.2.10:80/")], []),
+    );
+    const { container } = renderSurface();
+    const label = "Scheme for http://192.0.2.10:80";
+    expect(await screen.findByLabelText(label)).toBeTruthy();
+    expect(screen.queryAllByLabelText(label)).toHaveLength(1);
+    const rows = [...container.querySelectorAll("[data-surface-row]")].map((node) =>
+      node.getAttribute("data-surface-row"),
+    );
+    expect(new Set(rows).size).toBe(rows.length);
+    // Both artifacts keep their own service row.
+    expect(rows).toContain(serviceSelectionKey("192.0.2.10", 80, "tcp", "artifact-1"));
+    expect(rows).toContain(serviceSelectionKey("192.0.2.10", 80, "tcp", "artifact-2"));
+  });
 });

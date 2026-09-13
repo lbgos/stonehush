@@ -568,6 +568,10 @@ function TargetGroup({
   target: string;
 }) {
   const hostname = services.find((service) => service.hostname !== null)?.hostname ?? null;
+  // Repeated artifacts from several runs share one endpoint. Each observed
+  // origin renders once so control ids and row keys stay unique; every
+  // artifact still keeps its own service row.
+  const renderedOriginKeys = new Set<string>();
   return (
     <div>
       <div className="flex min-h-10 flex-wrap items-baseline justify-between gap-x-3 px-3 pt-2">
@@ -592,7 +596,14 @@ function TargetGroup({
             ffufResults,
             allServices,
           );
-          const originGroups = groupServiceOrigins(service, serviceProbes, servicePaths);
+          const originGroups = groupServiceOrigins(service, serviceProbes, servicePaths).filter(
+            (group) => {
+              const key = observedOriginKey(group.host, group.port, group.scheme);
+              if (renderedOriginKeys.has(key)) return false;
+              renderedOriginKeys.add(key);
+              return true;
+            },
+          );
           return (
             <div key={`${service.address}:${String(service.port)}:${service.protocol}:${service.artifactId}`}>
               <ServiceRow
