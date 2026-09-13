@@ -158,7 +158,7 @@ describe("excerpt persistence", () => {
 
   it("rejects multibyte content past the byte bound before inserting", () => {
     // 8200 CJK chars pass the 16384-character schema bound but encode to
-    // 16400 bytes, past the 16384-byte column constraint. The repository
+    // 24600 bytes, past the 16384-byte column constraint. The repository
     // must refuse before the CHECK fails the insert.
     const { engagements, excerpts } = createFixture();
     const engagementId = createEngagement(engagements);
