@@ -65,14 +65,27 @@ const reservedIpRule = {
   },
 };
 
+const lateScopeRule = {
+  id: "late-ip",
+  kind: "ip" as const,
+  target: {
+    kind: "ip" as const,
+    normalizationProfile: "d1-v1" as const,
+    family: 4 as const,
+    address: "192.0.2.10",
+    zone: null,
+  },
+};
+
 async function createEngagement(
   app: ReturnType<typeof buildApp>,
   autoContinueWarnings = false,
+  keySuffix?: string,
 ) {
   const response = await app.inject({
     method: "POST",
     url: "/api/v1/engagements",
-    headers: headers(key(`eng-${autoContinueWarnings ? "auto" : "man"}`)),
+    headers: headers(key(keySuffix ?? `eng-${autoContinueWarnings ? "auto" : "man"}`)),
     payload: {
       name: "Target lab",
       kind: "lab",
@@ -981,5 +994,379 @@ describe("action query and mutation routes", () => {
         })
       ).body,
     ).toBe('{"code":"action_not_found"}');
+  });
+
+  it("continues a paused run from the current warning event only", async () => {
+    const { app, engagementRepository } = await fixture();
+    const engagement = await createEngagement(app);
+    const base = `/api/v1/engagements/${engagement.id}`;
+    const scope = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/scope-revisions`,
+        headers: headers(key("late-scope")),
+        payload: { expectedRevision: 1, rules: [lateScopeRule] },
+      })
+    ).json();
+    const planned = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/actions`,
+        headers: headers(key("late-plan")),
+        payload: {
+          expectedEngagementRevision: 2,
+          expectedActiveScopeRevisionId: scope.id,
+          targets: ["192.0.2.10"],
+        },
+      })
+    ).json();
+    const actionId = planned.action.actionId as string;
+    const binding = planned.action.snapshots[0].binding as string;
+    const addition = { origin: "https://other.test:443", resolvedAddress: "192.0.2.41" };
+    const activated = engagementRepository.activateAction({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: planned.revision,
+    });
+    if (!activated.ok) throw new Error(activated.error.code);
+    const paused = engagementRepository.recordLateWarning({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: activated.value.revision,
+      snapshotVersion: 1,
+      snapshotBinding: binding,
+      reasonCodes: ["risk_tier_t2"],
+      addition,
+      pendingEventId: 7,
+      occurredAt: "2026-08-12T12:14:00.000Z",
+    });
+    if (!paused.ok) throw new Error(paused.error.code);
+    expect(paused.value.action.state).toBe("active_paused_for_warning");
+
+    const lateUrl = `${base}/actions/${actionId}/continue-late-warning`;
+    const stale = await app.inject({
+      method: "POST",
+      url: lateUrl,
+      headers: headers(key("late-stale")),
+      payload: {
+        expectedRevision: paused.value.revision,
+        snapshotVersion: 1,
+        snapshotBinding: binding,
+        pendingEventId: 8,
+      },
+    });
+    expect(stale).toMatchObject({
+      statusCode: 409,
+      body: '{"code":"invalid_run_transition"}',
+    });
+    // A stale event cannot resume the run: the stored revision is unchanged.
+    expect(
+      (await app.inject({ method: "GET", url: `${base}/actions/${actionId}` })).json().revision,
+    ).toBe(paused.value.revision);
+
+    const continued = await app.inject({
+      method: "POST",
+      url: lateUrl,
+      headers: headers(key("late-continue")),
+      payload: {
+        expectedRevision: paused.value.revision,
+        snapshotVersion: 1,
+        snapshotBinding: binding,
+        pendingEventId: 7,
+      },
+    });
+    expect(continued.statusCode).toBe(200);
+    expect(continued.json().action).toMatchObject({
+      state: "active",
+      runState: "running",
+      resumeRequested: true,
+      pendingWarning: null,
+      warningAcknowledgment: {
+        source: "operator_continue",
+        pendingEventId: 7,
+        reasonCodes: ["risk_tier_t2"],
+      },
+      coveredDestinations: [addition],
+    });
+
+    // A duplicate Continue after the warning is gone cannot resume anything.
+    const again = await app.inject({
+      method: "POST",
+      url: lateUrl,
+      headers: headers(key("late-again")),
+      payload: {
+        expectedRevision: continued.json().revision,
+        snapshotVersion: 1,
+        snapshotBinding: binding,
+        pendingEventId: 7,
+      },
+    });
+    expect(again).toMatchObject({
+      statusCode: 409,
+      body: '{"code":"invalid_action_transition"}',
+    });
+
+    const detail = await app.inject({ method: "GET", url: base });
+    expect(detail.json()).toMatchObject({
+      engagement: { activeScopeRevisionId: scope.id, revision: 2 },
+      activeScopeRevision: { id: scope.id, rules: [lateScopeRule] },
+    });
+  });
+
+  it("rejects late-warning continue across ownership, archive, and lifecycle boundaries", async () => {
+    const { app, engagementRepository } = await fixture();
+    const engagement = await createEngagement(app);
+    const base = `/api/v1/engagements/${engagement.id}`;
+    const scope = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/scope-revisions`,
+        headers: headers(key("late-bound-scope")),
+        payload: { expectedRevision: 1, rules: [lateScopeRule] },
+      })
+    ).json();
+    const planned = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/actions`,
+        headers: headers(key("late-bound-plan")),
+        payload: {
+          expectedEngagementRevision: 2,
+          expectedActiveScopeRevisionId: scope.id,
+          targets: ["192.0.2.10"],
+        },
+      })
+    ).json();
+    const actionId = planned.action.actionId as string;
+    const binding = planned.action.snapshots[0].binding as string;
+    const lateUrl = `${base}/actions/${actionId}/continue-late-warning`;
+    const latePayload = (overrides: Record<string, unknown> = {}) => ({
+      expectedRevision: planned.revision,
+      snapshotVersion: 1,
+      snapshotBinding: binding,
+      pendingEventId: 7,
+      ...overrides,
+    });
+
+    // No pending warning exists yet: the pre-run action cannot take this path.
+    expect(
+      await app.inject({
+        method: "POST",
+        url: lateUrl,
+        headers: headers(key("late-no-warning")),
+        payload: latePayload(),
+      }),
+    ).toMatchObject({ statusCode: 409, body: '{"code":"invalid_action_transition"}' });
+
+    // Malformed bodies never reach the transition.
+    expect(
+      await app.inject({
+        method: "POST",
+        url: lateUrl,
+        headers: headers(key("late-no-event")),
+        payload: {
+          expectedRevision: planned.revision,
+          snapshotVersion: 1,
+          snapshotBinding: binding,
+        },
+      }),
+    ).toMatchObject({ statusCode: 400, body: '{"code":"invalid_request"}' });
+
+    // A foreign engagement never resolves another engagement's action.
+    const other = await createEngagement(app, false, "eng-other");
+    expect(
+      await app.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${other.id}/actions/${actionId}/continue-late-warning`,
+        headers: headers(key("late-foreign")),
+        payload: latePayload(),
+      }),
+    ).toMatchObject({ statusCode: 404, body: '{"code":"action_not_found"}' });
+    expect(
+      await app.inject({
+        method: "POST",
+        url: `${base}/actions/20000000-0000-4000-8000-000000000099/continue-late-warning`,
+        headers: headers(key("late-unknown")),
+        payload: latePayload(),
+      }),
+    ).toMatchObject({ statusCode: 404, body: '{"code":"action_not_found"}' });
+
+    const activated = engagementRepository.activateAction({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: planned.revision,
+    });
+    if (!activated.ok) throw new Error(activated.error.code);
+    const paused = engagementRepository.recordLateWarning({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: activated.value.revision,
+      snapshotVersion: 1,
+      snapshotBinding: binding,
+      reasonCodes: ["risk_tier_t2"],
+      addition: { origin: "https://other.test:443", resolvedAddress: "192.0.2.41" },
+      pendingEventId: 7,
+      occurredAt: "2026-08-12T12:14:00.000Z",
+    });
+    if (!paused.ok) throw new Error(paused.error.code);
+
+    // A mismatched snapshot binding cannot resume the run.
+    expect(
+      await app.inject({
+        method: "POST",
+        url: lateUrl,
+        headers: headers(key("late-binding")),
+        payload: latePayload({
+          expectedRevision: paused.value.revision,
+          snapshotBinding: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        }),
+      }),
+    ).toMatchObject({ statusCode: 409, body: '{"code":"snapshot_binding_mismatch"}' });
+
+    // A concurrent cancel wins: cancelling a running paused action requests
+    // run cancellation, and the paused warning can no longer be continued.
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `${base}/actions/${actionId}/cancel`,
+      headers: headers(key("late-cancel")),
+      payload: { expectedRevision: paused.value.revision },
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(
+      await app.inject({
+        method: "POST",
+        url: lateUrl,
+        headers: headers(key("late-after-cancel")),
+        payload: latePayload({ expectedRevision: cancelled.json().revision }),
+      }),
+    ).toMatchObject({ statusCode: 409, body: '{"code":"invalid_run_transition"}' });
+  });
+
+  it("replays an identical late-warning continue without a second resume", async () => {
+    const { app, engagementRepository } = await fixture();
+    const engagement = await createEngagement(app);
+    const base = `/api/v1/engagements/${engagement.id}`;
+    const scope = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/scope-revisions`,
+        headers: headers(key("late-replay-scope")),
+        payload: { expectedRevision: 1, rules: [lateScopeRule] },
+      })
+    ).json();
+    const planned = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/actions`,
+        headers: headers(key("late-replay-plan")),
+        payload: {
+          expectedEngagementRevision: 2,
+          expectedActiveScopeRevisionId: scope.id,
+          targets: ["192.0.2.10"],
+        },
+      })
+    ).json();
+    const actionId = planned.action.actionId as string;
+    const binding = planned.action.snapshots[0].binding as string;
+    const activated = engagementRepository.activateAction({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: planned.revision,
+    });
+    if (!activated.ok) throw new Error(activated.error.code);
+    const paused = engagementRepository.recordLateWarning({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: activated.value.revision,
+      snapshotVersion: 1,
+      snapshotBinding: binding,
+      reasonCodes: ["risk_tier_t2"],
+      addition: { origin: "https://other.test:443", resolvedAddress: "192.0.2.41" },
+      pendingEventId: 7,
+      occurredAt: "2026-08-12T12:14:00.000Z",
+    });
+    if (!paused.ok) throw new Error(paused.error.code);
+    const lateRequest = {
+      method: "POST" as const,
+      url: `${base}/actions/${actionId}/continue-late-warning`,
+      headers: headers(key("late-replay")),
+      payload: {
+        expectedRevision: paused.value.revision,
+        snapshotVersion: 1,
+        snapshotBinding: binding,
+        pendingEventId: 7,
+      },
+    };
+    const first = await app.inject(lateRequest);
+    expect(first.statusCode).toBe(200);
+    const replay = await app.inject(lateRequest);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.body).toBe(first.body);
+  });
+
+  it("refuses late-warning continue on archived engagements", async () => {
+    const { app, engagementRepository } = await fixture();
+    const engagement = await createEngagement(app);
+    const base = `/api/v1/engagements/${engagement.id}`;
+    const scope = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/scope-revisions`,
+        headers: headers(key("late-arch-scope")),
+        payload: { expectedRevision: 1, rules: [lateScopeRule] },
+      })
+    ).json();
+    const planned = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/actions`,
+        headers: headers(key("late-arch-plan")),
+        payload: {
+          expectedEngagementRevision: 2,
+          expectedActiveScopeRevisionId: scope.id,
+          targets: ["192.0.2.10"],
+        },
+      })
+    ).json();
+    const actionId = planned.action.actionId as string;
+    const binding = planned.action.snapshots[0].binding as string;
+    const activated = engagementRepository.activateAction({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: planned.revision,
+    });
+    if (!activated.ok) throw new Error(activated.error.code);
+    const paused = engagementRepository.recordLateWarning({
+      engagementId: engagement.id,
+      actionId,
+      expectedRevision: activated.value.revision,
+      snapshotVersion: 1,
+      snapshotBinding: binding,
+      reasonCodes: ["risk_tier_t2"],
+      addition: { origin: "https://other.test:443", resolvedAddress: "192.0.2.41" },
+      pendingEventId: 7,
+      occurredAt: "2026-08-12T12:14:00.000Z",
+    });
+    if (!paused.ok) throw new Error(paused.error.code);
+    const archived = await app.inject({
+      method: "POST",
+      url: `${base}/archive`,
+      headers: headers(key("late-arch")),
+      payload: { expectedRevision: 2 },
+    });
+    expect(archived.statusCode).toBe(200);
+    expect(
+      await app.inject({
+        method: "POST",
+        url: `${base}/actions/${actionId}/continue-late-warning`,
+        headers: headers(key("late-arch-continue")),
+        payload: {
+          expectedRevision: paused.value.revision,
+          snapshotVersion: 1,
+          snapshotBinding: binding,
+          pendingEventId: 7,
+        },
+      }),
+    ).toMatchObject({ statusCode: 409, body: '{"code":"engagement_archived"}' });
   });
 });

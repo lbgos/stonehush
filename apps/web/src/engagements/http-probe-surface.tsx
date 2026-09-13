@@ -2,6 +2,7 @@ import type { HttpProbeProjected } from "@stonehush/contracts";
 import { LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
 
 import { formatEngagementTimestamp } from "./format.js";
+import { isProbeRowSelected, probeSelectionKey, type ExtraRowActions } from "./inspector.js";
 import { useEngagementHttpProbesQuery } from "./query.js";
 
 function sortProbes(probes: readonly HttpProbeProjected[]): HttpProbeProjected[] {
@@ -17,7 +18,17 @@ function formatStatus(probe: HttpProbeProjected): string {
   return String(probe.status);
 }
 
-export function EngagementHttpProbesSection({ engagementId }: { engagementId: string }) {
+export function EngagementHttpProbesSection({
+  engagementId,
+  extraRowActions,
+  onSelectKey,
+  selectedKey,
+}: {
+  engagementId: string;
+  extraRowActions?: ExtraRowActions | undefined;
+  onSelectKey?: ((key: string) => void) | undefined;
+  selectedKey?: string | undefined;
+}) {
   const probesQuery = useEngagementHttpProbesQuery(engagementId);
   const hasData = probesQuery.data !== undefined;
   const retry = () => void probesQuery.refetch();
@@ -67,7 +78,14 @@ export function EngagementHttpProbesSection({ engagementId }: { engagementId: st
             <span>Observed</span>
           </div>
           {probes.map((probe) => (
-            <ProbeRow key={`${probe.url}:${probe.artifactId}`} engagementId={engagementId} probe={probe} />
+            <ProbeRow
+              key={`${probe.url}:${probe.artifactId}`}
+              engagementId={engagementId}
+              extraRowActions={extraRowActions}
+              onSelectKey={onSelectKey}
+              probe={probe}
+              selected={isProbeRowSelected(probe, selectedKey, probes)}
+            />
           ))}
         </div>
       </section>
@@ -102,17 +120,44 @@ function ProbesLoadingState() {
   );
 }
 
-function ProbeRow({ engagementId, probe }: { engagementId: string; probe: HttpProbeProjected }) {
+function ProbeRow({
+  engagementId,
+  extraRowActions,
+  onSelectKey,
+  probe,
+  selected,
+}: {
+  engagementId: string;
+  extraRowActions: ExtraRowActions | undefined;
+  onSelectKey: ((key: string) => void) | undefined;
+  probe: HttpProbeProjected;
+  selected: boolean;
+}) {
   const observedLabel = formatEngagementTimestamp(probe.observedAt);
   const downloadHref = `/api/v1/engagements/${engagementId}/artifacts/${probe.artifactId}/content`;
+  const key = probeSelectionKey(probe.url, probe.artifactId);
 
   return (
-    <div className="border-b border-border last:border-b-0">
+    <div className="border-b border-border last:border-b-0" data-surface-row={key}>
       <div className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1.6fr)_72px_minmax(0,1fr)_150px] md:items-start md:gap-3">
         <div className="min-w-0">
-          <div className="truncate font-mono text-[13px] font-semibold tracking-[-0.02em]" title={probe.url}>
-            {probe.url}
-          </div>
+          {onSelectKey === undefined ? (
+            <div className="truncate font-mono text-[13px] font-semibold tracking-[-0.02em]" title={probe.url}>
+              {probe.url}
+            </div>
+          ) : (
+            <button
+              type="button"
+              aria-current={selected ? "true" : undefined}
+              onClick={() => onSelectKey(key)}
+              className={`block w-full truncate text-left font-mono text-[13px] font-semibold tracking-[-0.02em] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring ${
+                selected ? "text-primary underline" : ""
+              }`}
+              title={probe.url}
+            >
+              {probe.url}
+            </button>
+          )}
           <div className="truncate font-mono text-[11px] text-muted-foreground" title={probe.finalUrl}>
             {probe.finalUrl === probe.url ? `${probe.hops.length} hop${probe.hops.length === 1 ? "" : "s"}` : `-> ${probe.finalUrl}`}
           </div>
@@ -130,13 +175,28 @@ function ProbeRow({ engagementId, probe }: { engagementId: string; probe: HttpPr
           <span className="truncate font-mono text-[11px] text-muted-foreground" title={observedLabel}>
             {observedLabel}
           </span>
-          <a
-            className="inline-flex min-h-11 items-center text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-            href={downloadHref}
-            download
-          >
-            Raw evidence
-          </a>
+          <span className="flex flex-wrap items-center gap-x-3">
+            <a
+              className="inline-flex min-h-11 items-center text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+              href={downloadHref}
+              download
+            >
+              Raw evidence
+            </a>
+            {onSelectKey === undefined ? null : (
+              <button
+                type="button"
+                aria-label={`Inspect ${probe.url}`}
+                onClick={() => onSelectKey(key)}
+                className="inline-flex min-h-11 items-center text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+              >
+                Inspect
+              </button>
+            )}
+          </span>
+          {extraRowActions === undefined ? null : (
+            <span>{extraRowActions({ kind: "probe", key, title: probe.url, target: probe.url })}</span>
+          )}
         </div>
       </div>
       <details className="group mx-3 mb-3 rounded-md border border-border">
