@@ -676,6 +676,47 @@ describe("excerpt routes", () => {
     expect(body.searchedBytes).toBe(262_143);
     expect(body.scanCapped).toBe(true);
   });
+
+  it("masks the whole snippet when the scan cap cuts inside a token at the edge", async () => {
+    const harness = await createHarness();
+    // `flag{supersecret` ends exactly at the 262144-byte budget with more
+    // bytes beyond it, and the closing brace stays unread. The context
+    // window reaches the scanned end, so the character past the edge is
+    // unknown; a token run there must mask instead of leaking `supersecret`.
+    // Geometry: the 17-char tail ends at the cut, so `supersecret` starts at
+    // 262133; minus the 160-char radius and 8192-char context the context
+    // window starts at 253781. The planted newline there keeps the left
+    // edge clean, so only the right edge is under test.
+    const tail = " flag{supersecret";
+    const head = Buffer.from("login\n", "utf8");
+    const contextStart = 253_781;
+    const padFirst = contextStart - head.length;
+    const padSecond = 262_144 - head.length - padFirst - 1 - tail.length;
+    const bytes = Buffer.concat([
+      head,
+      Buffer.alloc(padFirst, 0x41),
+      Buffer.from("\n", "utf8"),
+      Buffer.alloc(padSecond, 0x41),
+      Buffer.from(tail, "utf8"),
+      Buffer.from("} plus trailing bytes past the budget", "utf8"),
+    ]);
+    expect(bytes.length).toBeGreaterThan(262_144);
+    harness.artifacts.set(ARTIFACT_ID, bytes);
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=supersecret`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as {
+      matches: { snippet: string; redactions: number }[];
+      scanCapped: boolean;
+    };
+    expect(body.scanCapped).toBe(true);
+    expect(body.matches).toHaveLength(1);
+    expect(body.matches[0]?.snippet).toContain("[redacted]");
+    expect(body.matches[0]?.snippet).not.toContain("supersecret");
+    expect(body.matches[0]?.redactions).toBe(1);
+  });
 });
 
 describe("attachment routes", () => {

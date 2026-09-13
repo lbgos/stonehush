@@ -247,54 +247,67 @@ export class ExcerptRepository {
   }
 
   createAttachment(input: CreateAttachmentInput): ExcerptResult<Attachment> {
-    try {
-      if (!this.engagementExists(input.engagementId)) {
-        return { ok: false, error: { code: "engagement_not_found" } };
+    if (input.parentAttachmentId !== null) {
+      const parent = this.db
+        .select({ id: evidenceAttachments.id, engagementId: evidenceAttachments.engagementId })
+        .from(evidenceAttachments)
+        .where(eq(evidenceAttachments.id, input.parentAttachmentId))
+        .get();
+      if (parent === undefined || parent.engagementId !== input.engagementId) {
+        return { ok: false, error: { code: "attachment_not_found" } };
       }
-      if (input.parentAttachmentId !== null) {
-        const parent = this.db
-          .select({ id: evidenceAttachments.id, engagementId: evidenceAttachments.engagementId })
-          .from(evidenceAttachments)
-          .where(eq(evidenceAttachments.id, input.parentAttachmentId))
-          .get();
-        if (parent === undefined || parent.engagementId !== input.engagementId) {
-          return { ok: false, error: { code: "attachment_not_found" } };
-        }
-      }
-      const row = {
-        id: this.createId(),
-        contractVersion: 1,
-        engagementId: input.engagementId,
-        filename: input.filename,
-        mime: input.mime,
-        sizeBytes: input.sizeBytes,
-        digest: input.digest,
-        caption: input.caption,
-        targetLabel: input.targetLabel,
-        parentAttachmentId: input.parentAttachmentId,
-        cropRectJson: input.cropRectJson,
-        contentBase64: input.contentBase64,
-        createdAt: this.now().toISOString(),
-      } as const;
-      // Validate before inserting so a malformed crop (for example `{}`)
-      // fails closed instead of persisting a row that later reads reject.
-      if (row.cropRectJson !== null) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(row.cropRectJson);
-        } catch {
-          return { ok: false, error: { code: "invalid_repository_input" } };
-        }
-        if (!AttachmentCropSchema.safeParse(parsed).success) {
-          return { ok: false, error: { code: "invalid_repository_input" } };
-        }
-      }
-      this.db.insert(evidenceAttachments).values(row).run();
-      const attachment = attachmentFromRow({ ...row });
-      if (attachment === undefined) {
+    }
+    const row = {
+      id: this.createId(),
+      contractVersion: 1,
+      engagementId: input.engagementId,
+      filename: input.filename,
+      mime: input.mime,
+      sizeBytes: input.sizeBytes,
+      digest: input.digest,
+      caption: input.caption,
+      targetLabel: input.targetLabel,
+      parentAttachmentId: input.parentAttachmentId,
+      cropRectJson: input.cropRectJson,
+      contentBase64: input.contentBase64,
+      createdAt: this.now().toISOString(),
+    } as const;
+    // Validate before inserting so a malformed crop (for example `{}`)
+    // fails closed instead of persisting a row that later reads reject.
+    if (row.cropRectJson !== null) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(row.cropRectJson);
+      } catch {
         return { ok: false, error: { code: "invalid_repository_input" } };
       }
-      return { ok: true, value: attachment };
+      if (!AttachmentCropSchema.safeParse(parsed).success) {
+        return { ok: false, error: { code: "invalid_repository_input" } };
+      }
+    }
+    // Same atomicity as createExcerpt: the archived check and the insert
+    // run in one immediate transaction so an archive racing this write
+    // cannot slip between a separate gate read and the insert.
+    try {
+      return this.db.transaction((client) => {
+        const engagement = client
+          .select({ status: engagements.status })
+          .from(engagements)
+          .where(eq(engagements.id, input.engagementId))
+          .get();
+        if (engagement === undefined) {
+          return { ok: false as const, error: { code: "engagement_not_found" as const } };
+        }
+        if (engagement.status === "archived") {
+          return { ok: false as const, error: { code: "engagement_archived" as const } };
+        }
+        client.insert(evidenceAttachments).values(row).run();
+        const attachment = attachmentFromRow({ ...row });
+        if (attachment === undefined) {
+          return { ok: false as const, error: { code: "invalid_repository_input" as const } };
+        }
+        return { ok: true as const, value: attachment };
+      }, { behavior: "immediate" });
     } catch (error) {
       return { ok: false, error: storageError(error) };
     }
@@ -356,20 +369,63 @@ export class ExcerptRepository {
     attachmentId: string,
     caption: string,
   ): ExcerptResult<Attachment> {
+    // The archived check and the update run in one immediate transaction,
+    // like the insert paths, so an archive racing a caption save cannot
+    // mutate an archived engagement. Reads stay available; only the write
+    // refuses. Error precedence matches the old read-then-write order:
+    // missing engagement first, then missing row.
     try {
-      const current = this.getAttachment(engagementId, attachmentId);
-      if (!current.ok) return current;
-      this.db
-        .update(evidenceAttachments)
-        .set({ caption })
-        .where(
-          and(
-            eq(evidenceAttachments.id, attachmentId),
-            eq(evidenceAttachments.engagementId, engagementId),
-          ),
-        )
-        .run();
-      return this.getAttachment(engagementId, attachmentId);
+      return this.db.transaction((client) => {
+        const engagement = client
+          .select({ status: engagements.status })
+          .from(engagements)
+          .where(eq(engagements.id, engagementId))
+          .get();
+        if (engagement === undefined) {
+          return { ok: false as const, error: { code: "engagement_not_found" as const } };
+        }
+        const current = client
+          .select({ id: evidenceAttachments.id })
+          .from(evidenceAttachments)
+          .where(
+            and(
+              eq(evidenceAttachments.id, attachmentId),
+              eq(evidenceAttachments.engagementId, engagementId),
+            ),
+          )
+          .get();
+        if (current === undefined) {
+          return { ok: false as const, error: { code: "attachment_not_found" as const } };
+        }
+        if (engagement.status === "archived") {
+          return { ok: false as const, error: { code: "engagement_archived" as const } };
+        }
+        client
+          .update(evidenceAttachments)
+          .set({ caption })
+          .where(
+            and(
+              eq(evidenceAttachments.id, attachmentId),
+              eq(evidenceAttachments.engagementId, engagementId),
+            ),
+          )
+          .run();
+        const updated = client
+          .select()
+          .from(evidenceAttachments)
+          .where(
+            and(
+              eq(evidenceAttachments.id, attachmentId),
+              eq(evidenceAttachments.engagementId, engagementId),
+            ),
+          )
+          .get();
+        const attachment = updated === undefined ? undefined : attachmentFromRow(updated);
+        if (attachment === undefined) {
+          return { ok: false as const, error: { code: "invalid_repository_input" as const } };
+        }
+        return { ok: true as const, value: attachment };
+      }, { behavior: "immediate" });
     } catch (error) {
       return { ok: false, error: storageError(error) };
     }

@@ -246,6 +246,23 @@ describe("notes image capture", () => {
     ).toBe("edited caption");
   });
 
+  it("cancels a non-image file drop instead of navigating away", async () => {
+    const posts = stubNotes(async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201));
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    const editor = (await screen.findByLabelText("Markdown")) as HTMLTextAreaElement;
+
+    // A PDF drop carries Files but no image. Without preventDefault the
+    // browser would navigate to the PDF and discard unsaved notes.
+    const pdf = new File(["%PDF-1.4"], "report.pdf", { type: "application/pdf" });
+    const event = new Event("drop", { bubbles: true, cancelable: true });
+    Object.assign(event, { dataTransfer: { types: ["Files"], files: [pdf] } });
+    editor.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(posts.length).toBe(0);
+  });
+
   it("ignores a stale attachment reload after navigating engagements", async () => {
     // Black-box isolation: the notes section remounts per engagement
     // (keyed in the workspace), so React already discards A's late update;

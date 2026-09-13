@@ -156,6 +156,21 @@ describe("secret masking for excerpts", () => {
     expect(tokenProjected.overlapped).toBe(true);
     expect(tokenProjected.text).not.toContain("abcdefghijklmnop");
   });
+
+  it("masks a selection past a capped credential value instead of persisting it raw", () => {
+    // The credential pattern caps bare values at 256 chars. A slice of a
+    // 500-char value sits past the span, so without span extension the
+    // projection would see no overlap and narrow masking alone would leak
+    // the slice verbatim.
+    const value = "x".repeat(500);
+    const expanded = `password=${value}\n`;
+    const start = Array.from("password=").length + 300;
+    const projected = projectMaskedSelection(expanded, start, 100);
+    expect(projected.overlapped).toBe(true);
+    expect(projected.text).toBe("[redacted]");
+    expect(projected.text).not.toContain("xxxxxxxxxx");
+    expect(maskExcerptText("x".repeat(100)).text).toBe("x".repeat(100));
+  });
 });
 
 describe("search windowing", () => {

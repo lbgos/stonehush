@@ -205,11 +205,15 @@ function NotesEditorBody({
         }
       }}
       onDrop={(event) => {
+        // Cancel file drops before filtering: an unaccepted file such as a
+        // PDF must not navigate the page away and discard unsaved notes.
+        if (Array.from(event.dataTransfer?.types ?? []).includes("Files")) {
+          event.preventDefault();
+        }
         const files = Array.from(event.dataTransfer?.files ?? []).filter((file) =>
           file.type.startsWith("image/"),
         );
         if (files.length === 0) return;
-        event.preventDefault();
         onPasteFiles(files);
       }}
     >

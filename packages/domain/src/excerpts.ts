@@ -130,10 +130,15 @@ export interface SelectionMaskProjection {
 
 // Masks a requested char range using secret spans found in a wider expanded
 // context. Offsets are code points, matching findTextMatches and theSnippet
-// windowing. Non-overlapping selections come back byte-identical to narrow
-// masking; overlapping ones keep ordinary prefix and suffix text while each
-// contiguous secret overlap becomes one redaction token. Never invents
-// bytes: output derives only from the requested substring.
+// windowing. Policy patterns cap some values (credential assignments at 256
+// chars), so each span extends rightward while token characters continue: a
+// selection past the cap is still the same secret value and must mask, not
+// persist verbatim. Extension only ever masks more; ordinary text beside a
+// boundary still passes through narrow masking unchanged. Non-overlapping
+// selections come back byte-identical to narrow masking; overlapping ones
+// keep ordinary prefix and suffix text while each contiguous secret overlap
+// becomes one redaction token. Never invents bytes: output derives only
+// from the requested substring.
 export function projectMaskedSelection(
   expandedText: string,
   requestedStart: number,
@@ -148,11 +153,24 @@ export function projectMaskedSelection(
     Array.from(expandedText.slice(0, Math.max(0, utf16))).length;
   const overlaps: { start: number; end: number }[] = [];
   for (const span of findAdvisorSecretSpans(expandedText)) {
+    let spanEnd = toCodePoints(span.end);
+    while (spanEnd < points.length && isSecretContinuationChar(points[spanEnd] ?? "")) {
+      spanEnd += 1;
+    }
     const spanStart = toCodePoints(span.start);
-    const spanEnd = toCodePoints(span.end);
     const clipStart = Math.max(spanStart, start) - start;
     const clipEnd = Math.min(spanEnd, end) - start;
     if (clipEnd > clipStart) overlaps.push({ start: clipStart, end: clipEnd });
+  }
+  overlaps.sort((left, right) => left.start - right.start || left.end - right.end);
+  const merged: { start: number; end: number }[] = [];
+  for (const region of overlaps) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && region.start <= last.end) {
+      if (region.end > last.end) last.end = region.end;
+    } else {
+      merged.push({ start: region.start, end: region.end });
+    }
   }
   if (overlaps.length === 0) {
     const narrow = redactAdvisorText(requestedText);
@@ -161,7 +179,7 @@ export function projectMaskedSelection(
   let text = "";
   let redactions = 0;
   let cursor = 0;
-  for (const region of overlaps) {
+  for (const region of merged) {
     if (region.start > cursor) {
       const plain = requestedPoints.slice(cursor, region.start).join("");
       const masked = redactAdvisorText(plain);

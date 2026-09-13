@@ -292,4 +292,36 @@ describe("attachment persistence", () => {
     if (!listed.ok) throw new Error(`Attachment list failed: ${listed.error.code}`);
     expect(listed.value).toHaveLength(0);
   });
+
+  it("refuses attachment writes on archived engagements without persisting", () => {
+    const { engagements, excerpts } = createFixture();
+    const createdEngagement = engagements.createEngagement({
+      name: "Attachment lab",
+      kind: "lab",
+      description: null,
+      authorizationContext: null,
+      autoContinueWarnings: false,
+    });
+    if (!createdEngagement.ok) throw new Error("Fixture create failed");
+    const engagementId = createdEngagement.value.id;
+    const uploaded = excerpts.createAttachment(uploadInput(engagementId));
+    if (!uploaded.ok) throw new Error(`Attachment create failed: ${uploaded.error.code}`);
+    const archived = engagements.archive(engagementId, createdEngagement.value.revision);
+    if (!archived.ok) throw new Error("Fixture archive failed");
+
+    expect(excerpts.createAttachment(uploadInput(engagementId))).toEqual({
+      ok: false,
+      error: { code: "engagement_archived" },
+    });
+    expect(
+      excerpts.updateAttachmentCaption(engagementId, uploaded.value.id, "edited after archive"),
+    ).toEqual({ ok: false, error: { code: "engagement_archived" } });
+
+    // Reads stay available; the refused writes left nothing behind and
+    // kept the stored caption.
+    const listed = excerpts.listAttachments(engagementId);
+    if (!listed.ok) throw new Error(`Attachment list failed: ${listed.error.code}`);
+    expect(listed.value).toHaveLength(1);
+    expect(listed.value[0]?.caption).toBe("login form");
+  });
 });

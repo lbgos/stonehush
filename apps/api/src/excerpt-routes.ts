@@ -32,6 +32,7 @@ import {
   EXCERPT_SNIPPET_RADIUS_CHARS,
   findTextMatches,
   isCropRectValid,
+  isSecretContinuationChar,
   projectMaskedSelection,
   selectionStartsMidToken,
   validateExcerptRange,
@@ -493,12 +494,21 @@ export function registerExcerptRoutes(
               points[ctxStart - 1] ?? "",
               points[ctxStart] ?? "",
             );
+          // At the scanned end with more bytes beyond the cap, the next
+          // character is unknown: points[ctxEnd] is undefined, so the pair
+          // check below would read it as a boundary and clear a token that
+          // continues past the cap (for example `flag{supersecret` with the
+          // brace still unread). Treat a trailing token run at an unknown
+          // edge as unsafe instead.
+          const rightUnknown = cutRight && ctxEnd >= points.length;
           const edgeRight =
-            cutRight &&
-            selectionStartsMidToken(
-              points[ctxEnd - 1] ?? "",
-              points[ctxEnd] ?? "",
-            );
+            (cutRight &&
+              !rightUnknown &&
+              selectionStartsMidToken(
+                points[ctxEnd - 1] ?? "",
+                points[ctxEnd] ?? "",
+              )) ||
+            (rightUnknown && isSecretContinuationChar(points[ctxEnd - 1] ?? ""));
           let snippet: string;
           let redactions: number;
           if (edgeLeft || edgeRight) {
@@ -568,6 +578,9 @@ export function registerExcerptRoutes(
     if (!created.ok) {
       if (created.error.code === "engagement_not_found") {
         return sendAttachmentError(reply, 404, "engagement_not_found");
+      }
+      if (created.error.code === "engagement_archived") {
+        return sendAttachmentError(reply, 409, "engagement_archived");
       }
       return sendAttachmentError(
         reply,
@@ -665,6 +678,9 @@ export function registerExcerptRoutes(
       if (updated.error.code === "engagement_not_found") {
         return sendAttachmentError(reply, 404, "engagement_not_found");
       }
+      if (updated.error.code === "engagement_archived") {
+        return sendAttachmentError(reply, 409, "engagement_archived");
+      }
       if (
         updated.error.code === "excerpt_not_found" ||
         updated.error.code === "attachment_not_found"
@@ -750,6 +766,9 @@ export function registerExcerptRoutes(
         contentBase64: parentBytes.value.contentBase64,
       });
       if (!created.ok) {
+        if (created.error.code === "engagement_archived") {
+          return sendAttachmentError(reply, 409, "engagement_archived");
+        }
         return sendAttachmentError(
           reply,
           storageStatus(created.error),
