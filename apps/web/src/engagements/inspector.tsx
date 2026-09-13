@@ -920,11 +920,11 @@ function InspectorProvenanceField({
 export type LauncherWarningKind = "warning-card" | "paused-run" | "none";
 
 // Warning UI follows the current display action, never a stale launch
-// result. A pre-run warning renders the full WarningCard with Continue and
-// Add to scope. A run that started and then paused for a late warning keeps
-// its warning visible, but Continue and Add to scope stay unavailable: the
-// action API accepts them only for pre-run warnings, and no late-warning
-// continue route exists. Stopping the paused run remains available.
+// result. A pre-run warning renders the WarningCard with Continue and offers
+// Add to scope when the warning includes outside_scope. A run that started
+// and then paused for a late warning keeps its warning visible. Continue
+// sends its pending warning event to the late-warning route. Stopping the
+// paused run remains available.
 export function launcherWarningKind(
   displayAction: PersistedAction | undefined,
 ): LauncherWarningKind {
