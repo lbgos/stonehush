@@ -546,29 +546,13 @@ export function registerExcerptRoutes(
         const hits = findTextMatches(text, query.data.q, query.data.limit - matches.length);
         const points = Array.from(text);
         for (const hit of hits) {
-          // Snippets reuse the excerpt projection over surrounding scanned
-          // text, never narrow masking: a window cut can strip the same
-          // wrappers an excerpt selection would lose. The lookback runs to
-          // the extended bound, reused here as a char count (65536 chars
-          // always cover at least as much source as 65536 bytes), so
-          // distant keys stay visible like on the keep path. The suffix
-          // side stays narrow because spans only extend rightward.
           const winStart = Math.max(0, hit.charOffset - EXCERPT_SNIPPET_RADIUS_CHARS);
           const winEnd = Math.min(
             points.length,
             hit.charOffset + hit.charLength + EXCERPT_SNIPPET_RADIUS_CHARS,
           );
-          const ctxStart = Math.max(0, winStart - EXCERPT_EXTENDED_CONTEXT_BYTES);
           const ctxEnd = Math.min(points.length, winEnd + EXCERPT_REDACTION_CONTEXT_CHARS);
-          const ctxText = points.slice(ctxStart, ctxEnd).join("");
-          const cutLeft = ctxStart > 0;
           const cutRight = ctxEnd < points.length || taken < download.sizeBytes;
-          const edgeLeft =
-            cutLeft &&
-            selectionStartsMidToken(
-              points[ctxStart - 1] ?? "",
-              points[ctxStart] ?? "",
-            );
           // At the scanned end with more bytes beyond the cap, the next
           // character is unknown: points[ctxEnd] is undefined, so the pair
           // check below would read it as a boundary and clear a token that
@@ -586,16 +570,22 @@ export function registerExcerptRoutes(
             (rightUnknown && isSecretContinuationChar(points[ctxEnd - 1] ?? ""));
           let snippet: string;
           let redactions: number;
-          if (edgeLeft || edgeRight) {
+          if (edgeRight) {
             // A secret value may continue past the visible context edge.
             // Mask the whole snippet rather than risk a partial leak.
             snippet = `${winStart > 0 ? "..." : ""}${ADVISOR_REDACTION_TOKEN}${winEnd < points.length ? "..." : ""}`;
             redactions = 1;
           } else {
             const window = windowSnippetFromChars(text, hit.charOffset, hit.charLength);
+            // Span discovery runs over the whole scanned prefix, not just
+            // the display window: any trigger the scan saw must mask, no
+            // matter how far behind the match it sits. Display still shows
+            // only the window. The dropped left-edge whole-mask is
+            // subsumed: left of the scan is the artifact start, so no
+            // unknown edge remains there for spans to miss.
             const projected = projectMaskedSelection(
-              ctxText,
-              winStart - ctxStart,
+              text,
+              winStart,
               winEnd - winStart,
               taken < download.sizeBytes,
             );

@@ -705,6 +705,24 @@ describe("excerpt routes", () => {
     expect(body.redactions).toBeGreaterThan(0);
   });
 
+  it("masks search snippets whose key hides past the extended context", async () => {
+    const harness = await createHarness();
+    // The key sits 70000 spaces back: past the 64KB snippet context, but
+    // inside the scanned prefix that span discovery now covers. Narrow
+    // masking alone would return `=hunter2` verbatim.
+    const content = `password${" ".repeat(70_000)}=hunter2 login-target\n`;
+    harness.artifacts.set(ARTIFACT_ID, Buffer.from(content, "utf8"));
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=hunter2`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as { matches: { snippet: string }[] };
+    expect(body.matches).toHaveLength(1);
+    expect(body.matches[0]?.snippet).not.toContain("hunter2");
+    expect(body.matches[0]?.snippet).toContain("[redacted]");
+  });
+
   it("masks search snippets whose key hides past the snippet context", async () => {
     const harness = await createHarness();
     // The credential key sits 20000 spaces back, outside the old 8KB
