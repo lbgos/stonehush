@@ -67,6 +67,19 @@ export function parsePlannedTargets(raw: string): ParsedPlannedTargets {
   return { ok: true, targets: tokens };
 }
 
+// Canonical identities for idempotency fingerprints. Raw tokens keep user
+// formatting and order, so equivalent inputs would mint different keys and a
+// lost response retry could duplicate instead of replay. Sorting is safe here
+// because creation intent treats the target set as unordered. Unparseable
+// tokens fall back to themselves so key generation never throws.
+export function canonicalTargetIdentities(targets: readonly string[]): string[] {
+  const identities = targets.map((target) => {
+    const normalized = normalizeTarget(target);
+    return normalized.ok ? formatCanonicalTarget(normalized.target) : target;
+  });
+  return identities.sort();
+}
+
 export function latestActionSnapshot(action: PersistedAction): ActionSnapshot {
   return action.action.snapshots.reduce((latest, snapshot) =>
     snapshot.version > latest.version ? snapshot : latest,

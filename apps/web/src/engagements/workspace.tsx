@@ -55,12 +55,14 @@ export function resolveEngagementTab(raw: unknown): EngagementTabId {
 
 export function EngagementWorkspace({
   engagementId,
+  pendingActionId,
   selectedItemKey,
   selectedRunId,
   selectedTargetId,
   tab,
 }: {
   engagementId?: string | undefined;
+  pendingActionId?: string | undefined;
   selectedItemKey?: string | undefined;
   selectedRunId?: string | undefined;
   selectedTargetId?: string | undefined;
@@ -134,6 +136,7 @@ export function EngagementWorkspace({
     selected !== undefined ? (
       <EngagementDetail
         engagement={selected}
+        pendingActionId={pendingActionId}
         selectedItemKey={selectedItemKey}
         selectedTargetId={selectedTargetId}
         tab={tab}
@@ -235,12 +238,14 @@ function selectDisplayedEngagement(listed: Engagement, detailed: Engagement | un
 
 function EngagementDetail({
   engagement,
+  pendingActionId,
   selectedItemKey,
   selectedRunId,
   selectedTargetId,
   tab,
 }: {
   engagement: Engagement;
+  pendingActionId?: string | undefined;
   selectedItemKey?: string | undefined;
   selectedRunId?: string | undefined;
   selectedTargetId?: string | undefined;
@@ -252,6 +257,10 @@ function EngagementDetail({
   const runId = selectedRunId !== undefined && selectedRunId.length > 0 ? selectedRunId : undefined;
   const navigate = useNavigate();
   const archived = displayed.status === "archived";
+  // A paused first scan rides along in every workspace navigation so normal
+  // tab, run, and selection moves never strand its warning. It clears only
+  // when the route drops it, which the planner then reflects.
+  const actionSearch = pendingActionId === undefined ? {} : { action: pendingActionId };
   const {
     advisorDraft,
     closeAdvisor,
@@ -289,11 +298,13 @@ function EngagementDetail({
               run: nextRunId,
               ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
               ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+              ...actionSearch,
             }
           : {
               tab: activeTab,
               ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
               ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+              ...actionSearch,
             },
     });
   };
@@ -311,6 +322,7 @@ function EngagementDetail({
         tab: "surface",
         ...(runId === undefined ? {} : { run: runId }),
         target,
+        ...actionSearch,
       },
     });
   };
@@ -325,6 +337,7 @@ function EngagementDetail({
         ...(runId === undefined ? {} : { run: runId }),
         ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
         ...(key === undefined ? {} : { sel: key }),
+        ...actionSearch,
       },
     });
   };
@@ -338,6 +351,7 @@ function EngagementDetail({
         run: nextRunId,
         ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
         ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+        ...actionSearch,
       },
     });
   };
@@ -351,6 +365,7 @@ function EngagementDetail({
         ...(runId === undefined ? {} : { run: runId }),
         ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
         ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+        ...actionSearch,
       },
     });
   };
@@ -416,6 +431,7 @@ function EngagementDetail({
                 ...(runId === undefined ? {} : { run: runId }),
                 ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
                 ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+                ...actionSearch,
               }}
               aria-current={active ? "page" : undefined}
               className={`inline-flex min-h-11 items-center rounded-t-[10px] px-3 text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring ${
@@ -470,7 +486,11 @@ function EngagementDetail({
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
-            <ActionPlanner archived={archived} engagementId={displayed.id} />
+            <ActionPlanner
+              archived={archived}
+              engagementId={displayed.id}
+              pendingActionId={pendingActionId}
+            />
             <SavedScopeEditor archived={archived} engagementId={displayed.id} />
           </div>
         </div>
