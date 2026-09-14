@@ -806,6 +806,40 @@ describe("excerpt routes", () => {
     expect((cell.json() as { content: string }).content).toBe("bar");
   });
 
+  it("rejects URL-shaped selections the extended window cannot clear", async () => {
+    const harness = await createHarness();
+    const keepOn = async (artifactId: string, content: string) => {
+      harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+      harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+      return (byteOffset: number, byteLength: number) =>
+        harness.inject({
+          method: "POST",
+          url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+          payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
+        });
+    };
+    // Scheme 70000 chars back: past even the extended lookback, so no
+    // span can clear the selection. Fail closed instead of persisting a
+    // possible secret value.
+    const keepHidden = await keepOn(
+      "artifact-userinfo-far-far",
+      `https://user:${"A".repeat(70_000)};SECRET@host/x\n`,
+    );
+    const refused = await keepHidden(70_014, "SECRET@host".length);
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json()).toEqual({ code: "range_rejected" });
+    // Ordinary emails past the bound reject too: safety cannot be proven
+    // for URL-shaped selections with a cut extended window. Widening the
+    // selection below the bound fixes them.
+    const keepMail = await keepOn(
+      "artifact-email-far",
+      `${"q".repeat(70_000)} admin@example.com\n`,
+    );
+    const mail = await keepMail(70_001, "admin@example.com".length);
+    expect(mail.statusCode).toBe(400);
+    expect(mail.json()).toEqual({ code: "range_rejected" });
+  });
+
   it("rejects bare values with a whitespace-only window behind them", async () => {
     const harness = await createHarness();
     const keepOn = async (artifactId: string, content: string) => {

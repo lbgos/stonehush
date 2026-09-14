@@ -318,7 +318,16 @@ export function registerExcerptRoutes(
         requestedLengthChars,
         truncatedAfter,
       );
-      if (extendedMasked.overlapped) masked = extendedMasked;
+      if (extendedMasked.overlapped) {
+        masked = extendedMasked;
+      } else if (extendedStart > 0) {
+        // The extended window is still cut: a scheme may hide beyond it,
+        // so a URL-shaped selection cannot be proven safe. Reject rather
+        // than persisting the narrow result. Ordinary twins past the bound
+        // (emails, dividers) reject here too; widening the selection below
+        // the bound fixes them.
+        return sendExcerptError(reply, 400, "range_rejected");
+      }
     }
     const created = excerpts.createExcerpt({
       engagementId: params.data.engagementId,
