@@ -257,6 +257,10 @@ function EngagementDetail({
   const runId = selectedRunId !== undefined && selectedRunId.length > 0 ? selectedRunId : undefined;
   const navigate = useNavigate();
   const archived = displayed.status === "archived";
+  // A paused first scan rides along in every workspace navigation so normal
+  // tab, run, and selection moves never strand its warning. It clears only
+  // when the route drops it, which the planner then reflects.
+  const actionSearch = pendingActionId === undefined ? {} : { action: pendingActionId };
   const {
     advisorDraft,
     closeAdvisor,
@@ -294,11 +298,13 @@ function EngagementDetail({
               run: nextRunId,
               ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
               ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+              ...actionSearch,
             }
           : {
               tab: activeTab,
               ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
               ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+              ...actionSearch,
             },
     });
   };
@@ -316,6 +322,7 @@ function EngagementDetail({
         tab: "surface",
         ...(runId === undefined ? {} : { run: runId }),
         target,
+        ...actionSearch,
       },
     });
   };
@@ -330,6 +337,7 @@ function EngagementDetail({
         ...(runId === undefined ? {} : { run: runId }),
         ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
         ...(key === undefined ? {} : { sel: key }),
+        ...actionSearch,
       },
     });
   };
@@ -343,6 +351,7 @@ function EngagementDetail({
         run: nextRunId,
         ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
         ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+        ...actionSearch,
       },
     });
   };
@@ -356,6 +365,7 @@ function EngagementDetail({
         ...(runId === undefined ? {} : { run: runId }),
         ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
         ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+        ...actionSearch,
       },
     });
   };
@@ -421,6 +431,7 @@ function EngagementDetail({
                 ...(runId === undefined ? {} : { run: runId }),
                 ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
                 ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+                ...actionSearch,
               }}
               aria-current={active ? "page" : undefined}
               className={`inline-flex min-h-11 items-center rounded-t-[10px] px-3 text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring ${
