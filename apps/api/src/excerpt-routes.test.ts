@@ -655,6 +655,71 @@ describe("excerpt routes", () => {
     expect(split.json()).toEqual({ code: "range_rejected" });
   });
 
+  it("masks userinfo values whose scheme hides past the base window", async () => {
+    const harness = await createHarness();
+    // The 16KB window ends inside a 17000-char password run, so no span
+    // and no gate fires on the first pass. The extended trigger search
+    // finds the scheme and masks instead of persisting raw.
+    const artifactId = "artifact-userinfo-far-semi";
+    const content = `https://user:${"A".repeat(17_000)};SECRET@host/x\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const keep = (byteOffset: number, byteLength: number) =>
+      harness.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+        payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
+      });
+    const led = await keep(17_014, "SECRET@host".length);
+    expect(led.statusCode).toBe(201);
+    const ledBody = led.json() as { content: string; redactions: number };
+    expect(ledBody.content).not.toContain("SECRET");
+    expect(ledBody.redactions).toBeGreaterThan(0);
+
+    // Bare password without the `@host` tail masks the same way.
+    const bare = await keep(17_014, "SECRET".length);
+    expect(bare.statusCode).toBe(201);
+    expect((bare.json() as { content: string }).content).not.toContain("SECRET");
+
+    // Ordinary twins keep verbatim: the extended search finds no scheme
+    // and narrow masking stands, so the extra read changes nothing. The
+    // leading space keeps the email clear of the token-continuity reject.
+    const emailId = "artifact-email-deep";
+    const email = `${"q".repeat(16_999)} admin@example.com\n`;
+    harness.artifacts.set(emailId, Buffer.from(email, "utf8"));
+    harness.extraArtifacts.push({ artifactId: emailId, kind: "stdout" });
+    const mail = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: {
+        runId: RUN_ID,
+        artifactId: emailId,
+        stream: "stdout",
+        byteOffset: 17_000,
+        byteLength: "admin@example.com".length,
+      },
+    });
+    expect(mail.statusCode).toBe(201);
+    expect((mail.json() as { content: string }).content).toBe("admin@example.com");
+    const semiId = "artifact-semi-deep";
+    const semi = `${"q".repeat(17_000)}foo;bar\n`;
+    harness.artifacts.set(semiId, Buffer.from(semi, "utf8"));
+    harness.extraArtifacts.push({ artifactId: semiId, kind: "stdout" });
+    const cell = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: {
+        runId: RUN_ID,
+        artifactId: semiId,
+        stream: "stdout",
+        byteOffset: 17_004,
+        byteLength: "bar".length,
+      },
+    });
+    expect(cell.statusCode).toBe(201);
+    expect((cell.json() as { content: string }).content).toBe("bar");
+  });
+
   it("rejects bare values with a whitespace-only window behind them", async () => {
     const harness = await createHarness();
     const keepOn = async (artifactId: string, content: string) => {

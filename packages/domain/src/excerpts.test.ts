@@ -13,6 +13,7 @@ import {
   selectionBytesFromText,
   selectionHasDanglingKeyEnd,
   selectionLooksLikeHiddenAssignmentValue,
+  selectionMayHideUrlValue,
   selectionStartsMidToken,
   validateExcerptRange,
   windowSnippetFromChars,
@@ -162,6 +163,24 @@ describe("secret masking for excerpts", () => {
     expect(selectionLooksLikeHiddenAssignmentValue('", "', '"b"')).toBe(false);
     expect(selectionLooksLikeHiddenAssignmentValue("login ok\n", "flag{abc}")).toBe(false);
     expect(selectionLooksLikeHiddenAssignmentValue("target: ", "10.0.0.5")).toBe(false);
+  });
+
+  it("spots URL-shaped edges whose scheme may sit beyond a cut lookback", () => {
+    // An `@` inside the selection, or a URL-structural delimiter right
+    // before it: a hidden `https://user:` prefix leaves these traces.
+    expect(selectionMayHideUrlValue("", "a@b")).toBe(true);
+    expect(selectionMayHideUrlValue("x", "a@b")).toBe(true);
+    expect(selectionMayHideUrlValue("foo;", "bar")).toBe(true);
+    expect(selectionMayHideUrlValue("a,", "b")).toBe(true);
+    expect(selectionMayHideUrlValue("100%", "20")).toBe(true);
+    expect(selectionMayHideUrlValue("a?", "b")).toBe(true);
+    expect(selectionMayHideUrlValue("a#", "b")).toBe(true);
+    expect(selectionMayHideUrlValue("a@", "b")).toBe(true);
+    // Ordinary shapes without URL structure stay quiet.
+    expect(selectionMayHideUrlValue("abc", "def")).toBe(false);
+    expect(selectionMayHideUrlValue("key = ", "v")).toBe(false);
+    expect(selectionMayHideUrlValue("", "plain")).toBe(false);
+    expect(selectionMayHideUrlValue("a: ", "b")).toBe(false);
   });
 
   it("treats percent as a token continuation but keeps colons as boundaries", () => {

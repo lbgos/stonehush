@@ -28,6 +28,7 @@ import {
   ADVISOR_REDACTION_TOKEN,
   byteOffsetOfCharOffset,
   deriveAttachmentName,
+  EXCERPT_EXTENDED_CONTEXT_BYTES,
   EXCERPT_REDACTION_CONTEXT_BYTES,
   EXCERPT_REDACTION_CONTEXT_CHARS,
   EXCERPT_SNIPPET_RADIUS_CHARS,
@@ -37,6 +38,7 @@ import {
   projectMaskedSelection,
   selectionHasDanglingKeyEnd,
   selectionLooksLikeHiddenAssignmentValue,
+  selectionMayHideUrlValue,
   selectionStartsMidToken,
   validateExcerptRange,
   windowSnippetFromChars,
@@ -271,12 +273,53 @@ export function registerExcerptRoutes(
     // marker extends masking to the window end without touching ordinary
     // trailing text of fully visible files.
     const truncatedAfter = contextEnd < artifact.sizeBytes;
-    const masked = projectMaskedSelection(
+    let masked = projectMaskedSelection(
       expandedText,
       requestedStartChars,
       requestedLengthChars,
       truncatedAfter,
     );
+    // Second-chance trigger search for URL-shaped values with a hidden
+    // scheme. Userinfo patterns are unbounded, so a password longer than
+    // the base window leaves no span and no gate fires when the selection
+    // starts past a URL delimiter. When the lookback is cut, the selection
+    // found no overlap, and the edge looks URL-shaped, one wider bounded
+    // read hunts the scheme: overlapping spans replace the narrow result,
+    // while ordinary text (emails, dividers) keeps narrow masking with the
+    // same outcome plus one bounded read. No gates rerun here; the first
+    // pass already failed closed on every cut-boundary shape it recognizes.
+    if (
+      !masked.overlapped &&
+      contextStart > 0 &&
+      selectionMayHideUrlValue(prefixText, requestedText)
+    ) {
+      const extendedStart = Math.max(0, body.data.byteOffset - EXCERPT_EXTENDED_CONTEXT_BYTES);
+      let extended: Awaited<ReturnType<EvidenceStore["verifiedByteRange"]>>;
+      try {
+        extended = await store.verifiedByteRange({
+          artifactId: artifact.artifactId,
+          expectedSizeBytes: artifact.sizeBytes,
+          expectedDigest: artifact.digest,
+          byteOffset: extendedStart,
+          byteLength: contextEnd - extendedStart,
+        });
+      } catch {
+        return sendExcerptError(reply, 409, "corrupt_artifact");
+      }
+      if (extended.status === "missing") return sendExcerptError(reply, 409, "missing_artifact");
+      if (extended.status === "corrupt") return sendExcerptError(reply, 409, "corrupt_artifact");
+      const extendedRelative = body.data.byteOffset - extendedStart;
+      const extendedPrefix = utf8Decoder.decode(extended.content.subarray(0, extendedRelative));
+      const extendedText = extendedPrefix + requestedText + suffixText;
+      const extendedStartChars = Array.from(extendedPrefix).length;
+      const extendedMasked = projectMaskedSelection(
+        extendedText,
+        extendedStartChars,
+        requestedLengthChars,
+        truncatedAfter,
+      );
+      if (extendedMasked.overlapped) masked = extendedMasked;
+    }
     const created = excerpts.createExcerpt({
       engagementId: params.data.engagementId,
       runId: body.data.runId,

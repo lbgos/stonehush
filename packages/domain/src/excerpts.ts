@@ -21,6 +21,13 @@ export const EXCERPT_SNIPPET_RADIUS_CHARS = 160 as const;
 // past the real bound. Unbounded token values rely on the token-continuity
 // check below when this window is cut short of the artifact edge.
 export const EXCERPT_REDACTION_CONTEXT_BYTES = 16_384 as const;
+// Extended lookback for the second-chance trigger search below. URL-shaped
+// selections (an `@` inside, or a URL-structural delimiter right before)
+// may hide their scheme past the base window: userinfo patterns are
+// unbounded, so no base bound covers them. 65536 reaches an order of
+// magnitude further while staying far below the 262144-byte scan budget.
+// Reads stay bounded; ordinary selections never take this path.
+export const EXCERPT_EXTENDED_CONTEXT_BYTES = 65_536 as const;
 // Chars of already-scanned output kept on each side of a search snippet for
 // the same purpose. Snippets reuse this projection, never narrow masking.
 export const EXCERPT_REDACTION_CONTEXT_CHARS = 8_192 as const;
@@ -163,6 +170,18 @@ export function selectionLooksLikeHiddenAssignmentValue(
     return true;
   }
   return false;
+}
+
+// True when the selection edge looks URL-shaped on a cut lookback: an
+// `@` inside the selection, or a URL-structural delimiter (`;`, `,`, `%`,
+// `?`, `#`, `@`) immediately before it. A hidden `https://user:` prefix
+// leaves exactly these traces while spanning no policy span in the bounded
+// window. Ordinary emails and dividers trip the same shape; the caller only
+// spends a wider bounded read on them and keeps narrow masking when no
+// scheme turns up, so outcomes for ordinary text do not change.
+export function selectionMayHideUrlValue(prefixText: string, requestedText: string): boolean {
+  if (requestedText.includes("@")) return true;
+  return /[;,%?#@]$/.test(prefixText);
 }
 
 // True when the selection holds a private-key END marker but no BEGIN
