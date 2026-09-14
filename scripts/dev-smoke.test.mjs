@@ -101,7 +101,126 @@ function startDev(environment = {}) {
 
 function signalGroup(child, signal) {
   assert.ok(child.pid);
-  process.kill(-child.pid, signal);
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+function signalPid(pid, signal) {
+  try {
+    process.kill(pid, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
+async function descendantsOfRoots(rootPids) {
+  const seen = new Set();
+  const queue = [];
+  for (const rootPid of rootPids) {
+    queue.push(...(await childProcessIds(rootPid)));
+  }
+  while (queue.length > 0) {
+    const pid = queue.pop();
+    if (pid === undefined || seen.has(pid)) continue;
+    seen.add(pid);
+    queue.push(...(await childProcessIds(pid)));
+  }
+  return [...seen];
+}
+
+async function isProcessGone(pid) {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if (error?.code === "ESRCH") return true;
+    throw error;
+  }
+  // A zombie answers kill(pid, 0) but holds no pipes or ports. Treat it as
+  // gone so waitForProcessesGone does not time out waiting for reaping.
+  try {
+    const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+    if (stat.match(/\)\s+([A-Za-z])/)?.[1] === "Z") return true;
+  } catch (error) {
+    if (error?.code === "ENOENT") return true;
+    throw error;
+  }
+  return false;
+}
+
+// Forced cleanup for the detached api/web tree. dev.mjs spawns each child
+// with detached:true, so SIGKILL to the parent group alone leaves api/web
+// survivors holding the test stdio pipes open and node --test hangs. Kill
+// only PIDs observed as descendants moments ago plus the owned root group.
+// Descendants get direct PID signals, never kill(-pid), so an unrelated
+// group that reused a PID is not signaled as a group.
+async function killDevTree(dev, knownDescendants = []) {
+  const rootPid = dev.child.pid;
+  if (rootPid === undefined) return;
+  const targets = new Set(knownDescendants.filter((pid) => Number.isSafeInteger(pid)));
+  try {
+    for (const pid of await descendantsOfRoots([rootPid])) targets.add(pid);
+    for (const pid of [...targets]) {
+      for (const childPid of await descendantsOfRoots([pid])) targets.add(childPid);
+    }
+  } catch {
+    // Best effort snapshot; fall through with whatever was collected.
+  }
+  signalGroup(dev.child, "SIGTERM");
+  for (const pid of targets) signalPid(pid, "SIGTERM");
+  await delay(500);
+  try {
+    for (const pid of await descendantsOfRoots([rootPid])) targets.add(pid);
+    for (const pid of [...targets]) {
+      for (const childPid of await descendantsOfRoots([pid])) targets.add(childPid);
+    }
+  } catch {
+    // Best effort re-snapshot for late spawns such as vite/tsx forks.
+  }
+  let needsKill = false;
+  for (const pid of targets) {
+    if (!(await isProcessGone(pid))) {
+      needsKill = true;
+      break;
+    }
+  }
+  if (!needsKill) {
+    try {
+      process.kill(-rootPid, 0);
+      needsKill = true;
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+  }
+  if (needsKill) {
+    signalGroup(dev.child, "SIGKILL");
+    for (const pid of targets) signalPid(pid, "SIGKILL");
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      let remaining = false;
+      for (const pid of targets) {
+        if (!(await isProcessGone(pid))) {
+          remaining = true;
+          break;
+        }
+      }
+      if (!remaining) {
+        try {
+          process.kill(-rootPid, 0);
+          remaining = true;
+        } catch (error) {
+          if (error?.code !== "ESRCH") throw error;
+        }
+      }
+      if (!remaining) break;
+      await delay(50);
+    }
+  }
+  if (!dev.state.exited) {
+    await Promise.race([dev.exited.catch(() => {}), delay(3_000)]);
+  }
 }
 
 async function waitForExit(dev, description) {
@@ -201,16 +320,10 @@ async function descendantProcessIds(rootPid) {
 
 async function waitForProcessesGone(processIds) {
   await waitFor("development descendants to exit", async () => {
-    const remaining = [];
     for (const pid of processIds) {
-      try {
-        process.kill(pid, 0);
-        remaining.push(pid);
-      } catch (error) {
-        if (error?.code !== "ESRCH") throw error;
-      }
+      if (!(await isProcessGone(pid))) return undefined;
     }
-    return remaining.length === 0 ? true : undefined;
+    return true;
   });
 }
 
@@ -235,9 +348,8 @@ test("pnpm dev boots the default loopback web and API path and stops on SIGINT",
   }
 
   const dev = startDev();
-  t.after(() => {
-    if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
-  });
+  const knownDescendants = [];
+  t.after(() => killDevTree(dev, knownDescendants));
 
   assert.deepEqual(await waitForJson("http://127.0.0.1:3001/health", dev.state), {
     status: "ok",
@@ -268,6 +380,7 @@ test("pnpm dev boots the default loopback web and API path and stops on SIGINT",
   }
 
   const descendants = await descendantProcessIds(dev.child.pid);
+  knownDescendants.push(...descendants);
   assert.ok(descendants.length >= 4, `Expected the dev process tree, found ${descendants.join(", ")}`);
   signalGroup(dev.child, "SIGINT");
   await waitForExit(dev, "development process to stop after SIGINT");
@@ -283,9 +396,8 @@ test("pnpm dev honors distinct port overrides and stops on SIGTERM", async (t) =
     STONEHUSH_API_PORT: String(apiPort),
     STONEHUSH_WEB_PORT: String(webPort),
   });
-  t.after(() => {
-    if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
-  });
+  const knownDescendants = [];
+  t.after(() => killDevTree(dev, knownDescendants));
 
   assert.deepEqual(await waitForJson(`http://127.0.0.1:${apiPort}/health`, dev.state), {
     status: "ok",
@@ -299,15 +411,17 @@ test("pnpm dev honors distinct port overrides and stops on SIGTERM", async (t) =
   );
 
   const descendants = await descendantProcessIds(dev.child.pid);
+  knownDescendants.push(...descendants);
   signalGroup(dev.child, "SIGTERM");
   await waitForExit(dev, "development process to stop after SIGTERM");
   await Promise.all([waitForClosed(apiPort), waitForClosed(webPort)]);
   await waitForProcessesGone(descendants);
 });
 
-test("pnpm dev rejects invalid configuration before opening a listener", async () => {
+test("pnpm dev rejects invalid configuration before opening a listener", async (t) => {
   const webPort = await allocatePort();
   const dev = startDev({ STONEHUSH_API_PORT: "", STONEHUSH_WEB_PORT: String(webPort) });
+  t.after(() => killDevTree(dev));
 
   const result = await waitForExit(dev, "invalid configuration to fail");
   assert.notEqual(result.code, 0);
@@ -315,12 +429,13 @@ test("pnpm dev rejects invalid configuration before opening a listener", async (
   await waitForClosed(webPort);
 });
 
-test("pnpm dev rejects equal ports before opening a listener", async () => {
+test("pnpm dev rejects equal ports before opening a listener", async (t) => {
   const port = await allocatePort();
   const dev = startDev({
     STONEHUSH_API_PORT: String(port),
     STONEHUSH_WEB_PORT: String(port),
   });
+  t.after(() => killDevTree(dev));
 
   const result = await waitForExit(dev, "equal ports to fail");
   assert.notEqual(result.code, 0);
@@ -340,9 +455,7 @@ test("unsafe development storage prevents both listeners with a path-free error"
     STONEHUSH_DATA_DIR: dataDirectory,
     STONEHUSH_WEB_PORT: String(webPort),
   });
-  t.after(() => {
-    if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
-  });
+  t.after(() => killDevTree(dev));
 
   const result = await waitForExit(dev, "unsafe development storage to fail");
   assert.notEqual(result.code, 0);
@@ -369,9 +482,7 @@ test("API bind failure prevents the web listener and propagates failure", async 
     STONEHUSH_API_PORT: String(address.port),
     STONEHUSH_WEB_PORT: String(webPort),
   });
-  t.after(() => {
-    if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
-  });
+  t.after(() => killDevTree(dev));
 
   const result = await waitForExit(dev, "API bind failure to stop development");
   assert.notEqual(result.code, 0);
@@ -389,9 +500,8 @@ test("pnpm dev with native build registers evidence and advisor routes", async (
     STONEHUSH_API_PORT: String(apiPort),
     STONEHUSH_WEB_PORT: String(webPort),
   });
-  t.after(() => {
-    if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
-  });
+  const knownDescendants = [];
+  t.after(() => killDevTree(dev, knownDescendants));
 
   assert.deepEqual(await waitForJson(`http://127.0.0.1:${apiPort}/health`, dev.state), {
     status: "ok",
@@ -414,6 +524,7 @@ test("pnpm dev with native build registers evidence and advisor routes", async (
   );
 
   const descendants = await descendantProcessIds(dev.child.pid);
+  knownDescendants.push(...descendants);
   signalGroup(dev.child, "SIGTERM");
   await waitForExit(dev, "development process to stop after SIGTERM");
   await Promise.all([waitForClosed(apiPort), waitForClosed(webPort)]);
