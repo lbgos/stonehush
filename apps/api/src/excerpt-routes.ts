@@ -548,13 +548,17 @@ export function registerExcerptRoutes(
         for (const hit of hits) {
           // Snippets reuse the excerpt projection over surrounding scanned
           // text, never narrow masking: a window cut can strip the same
-          // wrappers an excerpt selection would lose.
+          // wrappers an excerpt selection would lose. The lookback runs to
+          // the extended bound, reused here as a char count (65536 chars
+          // always cover at least as much source as 65536 bytes), so
+          // distant keys stay visible like on the keep path. The suffix
+          // side stays narrow because spans only extend rightward.
           const winStart = Math.max(0, hit.charOffset - EXCERPT_SNIPPET_RADIUS_CHARS);
           const winEnd = Math.min(
             points.length,
             hit.charOffset + hit.charLength + EXCERPT_SNIPPET_RADIUS_CHARS,
           );
-          const ctxStart = Math.max(0, winStart - EXCERPT_REDACTION_CONTEXT_CHARS);
+          const ctxStart = Math.max(0, winStart - EXCERPT_EXTENDED_CONTEXT_BYTES);
           const ctxEnd = Math.min(points.length, winEnd + EXCERPT_REDACTION_CONTEXT_CHARS);
           const ctxText = points.slice(ctxStart, ctxEnd).join("");
           const cutLeft = ctxStart > 0;
@@ -623,7 +627,13 @@ export function registerExcerptRoutes(
     },
   );
 
-  app.post("/api/v1/engagements/:engagementId/attachments", async (request, reply) => {
+  app.post(
+    "/api/v1/engagements/:engagementId/attachments",
+    // The contract allows 2M Base64 characters (1.5M raw bytes); without
+    // this, Fastify's 1MiB default rejects valid 786KB-plus uploads before
+    // the handler's own bound runs.
+    { bodyLimit: 4 * 1024 * 1024 },
+    async (request, reply) => {
     const params = EngagementIdParamsSchema.safeParse(request.params);
     if (!params.success) return sendAttachmentError(reply, 400, "invalid_request");
     const body = CreateAttachmentRequestSchema.safeParse(request.body);
@@ -667,7 +677,8 @@ export function registerExcerptRoutes(
     const validated = AttachmentSchema.safeParse(created.value);
     if (!validated.success) return sendAttachmentError(reply, 500, "invalid_persisted_data");
     return reply.code(201).type("application/json").send(validated.data);
-  });
+    },
+  );
 
   app.get("/api/v1/engagements/:engagementId/attachments", async (request, reply) => {
     const params = EngagementIdParamsSchema.safeParse(request.params);

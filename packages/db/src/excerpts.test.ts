@@ -306,6 +306,22 @@ describe("attachment persistence", () => {
     });
   });
 
+  it("rejects contract-invalid attachment metadata before persisting it", () => {
+    // sizeBytes above the reachable raw bound passes the column CHECK but
+    // violates the shared contract: refuse before inserting so no invalid
+    // row reaches contract-validating consumers.
+    const { engagements, excerpts } = createFixture();
+    const engagementId = createEngagement(engagements);
+    const created = excerpts.createAttachment({
+      ...uploadInput(engagementId),
+      sizeBytes: 1_500_001,
+    });
+    expect(created).toEqual({ ok: false, error: { code: "invalid_repository_input" } });
+    const listed = excerpts.listAttachments(engagementId);
+    if (!listed.ok) throw new Error(`Attachment list failed: ${listed.error.code}`);
+    expect(listed.value).toHaveLength(0);
+  });
+
   it("rejects malformed crop metadata before persisting it", () => {
     const { engagements, excerpts } = createFixture();
     const engagementId = createEngagement(engagements);

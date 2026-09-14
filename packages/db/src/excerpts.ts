@@ -1,5 +1,10 @@
 import type { Attachment, Excerpt } from "@stonehush/contracts";
-import { AttachmentCropSchema, EXCERPT_CONTENT_MAX_BYTES, ExcerptSchema } from "@stonehush/contracts";
+import {
+  AttachmentCropSchema,
+  AttachmentSchema,
+  EXCERPT_CONTENT_MAX_BYTES,
+  ExcerptSchema,
+} from "@stonehush/contracts";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
@@ -280,6 +285,13 @@ export class ExcerptRepository {
       if (!AttachmentCropSchema.safeParse(parsed).success) {
         return { ok: false, error: { code: "invalid_repository_input" } };
       }
+    }
+    // Validate the complete attachment contract, not just the crop: fields
+    // like an over-bound sizeBytes would otherwise persist and fail every
+    // contract-validating consumer on read.
+    const candidate = attachmentFromRow({ ...row });
+    if (candidate === undefined || !AttachmentSchema.safeParse(candidate).success) {
+      return { ok: false, error: { code: "invalid_repository_input" } };
     }
     // Same atomicity as createExcerpt: the archived check and the insert
     // run in one immediate transaction so an archive racing this write

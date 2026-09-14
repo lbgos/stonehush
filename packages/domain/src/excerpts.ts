@@ -173,14 +173,15 @@ export function selectionLooksLikeHiddenAssignmentValue(
 }
 
 // True when the selection edge looks URL-shaped on a cut lookback: an
-// `@` inside the selection, or a URL-structural delimiter (`;`, `,`, `%`,
-// `?`, `#`, `@`) immediately before it. A hidden `https://user:` prefix
-// leaves exactly these traces while spanning no policy span in the bounded
-// window. Ordinary emails and dividers trip the same shape; the caller only
-// spends a wider bounded read on them and keeps narrow masking when no
-// scheme turns up, so outcomes for ordinary text do not change.
+// `@` inside the selection, a URL-structural delimiter opening it, or such
+// a delimiter right before it. A hidden `https://user:` prefix leaves these
+// traces while spanning no policy span in the bounded window. Ordinary
+// emails and dividers trip the same shape; the caller only spends a wider
+// bounded read on them and keeps narrow masking when no scheme turns up,
+// so outcomes for ordinary text do not change.
 export function selectionMayHideUrlValue(prefixText: string, requestedText: string): boolean {
   if (requestedText.includes("@")) return true;
+  if (/^[@;,%?#]/.test(requestedText)) return true;
   return /[;,%?#@]$/.test(prefixText);
 }
 

@@ -504,4 +504,40 @@ describe("EvidenceStore", () => {
       ).resolves.toEqual({ status: "corrupt", code: "invalid_download_request" });
     });
   });
+
+  describe("verifiedByteRange", () => {
+    it("reads ranges past the old 64KiB cap up to the route maximum", async () => {
+      const { store } = await openStore();
+      // The excerpt route reads up to 65536 lookback plus an 8192-byte
+      // selection plus 16384 suffix bytes (90112 total) for its extended
+      // trigger search. The old 64KiB cap surfaced those valid keeps as
+      // corrupt artifacts.
+      const bytes = `head-${"x".repeat(80_000)}-tail`;
+      await publishReady(store, "up-range", "artifact-range", bytes);
+      const outcome = await store.verifiedByteRange({
+        artifactId: "artifact-range",
+        expectedSizeBytes: Buffer.byteLength(bytes),
+        expectedDigest: sha256(bytes),
+        byteOffset: 1000,
+        byteLength: 70_000,
+      });
+      if (outcome.status !== "ready") throw new Error(`expected ready: ${outcome.status}`);
+      expect(outcome.content.equals(Buffer.from(bytes).subarray(1000, 71_000))).toBe(true);
+    });
+
+    it("still rejects ranges past the raised bound", async () => {
+      const { store } = await openStore();
+      const bytes = "small";
+      await publishReady(store, "up-range-bound", "artifact-range-bound", bytes);
+      await expect(
+        store.verifiedByteRange({
+          artifactId: "artifact-range-bound",
+          expectedSizeBytes: bytes.length,
+          expectedDigest: sha256(bytes),
+          byteOffset: 0,
+          byteLength: VERIFIED_EXCERPT_MAX_BYTES + 1,
+        }),
+      ).resolves.toEqual({ status: "corrupt", code: "invalid_download_request" });
+    });
+  });
 });

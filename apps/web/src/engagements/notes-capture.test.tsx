@@ -377,6 +377,58 @@ describe("notes image capture", () => {
     ).toBe("edited caption");
   });
 
+  it("keeps the rejection notice when a batch mixes valid and rejected files", async () => {
+    const posts = stubNotes(async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201));
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByLabelText("Markdown");
+
+    // One change event carrying a PDF plus a valid PNG: the PNG lands as
+    // a pending card, but the notice must still name the discarded PDF.
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, {
+      target: {
+        files: [
+          new File(["%PDF-1.4"], "report.pdf", { type: "application/pdf" }),
+          new File([PNG_BYTES], "proof.png", { type: "image/png" }),
+        ],
+      },
+    });
+    expect(
+      await screen.findByText("report.pdf: only PNG, JPEG, GIF, and WebP images are accepted."),
+    ).toBeTruthy();
+    expect(await screen.findByLabelText("Proves (names the file)")).toBeTruthy();
+    expect(posts.length).toBe(0);
+  });
+
+  it("reports files the reader itself cannot decode", async () => {
+    stubNotes(async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201));
+    class FailingReader {
+      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => void) | null = null;
+      onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => void) | null = null;
+      onabort: ((this: FileReader, ev: ProgressEvent<FileReader>) => void) | null = null;
+      result: string | ArrayBuffer | null = null;
+      readAsDataURL(_file: File): void {
+        queueMicrotask(() => {
+          this.onerror?.call(this as unknown as FileReader, new Event("error") as ProgressEvent<FileReader>);
+        });
+      }
+    }
+    vi.stubGlobal("FileReader", FailingReader);
+
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
+    await screen.findByLabelText("Markdown");
+
+    const picker = screen.getByLabelText("Attach image file") as HTMLInputElement;
+    fireEvent.change(picker, {
+      target: { files: [new File([PNG_BYTES], "proof.png", { type: "image/png" })] },
+    });
+    // No pending card ever lands, but the failure is named instead of
+    // vanishing silently.
+    expect(await screen.findByText("proof.png: the image could not be read.")).toBeTruthy();
+    expect(screen.queryByLabelText("Proves (names the file)")).toBeNull();
+  });
+
   it("cancels a non-image file drop instead of navigating away", async () => {
     const posts = stubNotes(async (body) => response({ ...savedAttachment(), caption: body["caption"] }, 201));
 

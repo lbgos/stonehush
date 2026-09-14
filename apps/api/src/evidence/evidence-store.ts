@@ -121,7 +121,10 @@ export type VerifiedExcerptResult =
   | { status: "corrupt"; code: VerifiedDownloadCorruptCode }
   | VerifiedExcerptReady;
 
-export const VERIFIED_EXCERPT_MAX_BYTES = 64 * 1024;
+// Upper bound for one verified range read. Must cover the widest route
+// window: 65536 bytes of extended lookback plus an 8192-byte selection
+// plus 16384 bytes of suffix, 90112 bytes total, with margin.
+export const VERIFIED_EXCERPT_MAX_BYTES = 128 * 1024;
 
 const VERIFIED_DOWNLOAD_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const DOWNLOAD_CHUNK_BYTES = 256 * 1024;

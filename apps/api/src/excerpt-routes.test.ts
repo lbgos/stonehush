@@ -655,6 +655,74 @@ describe("excerpt routes", () => {
     expect(split.json()).toEqual({ code: "range_rejected" });
   });
 
+  it("masks delimiter-led selections inside hidden-scheme spans", async () => {
+    const harness = await createHarness();
+    // The selection opens with the delimiter, so neither the prefix check
+    // nor mid-token fires on the first pass. The extended search finds the
+    // scheme and masks instead of persisting raw.
+    const artifactId = "artifact-userinfo-delim";
+    const content = `https://user:${"A".repeat(17_000)};SECRET@host/x\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const keep = (byteOffset: number, byteLength: number) =>
+      harness.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+        payload: { runId: RUN_ID, artifactId, stream: "stdout", byteOffset, byteLength },
+      });
+    const led = await keep(17_013, ";SECRET@host".length);
+    expect(led.statusCode).toBe(201);
+    expect((led.json() as { content: string }).content).not.toContain("SECRET");
+    const tiny = await keep(17_013, ";S".length);
+    expect(tiny.statusCode).toBe(201);
+    expect((tiny.json() as { content: string }).content).not.toContain(";S");
+  });
+
+  it("reads extended windows past the old store limit", async () => {
+    const harness = await createHarness();
+    // End-to-end companion to the store bound test: a triggered keep with
+    // a 76411-byte extended read succeeds once the store cap covers the
+    // route maximum. The scheme sits at offset 0 inside the extended
+    // window, so the keep masks instead of persisting raw.
+    const artifactId = "artifact-long-range";
+    const content = `https://user:${"A".repeat(60_000)};SECRET@host/x${"B".repeat(20_000)}\n`;
+    harness.artifacts.set(artifactId, Buffer.from(content, "utf8"));
+    harness.extraArtifacts.push({ artifactId, kind: "stdout" });
+    const keep = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/excerpts`,
+      payload: {
+        runId: RUN_ID,
+        artifactId,
+        stream: "stdout",
+        byteOffset: 60_014,
+        byteLength: "SECRET@host".length,
+      },
+    });
+    expect(keep.statusCode).toBe(201);
+    const body = keep.json() as { content: string; redactions: number };
+    expect(body.content).not.toContain("SECRET");
+    expect(body.redactions).toBeGreaterThan(0);
+  });
+
+  it("masks search snippets whose key hides past the snippet context", async () => {
+    const harness = await createHarness();
+    // The credential key sits 20000 spaces back, outside the old 8KB
+    // snippet context: narrow masking alone would return `=hunter2`
+    // verbatim. The widened lookback sees the key and masks the snippet.
+    const content = `password${" ".repeat(20_000)}=hunter2 login-target\n`;
+    harness.artifacts.set(ARTIFACT_ID, Buffer.from(content, "utf8"));
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=hunter2`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as { matches: { snippet: string }[] };
+    expect(body.matches).toHaveLength(1);
+    expect(body.matches[0]?.snippet).not.toContain("hunter2");
+    expect(body.matches[0]?.snippet).toContain("[redacted]");
+  });
+
   it("masks userinfo values whose scheme hides past the base window", async () => {
     const harness = await createHarness();
     // The 16KB window ends inside a 17000-char password run, so no span
@@ -1219,5 +1287,25 @@ describe("attachment routes", () => {
       },
     });
     expect(badMime.statusCode).toBe(400);
+  });
+
+  it("accepts a max-size raw upload through the raised body limit", async () => {
+    const harness = await createHarness();
+    // 1.5M raw bytes encode to exactly 2M Base64 characters, so the JSON
+    // body is about 2MB: past Fastify's 1MiB default, inside the route's
+    // raised limit and every contract and column bound.
+    const raw = Buffer.alloc(1_500_000, 7);
+    const uploaded = await harness.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/attachments`,
+      payload: {
+        filename: "proof",
+        mime: "image/png",
+        contentBase64: raw.toString("base64"),
+      },
+    });
+    expect(uploaded.statusCode).toBe(201);
+    const body = uploaded.json() as { sizeBytes: number; digest: string };
+    expect(body.sizeBytes).toBe(1_500_000);
   });
 });

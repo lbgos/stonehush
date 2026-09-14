@@ -504,14 +504,17 @@ function NoteAttachmentsSection({
     const startedEngagementId = engagementIdRef.current;
     const startedEngagementName = engagementName;
     let accepted = false;
+    let rejectedInBatch = false;
     for (const file of files) {
       const mime = file.type;
       if (!isAttachmentMime(mime)) {
         setRejected(`${file.name}: only PNG, JPEG, GIF, and WebP images are accepted.`);
+        rejectedInBatch = true;
         continue;
       }
       if (file.size < 1 || file.size > ATTACHMENT_RAW_MAX_BYTES) {
         setRejected(`${file.name}: images must be between 1 byte and 1.5 MB.`);
+        rejectedInBatch = true;
         continue;
       }
       accepted = true;
@@ -537,10 +540,21 @@ function NoteAttachmentsSection({
           },
         ]);
       };
+      const reportUnreadable = () => {
+        // A file the reader cannot decode leaves no pending row and no
+        // upload, so say so through the rejection notice instead of
+        // dropping it silently. Stale completions after navigation stay
+        // ignored like the load path.
+        if (engagementIdRef.current !== startedEngagementId) return;
+        setRejected(`${file.name}: the image could not be read.`);
+      };
+      reader.onerror = reportUnreadable;
+      reader.onabort = reportUnreadable;
       reader.readAsDataURL(file);
     }
-    // A successful accept clears a previous rejection notice.
-    if (accepted) setRejected(undefined);
+    // A successful accept clears a previous rejection notice, but a mixed
+    // batch keeps the rejection: clearing it would hide the discarded file.
+    if (accepted && !rejectedInBatch) setRejected(undefined);
   };
 
   useEffect(() => {

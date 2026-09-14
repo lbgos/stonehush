@@ -176,6 +176,11 @@ describe("secret masking for excerpts", () => {
     expect(selectionMayHideUrlValue("a?", "b")).toBe(true);
     expect(selectionMayHideUrlValue("a#", "b")).toBe(true);
     expect(selectionMayHideUrlValue("a@", "b")).toBe(true);
+    // Delimiter-leading selections: the trigger sits before the span, so
+    // the prefix check alone would miss them.
+    expect(selectionMayHideUrlValue("AAA", ";SECRET")).toBe(true);
+    expect(selectionMayHideUrlValue("AAA", ",SECRET")).toBe(true);
+    expect(selectionMayHideUrlValue("AAA", ";S")).toBe(true);
     // Ordinary shapes without URL structure stay quiet.
     expect(selectionMayHideUrlValue("abc", "def")).toBe(false);
     expect(selectionMayHideUrlValue("key = ", "v")).toBe(false);
