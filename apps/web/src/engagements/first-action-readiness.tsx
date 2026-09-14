@@ -13,16 +13,21 @@ import { useRunHistoryQuery } from "./run-history-query.js";
 const NON_TERMINAL_RUN_STATES = new Set(["queued", "leased", "running", "cancel_requested"]);
 
 function systemLine(status: ReturnType<typeof useSystemStatusQuery>): string {
+  // A failed refresh must read as a failure even when a previous success left
+  // retained data behind. Reporting the cached state as current would mask an
+  // outage while the retry control is showing.
+  if (status.isError) return "Control plane: unreachable. Start the app and check again.";
   if (status.data !== undefined) {
     return status.data.overall === "ready"
       ? "Control plane: ready."
       : "Control plane: storage not ready. Queued work waits.";
   }
-  if (status.isError) return "Control plane: unreachable. Start the app and check again.";
   return "Control plane: checking.";
 }
 
 function advisorLine(status: ReturnType<typeof useAdvisorStatusQuery>): string {
+  // Same retained data rule as above: a failed refresh is not a ready advisor.
+  if (status.isError) return "Advisor: status unavailable. Manual work is unaffected.";
   if (status.data !== undefined) {
     switch (status.data.reason) {
       case "ok":
@@ -34,7 +39,6 @@ function advisorLine(status: ReturnType<typeof useAdvisorStatusQuery>): string {
         return "Advisor: not set up. Manual work is unaffected.";
     }
   }
-  if (status.isError) return "Advisor: status unavailable. Manual work is unaffected.";
   return "Advisor: checking.";
 }
 
@@ -74,10 +78,12 @@ export function FirstActionReadiness({
 
   const lines: string[] = [systemLine(system)];
   if (engagementId !== undefined) {
-    if (history.data !== undefined) {
-      lines.push(runLine(latest));
-    } else if (history.isError) {
+    // Same retained data rule as the status lines: a failed refresh with
+    // cached runs reports the failure instead of the stale last run.
+    if (history.isError) {
       lines.push("Runner: recent runs unavailable, state unknown.");
+    } else if (history.data !== undefined) {
+      lines.push(runLine(latest));
     } else {
       lines.push("Runner: checking recent runs.");
     }

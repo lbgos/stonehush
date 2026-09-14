@@ -1072,6 +1072,51 @@ describe("action planner", () => {
       }
     });
 
+    it("reports failed refreshes instead of stale healthy lines", async () => {
+      // Failures arm only after the first healthy load, so mount fetch counts
+      // cannot flake the setup. Retry then refreshes every line into failure
+      // while retained data is still cached.
+      let failRefresh = false;
+      stubFetch((url) => {
+        if (url.includes("/api/v1/system/status")) {
+          if (failRefresh) return Promise.reject(new Error("offline"));
+          return response(readyStatus);
+        }
+        if (url.includes("/api/v1/advisor/status")) {
+          // Advisor starts failed so the retry control is available.
+          return Promise.reject(new Error("offline"));
+        }
+        if (url.includes("/runs")) {
+          if (failRefresh) return Promise.reject(new Error("offline"));
+          return response({ runs: [historyRow({})], nextCursor: null });
+        }
+        return (
+          readResponse(url, activeEngagement, emptyRevision) ??
+          response({ code: "invalid_request" }, 400)
+        );
+      });
+      await renderPlanner();
+
+      expect(await screen.findByText("Control plane: ready.")).toBeTruthy();
+      expect(
+        await screen.findByText("Advisor: status unavailable. Manual work is unaffected."),
+      ).toBeTruthy();
+      expect(
+        await screen.findByText(/No new services means the target did not answer/),
+      ).toBeTruthy();
+      failRefresh = true;
+      fireEvent.click(await screen.findByRole("button", { name: "Retry status" }));
+
+      // The refresh fails while retained data is still cached. Every line must
+      // report the failure instead of the stale healthy copy.
+      expect(await screen.findByText(/Control plane: unreachable/)).toBeTruthy();
+      expect(screen.queryByText("Control plane: ready.")).toBeNull();
+      expect(
+        await screen.findByText("Runner: recent runs unavailable, state unknown."),
+      ).toBeTruthy();
+      expect(screen.queryByText(/No new services means the target did not answer/)).toBeNull();
+    });
+
     it("switches the warning when the route action is replaced without remount", async () => {
       const ACTION_B = "40000000-0000-4000-8000-000000000009";
       const pausedA = persistedAction("paused_for_warning");
