@@ -918,6 +918,23 @@ describe("excerpt routes", () => {
     expect(empty.statusCode).toBe(400);
   });
 
+  it("searches past empty artifacts without marking the scan capped", async () => {
+    const harness = await createHarness();
+    // An empty stdout artifact sorts first but carries no bytes: the search
+    // must skip it and still match the later artifact, with scanCapped
+    // false because no budget was exhausted.
+    harness.artifacts.set(ARTIFACT_ID, Buffer.alloc(0));
+    addArtifact(harness, "artifact-zz-full", "login ok\n");
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=login`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as { matches: unknown[]; scanCapped: boolean };
+    expect(body.matches).toHaveLength(1);
+    expect(body.scanCapped).toBe(false);
+  });
+
   it("reports scanCapped when more than 8 artifacts are eligible", async () => {
     const harness = await createHarness();
     for (let index = 0; index < 9; index += 1) {

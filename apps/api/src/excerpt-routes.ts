@@ -531,6 +531,9 @@ export function registerExcerptRoutes(
           unavailableArtifactIds.push(candidate.artifactId);
           continue;
         }
+        // Empty artifacts carry no searchable bytes: skip them without
+        // marking the scan capped or stopping later artifacts.
+        if (download.sizeBytes === 0) continue;
         const budget = Math.min(
           download.sizeBytes,
           EXCERPT_SEARCH_SCAN_MAX_BYTES - searchedBytes,
