@@ -25,6 +25,8 @@ export interface LeadDraft {
   readonly narrative: string;
   readonly artifactIds: readonly string[];
   readonly findingIds: readonly string[];
+  readonly serviceIds: readonly string[];
+  readonly probeIds: readonly string[];
   readonly sourceQuestion: string;
 }
 
@@ -37,10 +39,14 @@ const PARAGRAPH_MAX = 32;
 function citationRefs(paragraph: PinnedParagraph): {
   readonly artifacts: readonly string[];
   readonly findings: readonly string[];
+  readonly services: readonly string[];
+  readonly probes: readonly string[];
   readonly unverified: readonly string[];
 } {
   const artifacts: string[] = [];
   const findings: string[] = [];
+  const services: string[] = [];
+  const probes: string[] = [];
   const unverified: string[] = [];
   for (const citation of paragraph.citations) {
     if (!citation.valid) {
@@ -49,16 +55,24 @@ function citationRefs(paragraph: PinnedParagraph): {
       artifacts.push(citation.raw);
     } else if (citation.kind === "finding") {
       findings.push(citation.raw);
+    } else if (citation.kind === "service") {
+      services.push(citation.raw);
+    } else if (citation.kind === "probe") {
+      probes.push(citation.raw);
+    } else {
+      unverified.push(citation.raw);
     }
   }
-  return { artifacts, findings, unverified };
+  return { artifacts, findings, services, probes, unverified };
 }
 
 function sourcesLine(paragraph: PinnedParagraph): string {
-  const { artifacts, findings, unverified } = citationRefs(paragraph);
+  const { artifacts, findings, services, probes, unverified } = citationRefs(paragraph);
   const parts: string[] = [];
   for (const id of artifacts) parts.push(`artifact ${id}`);
   for (const id of findings) parts.push(`finding ${id}`);
+  for (const id of services) parts.push(`service ${id}`);
+  for (const id of probes) parts.push(`probe ${id}`);
   for (const raw of unverified) parts.push(`unverified ${raw}`);
   if (parts.length === 0) return "";
   return `\n\nSources: ${parts.join(", ")}.`;
@@ -87,7 +101,7 @@ export function pinParagraphToLead(
   paragraph: PinnedParagraph,
   sourceQuestion: string,
 ): LeadDraft {
-  const { artifacts, findings } = citationRefs(paragraph);
+  const { artifacts, findings, services, probes } = citationRefs(paragraph);
   const firstLine = paragraph.text.split("\n")[0] ?? paragraph.text;
   const title =
     Array.from(firstLine).length > 120
@@ -98,6 +112,8 @@ export function pinParagraphToLead(
     narrative: `${paragraph.text}${sourcesLine(paragraph)}`,
     artifactIds: artifacts,
     findingIds: findings,
+    serviceIds: services,
+    probeIds: probes,
     sourceQuestion,
   };
 }

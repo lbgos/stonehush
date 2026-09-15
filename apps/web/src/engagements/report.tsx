@@ -159,9 +159,9 @@ function ReportBody({
       buildSharingPreview({
         bundle: view,
         outline,
-        options: { includeAssetLinks },
+        options: { includeAssetLinks, maskSecrets: masked },
       }),
-    [view, outline, includeAssetLinks],
+    [view, outline, includeAssetLinks, masked],
   );
   const sharingMarkdown = exportSharingMarkdown(sharing);
   const flags = useMemo(
@@ -684,7 +684,7 @@ function SharingSection({
         </div>
         <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">
           <div className="border-b border-border px-3 py-2">
-            <h4 className="m-0 text-[12px] font-semibold">Sharing preview (exact export text)</h4>
+            <h4 className="m-0 text-[12px] font-semibold">Sharing preview (outline Markdown export text)</h4>
           </div>
           <pre className="m-0 max-h-96 min-w-0 overflow-auto px-3 py-2.5 font-mono text-[12px] leading-5 whitespace-pre-wrap break-words">
             {sharingMarkdown}

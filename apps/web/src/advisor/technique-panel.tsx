@@ -19,6 +19,37 @@ export interface TechniqueDraft extends SaveTechniqueInput {
   readonly key: string;
 }
 
+// Parse the procedure textarea: blank line between steps, `$` prefix for
+// commands. A block holds at most one command, so a second `$` line
+// rejects the draft instead of silently dropping input. A command-only
+// block keeps a generic instruction so a bare runnable check stays
+// savable. Exported for focused unit tests.
+export function parseProcedure(
+  raw: string,
+): SaveTechniqueInput["procedure"] | undefined {
+  const steps: { instruction: string; command?: string }[] = [];
+  for (const block of raw.split(/\n\s*\n/)) {
+    const lines = block
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length === 0) continue;
+    const instruction = lines.filter((line) => !line.startsWith("$")).join(" ");
+    const commandLines = lines.filter((line) => line.startsWith("$"));
+    if (commandLines.length > 1) return undefined;
+    const command = commandLines[0]?.slice(1).trim();
+    if (instruction.length === 0 && (command === undefined || command.length === 0)) {
+      return undefined;
+    }
+    steps.push(
+      command === undefined || command.length === 0
+        ? { instruction }
+        : { instruction: instruction.length > 0 ? instruction : "Run the command.", command },
+    );
+  }
+  return steps;
+}
+
 // Saved techniques for this engagement. Save-as-technique stores a useful
 // sequence with its prerequisites, question, procedure, and meaning;
 // replay fills placeholders with operator values and never runs anything
@@ -220,27 +251,9 @@ function SaveTechniqueForm({
   const [meaning, setMeaning] = useState(initial?.meaning ?? "");
   const [error, setError] = useState<string | undefined>(undefined);
 
-  function parseProcedure(): SaveTechniqueInput["procedure"] | undefined {
-    const steps: { instruction: string; command?: string }[] = [];
-    for (const block of procedure.split(/\n\s*\n/)) {
-      const lines = block.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-      if (lines.length === 0) continue;
-      const instruction = lines.filter((line) => !line.startsWith("$")).join(" ");
-      const commandLine = lines.find((line) => line.startsWith("$"));
-      const command = commandLine?.slice(1).trim();
-      if (instruction.length === 0) return undefined;
-      steps.push(
-        command === undefined || command.length === 0
-          ? { instruction }
-          : { instruction, command },
-      );
-    }
-    return steps;
-  }
-
   function handleSave() {
     setError(undefined);
-    const steps = parseProcedure();
+    const steps = parseProcedure(procedure);
     if (name.trim().length === 0 || question.trim().length === 0 || steps === undefined || steps.length === 0) {
       setError("Name, question, and at least one procedure step are required.");
       return;

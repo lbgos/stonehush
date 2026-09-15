@@ -114,8 +114,10 @@ export function buildSharingPreview(input: SharingInput): SharingPreview {
   };
 }
 
-// The exact artifact bytes for the preview above. Same string, no second
-// renderer, so preview and export cannot drift.
+// The exact artifact bytes for the outline Markdown download above. Same
+// string, no second renderer, so that preview and file cannot drift. The
+// print HTML wraps this Markdown and the portable bundle is a manifest, so
+// neither matches these bytes.
 export function exportSharingMarkdown(preview: SharingPreview): string {
   return preview.markdown;
 }
