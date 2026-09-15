@@ -20,6 +20,16 @@ export const StoneCaptureKindSchema = z.enum([
   "ffuf_json",
 ]);
 
+// Ordinary operator captures (paste, file/screenshot drop). Typed parser
+// kinds (nmap_xml, ffuf_json) are excluded here by design: they are only
+// persisted through the guarded import routes, which parse presented content
+// before storing anything.
+export const StoneOrdinaryCaptureKindSchema = z.enum([
+  "pasted_terminal",
+  "dropped_file",
+  "screenshot",
+]);
+
 export const StoneCaptureOriginSchema = z.enum(["pasted", "imported"]);
 
 export const StoneContentDigestSchema = z
@@ -63,7 +73,7 @@ export const CreateStoneCaptureRequestSchema = z.strictObject({
   engagementId: EngagementSchema.shape.id,
   targetId: IdentifierSchema.nullable().optional().default(null),
   leadId: z.string().min(1).max(255).nullable().optional().default(null),
-  kind: StoneCaptureKindSchema,
+  kind: StoneOrdinaryCaptureKindSchema,
   title: z
     .string()
     .refine((value) => value === value.trim(), {
@@ -88,9 +98,15 @@ export const StoneCaptureSchema = z.strictObject({
   leadId: z.string().min(1).max(255).nullable(),
   kind: StoneCaptureKindSchema,
   originLabel: StoneCaptureOriginSchema,
-  title: z.string().min(1).max(120),
+  title: z
+    .string()
+    .refine((value) => hasCodePointLength(value, 1, 120), {
+      message: "must contain between 1 and 120 Unicode code points",
+    }),
   command: z.string().min(1).max(2048).nullable(),
   observation: z.string().min(1).max(2048).nullable(),
+  contentText: z.string().max(67_108_864).nullable(),
+  fileName: z.string().min(1).max(255).nullable(),
   contentDigest: StoneContentDigestSchema,
   provenanceExistingId: IdentifierSchema.nullable(),
   byteSize: z.number().int().min(0),
@@ -145,16 +161,23 @@ export const StoneCaptureListResponseSchema = z.array(StoneCaptureSchema);
 
 const StoneTargetIdSchema = z.uuid({ version: "v4" });
 
-// Import request boundary. Counts are derived server-side by parsing the
-// presented content, so no client count field exists here: a rawCount member
-// is rejected by the strict object rather than accepted and dropped.
+// Import request boundary. Presented content is required: counts and the
+// content digest are derived server-side by parsing these bytes, so a
+// digest-only import cannot create typed evidence the parser never saw.
+// Counts are derived, never accepted: a rawCount member is rejected by the
+// strict object rather than accepted and dropped.
 export const StoneImportBodySchema = z.strictObject({
   targetId: StoneTargetIdSchema.nullable().optional().default(null),
   leadId: z.string().min(1).max(255).nullable().optional().default(null),
-  title: z.string().min(1).max(120).optional(),
+  title: z
+    .string()
+    .refine((value) => hasCodePointLength(value, 1, 120), {
+      message: "must contain between 1 and 120 Unicode code points",
+    })
+    .optional(),
   command: z.string().min(1).max(2048).optional(),
   observation: SingleLineObservationSchema.optional(),
-  contentText: z.string().min(1).max(67_108_864).optional(),
+  contentText: z.string().min(1).max(67_108_864),
   contentDigest: StoneContentDigestSchema.optional(),
   fileName: z.string().min(1).max(255).optional(),
   byteSize: z.number().int().min(0).max(67_108_864).optional(),
@@ -169,6 +192,7 @@ export const StoneCaptureErrorSchema = z.union([
 ]);
 
 export type StoneCaptureKind = z.infer<typeof StoneCaptureKindSchema>;
+export type StoneOrdinaryCaptureKind = z.infer<typeof StoneOrdinaryCaptureKindSchema>;
 export type StoneCaptureOrigin = z.infer<typeof StoneCaptureOriginSchema>;
 export type CreateStoneCaptureRequest = z.infer<typeof CreateStoneCaptureRequestSchema>;
 export type StoneCapture = z.infer<typeof StoneCaptureSchema>;

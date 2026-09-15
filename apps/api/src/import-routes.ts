@@ -1,5 +1,6 @@
 import {
   FFUF_MAX_JSON_BYTES,
+  NMAP_MAX_XML_BYTES,
   StoneCaptureSchema,
   StoneEngagementIdParamsSchema,
   StoneImportBodySchema,
@@ -48,21 +49,17 @@ export function registerStoneImportRoutes(
     if (!params.success || !body.success) {
       return sendError(reply, 400, "invalid_request");
     }
-    if (body.data.contentText === undefined && body.data.contentDigest === undefined) {
-      return sendError(reply, 400, "invalid_request");
-    }
     // Presented import content is parsed with the matching typed parser before
     // anything is stored, so malformed uploads are never labeled as Nmap or
-    // ffuf evidence. Digest-only imports carry no bytes to validate.
-    if (body.data.contentText !== undefined) {
-      const bytes = new TextEncoder().encode(body.data.contentText);
-      if (kind === "ffuf_json" && bytes.length > FFUF_MAX_JSON_BYTES) {
-        return sendError(reply, 400, "invalid_request");
-      }
-      const parsed =
-        kind === "nmap_xml" ? countNmapXmlServices(bytes) : countFfufJsonResults(bytes);
-      if (!parsed.ok) return sendError(reply, 400, "invalid_request");
+    // ffuf evidence. Content is required by the import boundary, so there are
+    // always bytes to validate.
+    const bytes = new TextEncoder().encode(body.data.contentText);
+    if (kind === "ffuf_json" && bytes.length > FFUF_MAX_JSON_BYTES) {
+      return sendError(reply, 400, "invalid_request");
     }
+    const parsed =
+      kind === "nmap_xml" ? countNmapXmlServices(bytes) : countFfufJsonResults(bytes);
+    if (!parsed.ok) return sendError(reply, 400, "invalid_request");
     const title = (body.data.title ?? fallbackTitle).trim();
     if (title.length === 0) return sendError(reply, 400, "invalid_request");
     let result: ReturnType<Imports["createCapture"]>;
@@ -93,13 +90,17 @@ export function registerStoneImportRoutes(
       .send({ deduplicated: result.value.deduplicated, capture: validated.data });
   };
 
+  // Route body limits match the parser bounds so reachable uploads are never
+  // cut off by the framework default before validation runs.
   app.post(
     "/api/v1/engagements/:engagementId/stone-imports/nmap-xml",
+    { bodyLimit: NMAP_MAX_XML_BYTES },
     async (request, reply) => handleImport(request, reply, "nmap_xml", "Nmap import"),
   );
 
   app.post(
     "/api/v1/engagements/:engagementId/stone-imports/ffuf-json",
+    { bodyLimit: FFUF_MAX_JSON_BYTES },
     async (request, reply) => handleImport(request, reply, "ffuf_json", "Ffuf import"),
   );
 }

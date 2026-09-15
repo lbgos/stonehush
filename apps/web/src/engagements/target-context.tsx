@@ -6,7 +6,7 @@ import {
 } from "@stonehush/contracts";
 import { Button, cn } from "@stonehush/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 
 import { buildCopyText, COPIED_NOT_RAN_NOTE, resolveRecipeCopy } from "./target-context-recipes.js";
 import {
@@ -51,7 +51,11 @@ export function TargetContextPanel({
   const queryClient = useQueryClient();
   const targets = useStoneTargetsQuery(engagementId);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  // Tracks the displayed target so late async responses for a previous target
+  // are discarded instead of shown under the new one.
+  const activeTargetRef = useRef<string | null>(null);
   const activeTargetId = selectedTargetId ?? targets.data?.[0]?.id ?? null;
+  activeTargetRef.current = activeTargetId;
   const bindings = useStoneBindingsQuery(engagementId, activeTargetId);
 
   const [newAddress, setNewAddress] = useState("");
@@ -71,12 +75,17 @@ export function TargetContextPanel({
   const baseSnapshot = useMemo(
     () => ({
       address: current?.bindingKind === "ip" ? current.addressText : null,
-      hostname: current?.bindingKind === "hostname" ? current.addressText : null,
+      hostname:
+        current?.bindingKind === "hostname"
+          ? current.addressText
+          : offer?.status === "associated"
+            ? offer.requestedHostname
+            : null,
       origin: origin ?? null,
       accountRef: accessContext.accountRef,
       connectionRef: accessContext.connectionRef,
     }),
-    [current, origin, accessContext],
+    [current, offer, origin, accessContext],
   );
 
   const recipeResolution = useMemo(
@@ -151,6 +160,7 @@ export function TargetContextPanel({
 
   const onProposeHostname = async () => {
     if (activeTargetId === null || offerBusy) return;
+    const wantedTargetId = activeTargetId;
     setOfferBusy(true);
     setOfferError(null);
     try {
@@ -161,8 +171,10 @@ export function TargetContextPanel({
             : (current?.addressText ?? ""),
         requestedHostname: requestedHostname.trim(),
       });
+      if (activeTargetRef.current !== wantedTargetId) return;
       setOffer(association);
     } catch {
+      if (activeTargetRef.current !== wantedTargetId) return;
       setOfferError("The hostname offer was not accepted. Check the values and try again.");
     } finally {
       setOfferBusy(false);
@@ -171,12 +183,16 @@ export function TargetContextPanel({
 
   const onDecideHostname = async (decision: "associated" | "declined") => {
     if (offer === null || offerBusy) return;
+    const wantedTargetId = activeTargetId;
+    const wantedOfferId = offer.id;
     setOfferBusy(true);
     setOfferError(null);
     try {
       const decided = await decideStoneHostnameRequest(engagementId, offer.id, decision);
-      setOffer(decided);
+      if (activeTargetRef.current !== wantedTargetId) return;
+      setOffer((previous) => (previous?.id === wantedOfferId ? decided : previous));
     } catch {
+      if (activeTargetRef.current !== wantedTargetId) return;
       setOfferError("The decision was not recorded. Try again.");
     } finally {
       setOfferBusy(false);
@@ -193,7 +209,8 @@ export function TargetContextPanel({
     setCopyMissing(null);
     try {
       const clipboard = navigator.clipboard;
-      if (clipboard !== undefined) await clipboard.writeText(resolved.text);
+      if (clipboard === undefined) throw new Error("Clipboard API unavailable");
+      await clipboard.writeText(resolved.text);
       setCopied(`${STONE_COPY_ACTION_LABELS[kind]}. ${COPIED_NOT_RAN_NOTE}`);
     } catch {
       setCopied(`${STONE_COPY_ACTION_LABELS[kind]} failed. Value shown above.`);

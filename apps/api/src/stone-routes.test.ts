@@ -263,4 +263,60 @@ describe("stone capture and import routes", () => {
     expect(listed.statusCode).toBe(200);
     expect((listed.json() as unknown[])).toHaveLength(1);
   });
+
+  it("rejects typed parser kinds on the ordinary capture route", async () => {
+    const { app, engagementId } = await fixture();
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-captures`,
+      payload: {
+        engagementId,
+        targetId: null,
+        leadId: null,
+        kind: "nmap_xml",
+        title: "Nmap import",
+        contentText: "<nmaprun></nmaprun>",
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("rejects digest-only imports without presented content", async () => {
+    const { app, engagementId } = await fixture();
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-imports/nmap-xml`,
+      payload: {
+        targetId: null,
+        leadId: null,
+        title: "Nmap import",
+        contentDigest:
+          "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      },
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
+  it("returns stored content on captures", async () => {
+    const { app, engagementId } = await fixture();
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-captures`,
+      payload: {
+        engagementId,
+        targetId: null,
+        leadId: null,
+        kind: "pasted_terminal",
+        title: "pasted output",
+        contentText: "terminal bytes",
+        fileName: "session.txt",
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const body = created.json() as {
+      capture: { contentText: string | null; fileName: string | null };
+    };
+    expect(body.capture.contentText).toBe("terminal bytes");
+    expect(body.capture.fileName).toBe("session.txt");
+  });
 });
