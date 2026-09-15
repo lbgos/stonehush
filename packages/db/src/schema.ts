@@ -1364,6 +1364,63 @@ export const settings = sqliteTable(
   ],
 );
 
+// Saved advisor techniques (STONE-7). One reusable procedure per row,
+// engagement-scoped with restrict deletes so saved material never loses
+// provenance. JSON columns carry prerequisites and procedure steps; the
+// repository validates them against the technique contract on every read.
+export const techniques = sqliteTable(
+  "techniques",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    whenUseful: text("when_useful").notNull(),
+    prerequisitesJson: text("prerequisites_json").notNull(),
+    question: text("question").notNull(),
+    procedureJson: text("procedure_json").notNull(),
+    meaning: text("meaning").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("technique_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "technique_name_length",
+      sql`length(${table.name}) between 1 and 80 and ${table.name} = trim(${table.name})`,
+    ),
+    check(
+      "technique_when_useful_bytes",
+      sql`length(cast(${table.whenUseful} as blob)) <= 2000`,
+    ),
+    check(
+      "technique_prerequisites_json",
+      sql`json_valid(${table.prerequisitesJson}) and length(cast(${table.prerequisitesJson} as blob)) <= 8192`,
+    ),
+    check(
+      "technique_question_bytes",
+      sql`length(cast(${table.question} as blob)) between 1 and 2000 and ${table.question} = trim(${table.question})`,
+    ),
+    check(
+      "technique_procedure_json",
+      sql`json_valid(${table.procedureJson}) and length(cast(${table.procedureJson} as blob)) <= 16384`,
+    ),
+    check(
+      "technique_meaning_bytes",
+      sql`length(cast(${table.meaning} as blob)) <= 2000`,
+    ),
+    check("technique_created_at", sql`length(${table.createdAt}) >= 20`),
+    check("technique_updated_at", sql`length(${table.updatedAt}) >= 20`),
+    index("technique_engagement_created_idx").on(
+      table.engagementId,
+      table.createdAt,
+      table.id,
+    ),
+  ],
+);
+
 export type RunRow = typeof runs.$inferSelect;
 export type RunLeaseRow = typeof runLeases.$inferSelect;
 export type RunEventRow = typeof runEvents.$inferSelect;
@@ -1377,5 +1434,6 @@ export type NmapServiceRow = typeof nmapServices.$inferSelect;
 export type HttpProbeResultRow = typeof httpProbeResults.$inferSelect;
 export type FfufResultRow = typeof ffufResults.$inferSelect;
 export type FindingRow = typeof findings.$inferSelect;
+export type TechniqueRow = typeof techniques.$inferSelect;
 export type AdvisorTurnRow = typeof advisorTurns.$inferSelect;
 export type SettingsRow = typeof settings.$inferSelect;

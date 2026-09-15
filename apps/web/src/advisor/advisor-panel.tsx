@@ -6,7 +6,7 @@ import {
 } from "@stonehush/contracts";
 import { Button } from "@stonehush/ui";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAdvisorStatusQuery } from "../advisor-status-query.js";
 import { createIdempotencyKey } from "../engagements/idempotency.js";
@@ -17,6 +17,30 @@ import {
   useRequestAdvisorTurnMutation,
   type RequestAdvisorTurnInput,
 } from "./turn-query.js";
+import {
+  ADVISOR_ENTRY_POINT_LABELS,
+  buildDistinguishQuestion,
+  buildExplainQuestion,
+  buildOverlookQuestion,
+  type AdvisorEntryPoint,
+} from "./advisor-entry-points.js";
+import { ParagraphActions } from "./advisor-paragraph-actions.js";
+import { TriedChecksSection } from "./advisor-tried-checks.js";
+import { citationPassageHref } from "./citations.js";
+import {
+  buildContextPreview,
+  storedTurnBasis,
+} from "./context-preview.js";
+import {
+  applyHintDepth,
+  HINT_DEPTH_LABELS,
+  loadHintDepth,
+  saveHintDepth,
+  type HintDepth,
+} from "./hint-depth.js";
+import { splitAnswerParagraphs } from "./pin-citation.js";
+import { TechniquePanel, type TechniqueDraft } from "./technique-panel.js";
+import type { SaveTechniqueInput } from "./technique-query.js";
 
 const REFETCH_AFTER_CONFLICT_MS = 3_000;
 const PENDING_POLL_INTERVAL_MS = 5_000;
@@ -97,6 +121,18 @@ export function AdvisorPanel({
   onClose,
 }: AdvisorPanelProps) {
   const [question, setQuestion] = useState("");
+  const [entryPoint, setEntryPoint] = useState<AdvisorEntryPoint | null>(null);
+  // Hint depth is kept per engagement and advances only on explicit clicks.
+  const [depth, setDepth] = useState<HintDepth>(() =>
+    loadHintDepth(
+      typeof localStorage === "undefined" ? undefined : localStorage,
+      engagementId,
+    ),
+  );
+  const [techniquesOpen, setTechniquesOpen] = useState(false);
+  const [techniqueDraft, setTechniqueDraft] = useState<TechniqueDraft | undefined>(
+    undefined,
+  );
   const [lastAttempt, setLastAttempt] = useState<Attempt | null>(null);
   const [lastError, setLastError] = useState<AdvisorTurnRequestError | null>(null);
   const [pollCycle, setPollCycle] = useState(0);
@@ -113,6 +149,18 @@ export function AdvisorPanel({
   const ask = useRequestAdvisorTurnMutation(engagementId);
   const historyRef = useRef(history);
   historyRef.current = history;
+
+  const findingTitles = useMemo(() => {
+    const titles = new Map<string, string>();
+    for (const finding of findings.data ?? []) titles.set(finding.id, finding.title);
+    return titles;
+  }, [findings.data]);
+  // Recorded engagement facts for technique matching: finding titles only.
+  // Scratchpad text and credentials never enter this list.
+  const facts = useMemo(
+    () => [...findingTitles.values()],
+    [findingTitles],
+  );
 
   // Non-modal drawer focus: capture the trigger, focus the panel, and
   // restore focus on unmount. No trap: background stays interactive.
@@ -161,6 +209,10 @@ export function AdvisorPanel({
 
   const normalizedQuestion = question.trim();
   const questionBytes = utf8Length(normalizedQuestion);
+  // Hint depth shapes the outgoing question; the shaped bytes gate Ask so
+  // a max-length draft plus a depth suffix can never fail server-side.
+  const shapedQuestion = applyHintDepth(normalizedQuestion, depth);
+  const shapedBytes = utf8Length(shapedQuestion);
   const excerptCount = excerpts.length;
   const findingCount = findingIds.length;
   const needsExcerpt = findingCount > 0 && excerptCount === 0;
@@ -171,7 +223,7 @@ export function AdvisorPanel({
     !setupNeeded &&
     !ask.isPending &&
     normalizedQuestion.length > 0 &&
-    questionBytes <= ADVISOR_QUESTION_MAX_BYTES &&
+    shapedBytes <= ADVISOR_QUESTION_MAX_BYTES &&
     excerptCount >= 1 &&
     excerptCount <= ADVISOR_EXCERPT_IDS_MAX &&
     findingCount <= ADVISOR_FINDING_IDS_MAX;
@@ -223,15 +275,17 @@ export function AdvisorPanel({
     if (
       archived ||
       normalizedQuestion.length === 0 ||
-      questionBytes > ADVISOR_QUESTION_MAX_BYTES ||
+      shapedBytes > ADVISOR_QUESTION_MAX_BYTES ||
       excerptCount < 1 ||
       excerptCount > ADVISOR_EXCERPT_IDS_MAX ||
       findingCount > ADVISOR_FINDING_IDS_MAX
     ) {
       return undefined;
     }
+    // Hint depth shapes the outgoing question only. The request still
+    // carries explicitly selected evidence ids and nothing else.
     return {
-      question: normalizedQuestion,
+      question: shapedQuestion,
       excerptArtifactIds: [...excerpts],
       findingIds: [...findingIds],
     };
@@ -260,6 +314,41 @@ export function AdvisorPanel({
     void history.refetch();
   }
 
+  function chooseEntryPoint(entry: AdvisorEntryPoint) {
+    if (archived) return;
+    setEntryPoint(entry);
+    // Leads wire in through a narrow STONE-4 adapter later; today the
+    // operator types the specific possibilities into the drafted question.
+    if (entry === "explain") setQuestion(buildExplainQuestion(""));
+    else if (entry === "distinguish") setQuestion(buildDistinguishQuestion({ possibilities: [] }));
+    else setQuestion(buildOverlookQuestion({ investigation: "" }));
+  }
+
+  function chooseDepth(next: HintDepth) {
+    if (archived) return;
+    setDepth(next);
+    saveHintDepth(
+      typeof localStorage === "undefined" ? undefined : localStorage,
+      engagementId,
+      next,
+    );
+  }
+
+  function handleSaveTechnique(draft: SaveTechniqueInput) {
+    setTechniqueDraft({ ...draft, key: `${Date.now()}` });
+    setTechniquesOpen(true);
+  }
+
+  // Context preview: exactly what Ask would send, shown before send.
+  const preview = buildContextPreview({
+    question: normalizedQuestion,
+    excerpts: excerpts.map((id) => ({ id })),
+    findings: findingIds.map((id) => {
+      const title = findingTitles.get(id);
+      return title === undefined ? { id } : { id, title };
+    }),
+  });
+
   function toggleFinding(id: string) {
     if (archived) return;
     if (findingIds.includes(id)) {
@@ -282,7 +371,7 @@ export function AdvisorPanel({
     (lastError.code === "request_failed" || lastError.code === "turn_in_progress") &&
     fingerprint(lastAttempt.input) ===
       fingerprint({
-        question: normalizedQuestion,
+        question: shapedQuestion,
         excerptArtifactIds: [...excerpts],
         findingIds: [...findingIds],
       });
@@ -370,6 +459,25 @@ export function AdvisorPanel({
         </div>
 
         <div>
+          <p className="m-0 mb-1 text-[12px] font-semibold">Entry point</p>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Advisor entry point">
+            {(Object.keys(ADVISOR_ENTRY_POINT_LABELS) as AdvisorEntryPoint[]).map((entry) => (
+              <Button
+                key={entry}
+                type="button"
+                variant={entryPoint === entry ? "secondary" : "quiet"}
+                className="h-7 px-2 text-[12px]"
+                aria-pressed={entryPoint === entry}
+                disabled={archived}
+                onClick={() => chooseEntryPoint(entry)}
+              >
+                {ADVISOR_ENTRY_POINT_LABELS[entry]}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div>
           <label
             className="mb-1 block text-[12px] font-semibold"
             htmlFor="advisor-question"
@@ -407,6 +515,38 @@ export function AdvisorPanel({
               Explain this failure
             </Button>
           </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2" role="group" aria-label="Hint depth">
+            <span className="text-[12px] text-muted-foreground">Hint depth:</span>
+            {([0, 1, 2] as HintDepth[]).map((level) => (
+              <Button
+                key={level}
+                type="button"
+                variant={depth === level ? "secondary" : "quiet"}
+                className="h-7 px-2 text-[12px]"
+                aria-pressed={depth === level}
+                disabled={archived}
+                onClick={() => chooseDepth(level)}
+              >
+                {HINT_DEPTH_LABELS[level]}
+              </Button>
+            ))}
+          </div>
+          {depth > 0 && !archived ? (
+            <p className="mt-1 mb-0 text-[12px] text-muted-foreground" role="status">
+              Depth {depth}: {depth === 1 ? "one specific next check on send." : "detailed approach on send."} Switch back for a focused question.
+            </p>
+          ) : null}
+        </div>
+
+        <div className="rounded-md border border-border px-2.5 py-2">
+          <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+            Context preview (sent on Ask)
+          </p>
+          <ul className="m-0 mt-1 list-none space-y-0.5 p-0 font-mono text-[11px]">
+            {preview.lines.map((line, index) => (
+              <li key={index} className="break-words">{line}</li>
+            ))}
+          </ul>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -494,7 +634,13 @@ export function AdvisorPanel({
           ) : null}
           <ul className="m-0 list-none space-y-3 p-0">
             {turns.map((turn) => (
-              <TurnCard key={turn.id} turn={turn} />
+              <TurnCard
+                key={turn.id}
+                turn={turn}
+                engagementId={engagementId}
+                archived={archived}
+                onSaveTechnique={handleSaveTechnique}
+              />
             ))}
           </ul>
           {history.isFetchNextPageError ? (
@@ -524,6 +670,41 @@ export function AdvisorPanel({
                 {history.isFetchingNextPage ? "Loading" : "Load more"}
               </Button>
             </div>
+          ) : null}
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="m-0 text-[12px] font-semibold">Tried checks</h3>
+          </div>
+          <TriedChecksSection
+            engagementId={engagementId}
+            archived={archived}
+            turns={turns}
+            storage={typeof localStorage === "undefined" ? undefined : localStorage}
+          />
+        </div>
+
+        <div>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="m-0 text-[12px] font-semibold">Techniques</h3>
+            <Button
+              type="button"
+              variant="quiet"
+              className="h-7 px-2 text-[12px]"
+              aria-expanded={techniquesOpen}
+              onClick={() => setTechniquesOpen((open) => !open)}
+            >
+              {techniquesOpen ? "Hide" : "Show"}
+            </Button>
+          </div>
+          {techniquesOpen ? (
+            <TechniquePanel
+              engagementId={engagementId}
+              archived={archived}
+              facts={facts}
+              draft={techniqueDraft}
+            />
           ) : null}
         </div>
       </div>
@@ -586,10 +767,25 @@ function FindingPicker({
   );
 }
 
-function TurnCard({ turn }: { turn: AdvisorTurn }) {
+function TurnCard({
+  turn,
+  engagementId,
+  archived,
+  onSaveTechnique,
+}: {
+  turn: AdvisorTurn;
+  engagementId: string;
+  archived: boolean;
+  onSaveTechnique: (draft: SaveTechniqueInput) => void;
+}) {
+  const paragraphs =
+    turn.status === "succeeded" ? splitAnswerParagraphs(turn.answer) : [];
   return (
     <li className="rounded-[10px] border border-border px-3 py-2.5">
       <p className="m-0 text-[12px] font-semibold">Q: {turn.question}</p>
+      <p className="m-0 mt-1 text-[11px] text-muted-foreground">
+        {storedTurnBasis(turn.citations)}
+      </p>
       {turn.status === "pending" ? (
         <p className="mt-1 mb-0 text-[12px] text-muted-foreground" role="status">
           Running…
@@ -602,7 +798,19 @@ function TurnCard({ turn }: { turn: AdvisorTurn }) {
               Abstained — guidance, not fact
             </p>
           ) : null}
-          <p className="m-0 whitespace-pre-wrap break-words text-[12px] leading-5">{turn.answer}</p>
+          {paragraphs.map((paragraph, index) => (
+            <div key={index} className="mt-1.5 first:mt-0">
+              <p className="m-0 whitespace-pre-wrap break-words text-[12px] leading-5">{paragraph}</p>
+              <ParagraphActions
+                engagementId={engagementId}
+                archived={archived}
+                paragraph={paragraph}
+                citations={turn.citations}
+                question={turn.question}
+                onSaveTechnique={onSaveTechnique}
+              />
+            </div>
+          ))}
           {turn.uncertainty.length > 0 ? (
             <div className="mt-2">
               <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
@@ -615,19 +823,29 @@ function TurnCard({ turn }: { turn: AdvisorTurn }) {
           ) : null}
           {turn.citations.length > 0 ? (
             <ul className="mt-2 mb-0 list-none space-y-1 p-0" aria-label="Citations">
-              {turn.citations.map((citation, index) => (
-                <li key={`${citation.raw}-${index}`}>
-                  {citation.valid && citation.kind !== "unknown" ? (
-                    <span className="inline-block rounded-md bg-accent px-2 py-0.5 font-mono text-[11px]">
-                      {citation.kind}: {citation.raw}
-                    </span>
-                  ) : (
-                    <span className="inline-block rounded-md border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
-                      unverified: {citation.raw}
-                    </span>
-                  )}
-                </li>
-              ))}
+              {turn.citations.map((citation, index) => {
+                const href = citationPassageHref(engagementId, citation);
+                return (
+                  <li key={`${citation.raw}-${index}`}>
+                    {href !== null ? (
+                      <a
+                        href={href}
+                        className="inline-block rounded-md bg-accent px-2 py-0.5 font-mono text-[11px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {citation.kind}: {citation.raw}
+                      </a>
+                    ) : citation.valid && citation.kind !== "unknown" ? (
+                      <span className="inline-block rounded-md bg-accent px-2 py-0.5 font-mono text-[11px]">
+                        {citation.kind}: {citation.raw}
+                      </span>
+                    ) : (
+                      <span className="inline-block rounded-md border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+                        unverified: {citation.raw}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           ) : null}
         </div>

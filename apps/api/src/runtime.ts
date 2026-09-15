@@ -10,6 +10,7 @@ import {
   RunRepository,
   RunnerRepository,
   SettingsRepository,
+  TechniqueRepository,
   openEngagementDatabase,
   type EngagementDatabase,
 } from "@stonehush/db";
@@ -56,6 +57,7 @@ export async function buildStorageBackedApp(
     const settingsRepository = new SettingsRepository(database.db);
     const advisorTurnsRepository = new AdvisorTurnsRepository(database.db);
     const runOutputRepository = new RunOutputRepository(database.db);
+    const techniqueRepository = new TechniqueRepository(database.db);
 
     // Evidence publication is fail-closed: without a loadable native binding
     // or valid managed evidence roots, the upload routes are not registered.
@@ -110,6 +112,7 @@ export async function buildStorageBackedApp(
       httpProbeRepository,
       ffufRepository,
       runOutputRepository,
+      techniqueRepository,
       async getDevelopmentStorageReadiness() {
         await checkDevelopmentStorage(dataDirectory);
         return "ready" as const;

@@ -79,6 +79,12 @@ function renderSection() {
   return { queryClient, ...rendered };
 }
 
+// The outline picker lists finding titles below the preview, so title
+// assertions scope to the Markdown preview region.
+function previewText() {
+  return document.querySelector("section[aria-label='Report'] pre")?.textContent ?? "";
+}
+
 beforeEach(() => {
   window.localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
@@ -149,7 +155,7 @@ describe("engagement report", () => {
     renderSection();
 
     expect(await screen.findByText(/1 findings/)).toBeTruthy();
-    expect(screen.getByText(/Default credentials on admin panel/)).toBeTruthy();
+    expect(previewText()).toContain("Default credentials on admin panel");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
     await waitFor(() =>
@@ -189,7 +195,7 @@ describe("engagement report", () => {
     renderSection();
     expect(await screen.findByRole("button", { name: "Download Markdown" })).toBeTruthy();
     // Preview and export share one bundle-derived snapshot.
-    expect(screen.getByText(/Default credentials on admin panel/)).toBeTruthy();
+    expect(previewText()).toContain("Default credentials on admin panel");
     fireEvent.click(screen.getByRole("button", { name: "Download Markdown" }));
     await waitFor(() =>
       expect(
@@ -341,6 +347,34 @@ describe("engagement report", () => {
     clickSpy.mockRestore();
   });
 
+  it("honors the sharing toggle in the outline preview", async () => {
+    const secretBody = "password=synthetic-outline-001";
+    const bundle: ReportBundle = {
+      ...bundleFixture(),
+      findings: [
+        {
+          ...bundleFixture().findings[0]!,
+          body: `impact ${secretBody}`,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(response(bundle))),
+    );
+    renderSection();
+    expect(await screen.findByText(/1 findings/)).toBeTruthy();
+
+    const outlinePreview = () =>
+      document.querySelectorAll("section[aria-label='Report'] pre")[1]?.textContent ?? "";
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(outlinePreview()).toContain("Default credentials"));
+    expect(outlinePreview()).not.toContain(secretBody);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show original" }));
+    await waitFor(() => expect(outlinePreview()).toContain(secretBody));
+  });
+
   it("resets the mask toggle when switching engagements", async () => {
     const engagementB = "10000000-0000-4000-8000-000000000002";
     const bundleA: ReportBundle = {
@@ -376,9 +410,6 @@ describe("engagement report", () => {
         </QueryClientProvider>
       </ThemeProvider>,
     );
-    const previewText = () =>
-      document.querySelector("section[aria-label='Report'] pre")?.textContent ?? "";
-
     expect(await screen.findByText(/Fields masked: 1/)).toBeTruthy();
     expect(previewText()).not.toContain("flag{synthetic-reset-0001}");
 
@@ -405,7 +436,8 @@ describe("engagement report", () => {
         </QueryClientProvider>
       </ThemeProvider>,
     );
-    expect(await screen.findByText(/Default credentials on admin panel/)).toBeTruthy();
+    expect(await screen.findByText(/Fields masked: 1/)).toBeTruthy();
+    expect(previewText()).toContain("Default credentials on admin panel");
     expect(screen.getByRole("button", { name: "Show original" })).toBeTruthy();
     expect(previewText()).not.toContain("flag{synthetic-reset-0001}");
     expect(queryClient.getQueryData(reportQueryKey(engagementId))).toEqual(bundleA);

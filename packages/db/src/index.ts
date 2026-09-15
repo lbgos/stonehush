@@ -117,4 +117,12 @@ export {
   runs,
   scopeRevisions,
   settings,
+  techniques,
 } from "./schema.js";
+export {
+  TechniqueRepository,
+  type TechniqueRepositoryError,
+  type TechniqueRepositoryErrorCode,
+  type TechniqueRepositoryProviders,
+  type TechniqueResult,
+} from "./technique.js";
