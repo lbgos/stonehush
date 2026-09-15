@@ -79,16 +79,24 @@ export function CaptureView({
 
   const onFileChange = async (file: File | undefined) => {
     if (file === undefined || busy) return;
+    // Reject oversized files before reading them: the server bound is
+    // 67,108,864 bytes, so larger files can never be accepted.
+    if (file.size > 67_108_864) {
+      setError("The file is too large. Files up to 67108864 bytes are accepted.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
       const kind: StoneCaptureKind = file.type.startsWith("image/") ? "screenshot" : "dropped_file";
       const buffer = await file.arrayBuffer();
-      // Text is presented as content so the server hashes it; binary-only
-      // uploads travel by digest, name, and size.
+      // Only text files are presented as content so the server hashes the
+      // exact bytes. Other files travel by digest, name, and size: decoding
+      // binary as text would transform the bytes and dedupe the wrong value.
+      // Empty files also use the digest path since empty text is rejected.
       let contentText: string | undefined;
-      if (file.type.startsWith("text/") || file.size <= 65_536) {
+      if (file.type.startsWith("text/") && file.size > 0 && file.size <= 65_536) {
         try {
           contentText = await file.text();
         } catch {
@@ -248,6 +256,7 @@ export function CaptureView({
             id="stone-capture-file"
             type="file"
             className="min-h-11 w-full text-[13px] text-foreground md:min-h-8"
+            disabled={busy}
             onChange={(event) => void onFileChange(event.target.files?.[0])}
           />
         </label>

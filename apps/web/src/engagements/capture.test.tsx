@@ -2,7 +2,7 @@
 
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
@@ -158,5 +158,72 @@ describe("CaptureView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
 
     expect(await screen.findByText(/No duplicate facts created/)).toBeDefined();
+  });
+
+  it("rejects oversized files before reading them", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          postedBodies.push(init.body !== undefined ? JSON.parse(String(init.body)) : undefined);
+          return Promise.resolve(response({}, 201));
+        }
+        return Promise.resolve(response([]));
+      }),
+    );
+    renderCapture();
+
+    expect(await screen.findByText("No captures yet.")).toBeDefined();
+    const file = new File(["x"], "big.bin", { type: "application/octet-stream" });
+    Object.defineProperty(file, "size", { value: 67_108_865 });
+    fireEvent.change(screen.getByLabelText("Drop a file into the current target context"), {
+      target: { files: [file] },
+    });
+
+    expect(await screen.findByText(/too large/)).toBeDefined();
+    expect(postedBodies).toHaveLength(0);
+  });
+
+  it("sends small binary and empty files by digest instead of decoded text", async () => {
+    vi.stubGlobal("crypto", {
+      subtle: {
+        digest: async () =>
+          new Uint8Array(32).buffer as unknown as Awaited<ReturnType<SubtleCrypto["digest"]>>,
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          postedBodies.push(init.body !== undefined ? JSON.parse(String(init.body)) : undefined);
+          return Promise.resolve(response({}, 201));
+        }
+        return Promise.resolve(response([]));
+      }),
+    );
+    renderCapture();
+
+    expect(await screen.findByText("No captures yet.")).toBeDefined();
+    const binary = new File([new Uint8Array([0xff, 0xd8, 0xff])], "snap.bin", { type: "" });
+    fireEvent.change(screen.getByLabelText("Drop a file into the current target context"), {
+      target: { files: [binary] },
+    });
+    await waitFor(() => {
+      expect(postedBodies).toHaveLength(1);
+    });
+    const binaryBody = postedBodies[0] as Record<string, unknown>;
+    expect(binaryBody).not.toHaveProperty("contentText");
+    expect(binaryBody["contentDigest"]).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    const empty = new File([], "empty.txt", { type: "text/plain" });
+    fireEvent.change(screen.getByLabelText("Drop a file into the current target context"), {
+      target: { files: [empty] },
+    });
+    await waitFor(() => {
+      expect(postedBodies).toHaveLength(2);
+    });
+    const emptyBody = postedBodies[1] as Record<string, unknown>;
+    expect(emptyBody).not.toHaveProperty("contentText");
+    expect(emptyBody["contentDigest"]).toMatch(/^sha256:[0-9a-f]{64}$/);
   });
 });
