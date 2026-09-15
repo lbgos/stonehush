@@ -2,8 +2,8 @@ import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { ActionSnapshot, RunnerLease } from "@blackglass/contracts";
-import { EVIDENCE_QUOTA_DEFAULTS } from "@blackglass/contracts";
+import type { ActionSnapshot, RunnerLease } from "@stonehush/contracts";
+import { EVIDENCE_QUOTA_DEFAULTS } from "@stonehush/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { bindActionSnapshot } from "./action-snapshot.js";
@@ -34,7 +34,7 @@ function createFixture(
     quota?: unknown;
   } = {},
 ): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-evidence-grant-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-evidence-grant-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   try {

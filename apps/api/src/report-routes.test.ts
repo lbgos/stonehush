@@ -9,7 +9,7 @@ import {
   NmapServiceRepository,
   RunOutputRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -28,7 +28,7 @@ afterEach(async () => {
 
 async function createReportApp() {
   const dataDirectory = await mkdtemp(
-    path.join(tmpdir(), "blackglass-report-route-test-"),
+    path.join(tmpdir(), "stonehush-report-route-test-"),
   );
   temporaryDirectories.push(dataDirectory);
   await chmod(dataDirectory, 0o700);

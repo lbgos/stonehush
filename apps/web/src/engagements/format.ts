@@ -1,4 +1,4 @@
-import type { Engagement, EngagementKind, EngagementStatus } from "@blackglass/contracts";
+import type { Engagement, EngagementKind, EngagementStatus } from "@stonehush/contracts";
 
 export const ENGAGEMENT_KIND_LABELS: Record<EngagementKind, string> = {
   assessment: "Assessment",

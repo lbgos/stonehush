@@ -9,7 +9,7 @@ import {
   formatRunnerAuthorization,
   type ActionSnapshot,
   type RunnerLease,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   bindActionSnapshot,
   EngagementRepository,
@@ -18,8 +18,8 @@ import {
   openEngagementDatabase,
   RunRepository,
   RunnerRepository,
-} from "@blackglass/db";
-import { loadEvidenceNative } from "@blackglass/evidence-native";
+} from "@stonehush/db";
+import { loadEvidenceNative } from "@stonehush/evidence-native";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";

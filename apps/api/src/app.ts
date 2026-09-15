@@ -4,7 +4,7 @@ import {
   SYSTEM_STATUS_VERSION,
   SystemStatusResponseSchema,
   type Readiness,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import Fastify, {
   type FastifyInstance,
   type FastifyServerOptions,
@@ -22,7 +22,7 @@ import type {
   RunnerRepository,
   SettingsRepository,
   TechniqueRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 
 import { registerActionMutationRoutes } from "./action-mutation-routes.js";
 import { registerActionRoutes } from "./action-routes.js";
@@ -76,6 +76,7 @@ interface BuildAppOptions {
         | "listFindings"
         | "resolveFinding"
         | "reopenFinding"
+        | "updateFinding"
         | "withWriteTx"
       >
     >;
@@ -215,13 +216,15 @@ export function buildApp({
     engagementRepository.createFinding !== undefined &&
     engagementRepository.listFindings !== undefined &&
     engagementRepository.resolveFinding !== undefined &&
-    engagementRepository.reopenFinding !== undefined
+    engagementRepository.reopenFinding !== undefined &&
+    engagementRepository.updateFinding !== undefined
   ) {
     registerFindingRoutes(app, {
       createFinding: engagementRepository.createFinding.bind(engagementRepository),
       listFindings: engagementRepository.listFindings.bind(engagementRepository),
       resolveFinding: engagementRepository.resolveFinding.bind(engagementRepository),
       reopenFinding: engagementRepository.reopenFinding.bind(engagementRepository),
+      updateFinding: engagementRepository.updateFinding.bind(engagementRepository),
     });
   }
   registerActionRoutes(app, engagementRepository);

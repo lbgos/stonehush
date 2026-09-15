@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ignoredDirectories = new Set([
-  ".blackglass",
+  ".stonehush",
   ".git",
   ".vite",
   "coverage",

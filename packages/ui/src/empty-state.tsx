@@ -23,12 +23,12 @@ export function EmptyState({ action, description, title, variant = "default" }: 
       data-empty-variant={variant}
     >
       {variant !== "default" && (
-        <Icon className="mx-auto mb-3 size-7 text-muted-foreground" aria-hidden="true" />
+        <Icon className="mx-auto mb-3 size-5 text-muted-foreground" aria-hidden="true" />
       )}
-      <h3 className={cn("m-0 font-semibold text-foreground", variant === "default" ? "text-base" : "text-lg")}>
+      <h3 className={cn("m-0 font-semibold text-foreground", variant === "default" ? "text-[13px]" : "text-lg")}>
         {title}
       </h3>
-      <p className="mx-auto mt-2 mb-0 max-w-80 text-sm text-muted-foreground">{description}</p>
+      <p className="mx-auto mt-2 mb-0 max-w-80 text-[13px] text-muted-foreground">{description}</p>
       {action && <div className={variant === "default" ? "mt-4" : "mt-5"}>{action}</div>}
     </section>
   );

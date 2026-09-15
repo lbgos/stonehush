@@ -17,13 +17,13 @@ import {
   commandJsonV1UpdateDeadlineDigest,
   type EngagementMutationError,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementWriteTransaction,
   OperatorCommandRepository,
   RepositoryError,
   RepositoryResult,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance } from "fastify";
 
 import {

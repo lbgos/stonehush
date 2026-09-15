@@ -50,8 +50,8 @@
       "expected": {
         "artifactId": "artifact-fixture-1",
         "uploadId": "upload-fixture-1",
-        "stagingPath": "/var/lib/blackglass/evidence/staging/upload-fixture-1",
-        "publishedPath": "/var/lib/blackglass/evidence/published/artifact-fixture-1",
+        "stagingPath": "/var/lib/stonehush/evidence/staging/upload-fixture-1",
+        "publishedPath": "/var/lib/stonehush/evidence/published/artifact-fixture-1",
         "requestedPathUsed": false
       }
     },
@@ -60,11 +60,11 @@
       "description": "A plugin or runner path is untrusted metadata and never used to open a file.",
       "given": {
         "originalFileName": "../../outside",
-        "workingDirectoryFile": "/var/lib/blackglass-runner/runs/run-fixture-1/out",
+        "workingDirectoryFile": "/var/lib/stonehush-runner/runs/run-fixture-1/out",
         "openUsesCallerPath": false
       },
       "expected": {
-        "openedPath": "/var/lib/blackglass/evidence/staging/upload-fixture-2",
+        "openedPath": "/var/lib/stonehush/evidence/staging/upload-fixture-2",
         "callerPathOpened": false,
         "generatedPathOnly": true
       }

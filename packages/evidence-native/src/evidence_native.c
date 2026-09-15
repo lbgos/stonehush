@@ -1,4 +1,4 @@
-// Blackglass evidence publication native boundary.
+// Stonehush evidence publication native boundary.
 //
 // Exposes exactly three descriptor-relative operations that Node's public fs
 // API cannot express: openat(2), renameat2(2) with RENAME_NOREPLACE, and a

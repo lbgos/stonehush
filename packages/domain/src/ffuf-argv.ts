@@ -1,4 +1,4 @@
-import { FfufActionOptionsSchema } from "@blackglass/contracts";
+import { FfufActionOptionsSchema } from "@stonehush/contracts";
 
 /**
  * Build deterministic ffuf discovery argv. No shell strings; each argv

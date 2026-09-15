@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { EvidencePublicationService } from "./evidence-publication.js";
 import type { EvidenceStore } from "./evidence-store.js";
-import type { EvidenceGrantRepository } from "@blackglass/db";
+import type { EvidenceGrantRepository } from "@stonehush/db";
 
 function stubStore(overrides: Partial<EvidenceStore> = {}): EvidenceStore {
   return { publish: () => ({ status: "published", identity: { dev: 1, ino: 1 } }), inspectPublishedDestination: async () => ({ status: "match", sizeBytes: 4, digest: "sha256:" + "a".repeat(64) }), fsyncPublishedDirectory: () => {}, ...overrides } as unknown as EvidenceStore;

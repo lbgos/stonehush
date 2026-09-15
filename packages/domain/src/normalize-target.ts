@@ -8,7 +8,7 @@ import {
   type TargetNormalizationErrorCode,
   type TargetNormalizationFailure,
   type TargetNormalizationResult,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { toASCII } from "tr46";
 
 const MAXIMUM_TARGET_UTF8_BYTES = 4_096;

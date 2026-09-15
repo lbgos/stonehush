@@ -1,4 +1,4 @@
-import type { AdvisorPartitionedCitation } from "@blackglass/contracts";
+import type { AdvisorPartitionedCitation } from "@stonehush/contracts";
 
 /**
  * Context preview before send (STONE-7).

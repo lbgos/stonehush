@@ -5,8 +5,8 @@ import type {
   CompleteEvidenceUploadRequest,
   EvidenceArtifactKind,
   PublishedCompleteness,
-} from "@blackglass/contracts";
-import type { EvidenceGrantRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { EvidenceGrantRepository } from "@stonehush/db";
 
 import type { EvidenceStore, EvidenceStorageErrorCode } from "./evidence-store.js";
 import type { StorageQuiesceGate } from "./backup-lock.js";

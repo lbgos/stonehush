@@ -10,7 +10,7 @@ import {
   type SavedScopeRule,
   type ScopeComparisonSubject,
   type ScopePortRangeInput,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { describe, expect, it } from "vitest";
 
 import fixtureData from "../../../docs/architecture/fixtures/d1/scope-comparison.json" with {

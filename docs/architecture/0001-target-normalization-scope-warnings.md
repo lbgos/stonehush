@@ -6,7 +6,7 @@ Date: 2026-08-09
 
 Decision gate: [D1](./DECISION_GATES.md#d1-target-normalization-saved-scope-and-warnings)
 
-Issue: [#23](https://github.com/Lbgosna/blackglass/issues/23)
+Issue: [#23](https://github.com/lbgos/stonehush/issues/23)
 
 ## Context
 

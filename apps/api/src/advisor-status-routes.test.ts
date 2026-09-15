@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { SettingsRepository, openEngagementDatabase } from "@blackglass/db";
+import { SettingsRepository, openEngagementDatabase } from "@stonehush/db";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -12,7 +12,7 @@ import { buildApp } from "./app.js";
 import { registerAdvisorStatusRoutes } from "./advisor-status-routes.js";
 import type { probeAdvisorEndpoint } from "./advisor-status-probe.js";
 
-const KEY_ENV_VAR = "BLACKGLASS_ADVISOR_STATUS_TEST_KEY";
+const KEY_ENV_VAR = "STONEHUSH_ADVISOR_STATUS_TEST_KEY";
 const KEY_VALUE = "lab-secret-value";
 
 const temporaryDirectories: string[] = [];
@@ -37,7 +37,7 @@ async function createStatusBackedApp(options?: {
   probe?: typeof probeAdvisorEndpoint;
   statusTimeoutMs?: number;
 }) {
-  const dataDirectory = await mkdtemp(path.join(tmpdir(), "blackglass-advisor-status-test-"));
+  const dataDirectory = await mkdtemp(path.join(tmpdir(), "stonehush-advisor-status-test-"));
   temporaryDirectories.push(dataDirectory);
   await chmod(dataDirectory, 0o700);
   const database = openEngagementDatabase({ dataDirectory });

@@ -31,7 +31,7 @@ export function StageHeader() {
 
   const crumbs = crumbsForPath(pathname, selected?.name);
 
-  // Stage chrome: plugins shows Blackglass / Plugins with disabled Install from path
+  // Stage chrome: plugins shows Stonehush / Plugins with disabled Install from path
   const isPlugins = pathname === "/plugins";
   return (
     <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -191,7 +191,7 @@ function crumbsForPath(pathname: string, engagementName?: string): Crumb[] {
       { label: engagementName ?? "Engagement" },
     ];
   }
-  if (pathname === "/plugins") return [{ href: "/", label: "Blackglass" }, { label: "Plugins" }];
+  if (pathname === "/plugins") return [{ href: "/", label: "Stonehush" }, { label: "Plugins" }];
   if (pathname === "/settings") return [{ label: "Settings" }];
   return [{ label: "Page not found" }];
 }

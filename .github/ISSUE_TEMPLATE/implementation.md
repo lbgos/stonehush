@@ -1,6 +1,6 @@
 ---
 name: Implementation
-about: Define one independently reviewable Blackglass change
+about: Define one independently reviewable Stonehush change
 title: ""
 labels: ""
 assignees: ""

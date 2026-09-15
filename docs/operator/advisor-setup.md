@@ -1,15 +1,15 @@
 # Advisor setup
 
-Point Blackglass at any OpenAI-compatible model endpoint and ask grounded
+Point Stonehush at any OpenAI-compatible model endpoint and ask grounded
 questions about engagement evidence. This page covers setup only; it does
 not promise any particular model or result quality.
 
 ## Prerequisites
 
 - A running control plane. For development: `pnpm dev` from the repository
-  root (API on 3001, web on 5173, isolated storage under `.blackglass/dev`).
-  A production API process needs `BLACKGLASS_DATA_DIR` set to an absolute
-  path and a port via `BLACKGLASS_API_PORT`. Complete the [README quick start](../../README.md#quick-start) first, including its one-time native build: advisor turns read the
+  root (API on 3001, web on 5173, isolated storage under `.stonehush/dev`).
+  A production API process needs `STONEHUSH_DATA_DIR` set to an absolute
+  path and a port via `STONEHUSH_API_PORT`. Complete the [README quick start](../../README.md#quick-start) first, including its one-time native build: advisor turns read the
   evidence store, so without it the turn routes stay unregistered.
 - A model server reachable **from the control-plane host** (not from your
   browser). The server must accept OpenAI-style chat requests with
@@ -20,7 +20,7 @@ not promise any particular model or result quality.
   `uncertainty`); a local llama-swap instance or any other compatible
   runner qualifies only if it follows that contract. Servers that emit
   free-form prose fail closed with parse errors. No model software ships
-  with Blackglass, and no live compatibility with any specific model is
+  with Stonehush, and no live compatibility with any specific model is
   claimed here.
 
 ## 1. Export the API key, if your server needs one
@@ -31,7 +31,7 @@ starts the API process (the shell running `pnpm dev`, a systemd unit
 picks the value up. The key is read by name on every turn request.
 
 ```bash
-export BLACKGLASS_ADVISOR_API_KEY="<paste-the-real-key-here-in-your-shell-only>"
+export STONEHUSH_ADVISOR_API_KEY="<paste-the-real-key-here-in-your-shell-only>"
 ```
 
 Leave this whole step out when the server needs no auth. Never paste a key
@@ -50,7 +50,7 @@ look like key material, and only the variable **name** is ever stored.
   and fails later at request time, so copy it exactly from your server.
 - **Model.** The model name exactly as your server advertises it. It is sent
   verbatim in the request body (max 128 characters, no leading or trailing
-  spaces). Blackglass never lists or validates it; an unknown name fails
+  spaces). Stonehush never lists or validates it; an unknown name fails
   when the provider answers.
 - **API key variable.** The environment variable **name** (capitals,
   digits, underscores), or empty for no auth.

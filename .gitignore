@@ -10,7 +10,7 @@ packages/evidence-native/build/
 .env.*
 !.env.example
 
-.blackglass/
+.stonehush/
 data/
 /evidence/
 *.sqlite

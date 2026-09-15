@@ -6,7 +6,7 @@ import {
   EngagementRepository,
   TechniqueRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -25,7 +25,7 @@ afterEach(async () => {
 
 async function createTechniqueBackedApp() {
   const dataDirectory = await mkdtemp(
-    path.join(tmpdir(), "blackglass-techniques-route-test-"),
+    path.join(tmpdir(), "stonehush-techniques-route-test-"),
   );
   temporaryDirectories.push(dataDirectory);
   await chmod(dataDirectory, 0o700);

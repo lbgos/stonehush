@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { engagementReportMarkdown, type Finding, type ReportBundle } from "@blackglass/contracts";
+import { engagementReportMarkdown, type Finding, type ReportBundle } from "@stonehush/contracts";
 import {
   Button,
   LoadingRegion,
   RecoverableError,
   Skeleton,
   StaleDataState,
-} from "@blackglass/ui";
+} from "@stonehush/ui";
 
 import {
   addOutlineItem,
@@ -324,6 +324,7 @@ function ReportBody({
           type="button"
           variant="secondary"
           aria-pressed={masked}
+          className={masked ? "bg-accent" : ""}
           onClick={onToggleMask}
         >
           {masked ? "Show original" : "Mask secrets"}

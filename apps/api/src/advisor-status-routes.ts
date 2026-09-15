@@ -1,5 +1,5 @@
-import { AdvisorStatusSchema, type AdvisorStatus } from "@blackglass/contracts";
-import type { SettingsRepository } from "@blackglass/db";
+import { AdvisorStatusSchema, type AdvisorStatus } from "@stonehush/contracts";
+import type { SettingsRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import {

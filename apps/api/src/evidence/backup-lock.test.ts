@@ -3,7 +3,7 @@ import { closeSync, constants, fstatSync, openSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { loadEvidenceNative, O_CLOEXEC } from "@blackglass/evidence-native";
+import { loadEvidenceNative, O_CLOEXEC } from "@stonehush/evidence-native";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { BackupLock } from "./backup-lock.js";

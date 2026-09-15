@@ -1,5 +1,5 @@
-import type { AdvisorTurn } from "@blackglass/contracts";
-import { Button } from "@blackglass/ui";
+import type { AdvisorTurn } from "@stonehush/contracts";
+import { Button } from "@stonehush/ui";
 import { useMemo, useState } from "react";
 
 import type { HintDepthStorage } from "./hint-depth.js";

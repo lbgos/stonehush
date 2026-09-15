@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { ActionSnapshot, RunnerLease } from "@blackglass/contracts";
+import type { ActionSnapshot, RunnerLease } from "@stonehush/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import leaseFixtureData from "../../../docs/architecture/fixtures/d2/lease-events.json" with {
@@ -56,7 +56,7 @@ const fixtures: Fixture[] = [];
 function createFixture(
   options: { runId?: string; leaseIds?: readonly string[] } = {},
 ): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-run-db-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-run-db-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   let engagementSeq = 0;
@@ -1052,13 +1052,13 @@ describe("run persistence adversarial checks", () => {
           env: {
             ...process.env,
             FORCE_COLOR: "0",
-            BLACKGLASS_RUN_CONCURRENCY_DATA_DIRECTORY: fixture.directory,
-            BLACKGLASS_RUN_CONCURRENCY_RUN_ID: created.runId,
-            BLACKGLASS_RUN_CONCURRENCY_RUNNER_ID: `runner-fixture-${index + 1}`,
-            BLACKGLASS_RUN_CONCURRENCY_SESSION_ID: `session-fixture-${index + 1}`,
-            BLACKGLASS_RUN_CONCURRENCY_READY_PATH: readyPath,
-            BLACKGLASS_RUN_CONCURRENCY_GO_PATH: goPath,
-            BLACKGLASS_RUN_CONCURRENCY_RESULT_PATH: resultPath,
+            STONEHUSH_RUN_CONCURRENCY_DATA_DIRECTORY: fixture.directory,
+            STONEHUSH_RUN_CONCURRENCY_RUN_ID: created.runId,
+            STONEHUSH_RUN_CONCURRENCY_RUNNER_ID: `runner-fixture-${index + 1}`,
+            STONEHUSH_RUN_CONCURRENCY_SESSION_ID: `session-fixture-${index + 1}`,
+            STONEHUSH_RUN_CONCURRENCY_READY_PATH: readyPath,
+            STONEHUSH_RUN_CONCURRENCY_GO_PATH: goPath,
+            STONEHUSH_RUN_CONCURRENCY_RESULT_PATH: resultPath,
           },
           stdio: ["ignore", "pipe", "pipe"],
         },

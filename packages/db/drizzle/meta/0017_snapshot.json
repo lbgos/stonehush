@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "9a431bc6-44da-40db-b7ba-c12aaaf25c04",
+  "id": "4dc9f913-f91d-4af2-9fc3-d38ecaf1cfec",
   "prevId": "2dac2e06-e8db-4b13-a17e-eca3698cb47e",
   "tables": {
     "action_covered_destinations": {
@@ -818,8 +818,8 @@
         }
       },
       "foreignKeys": {
-        "advisor_turn_belongs_to_engagement": {
-          "name": "advisor_turn_belongs_to_engagement",
+        "advisor_turns_engagement_id_engagements_id_fk": {
+          "name": "advisor_turns_engagement_id_engagements_id_fk",
           "tableFrom": "advisor_turns",
           "tableTo": "engagements",
           "columnsFrom": [
@@ -1872,6 +1872,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -1939,6 +1947,10 @@
         "finding_evidence_json": {
           "name": "finding_evidence_json",
           "value": "json_valid(\"findings\".\"evidence_artifact_ids_json\") and length(cast(\"findings\".\"evidence_artifact_ids_json\" as blob)) <= 8192"
+        },
+        "finding_revision": {
+          "name": "finding_revision",
+          "value": "\"findings\".\"revision\" >= 1"
         },
         "finding_created_at": {
           "name": "finding_created_at",
@@ -3427,154 +3439,6 @@
         "settings_updated_at": {
           "name": "settings_updated_at",
           "value": "length(\"settings\".\"updated_at\") >= 20"
-        }
-      }
-    },
-    "techniques": {
-      "name": "techniques",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "contract_version": {
-          "name": "contract_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "engagement_id": {
-          "name": "engagement_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "when_useful": {
-          "name": "when_useful",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "prerequisites_json": {
-          "name": "prerequisites_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "question": {
-          "name": "question",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "procedure_json": {
-          "name": "procedure_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "meaning": {
-          "name": "meaning",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "technique_engagement_created_idx": {
-          "name": "technique_engagement_created_idx",
-          "columns": [
-            "engagement_id",
-            "created_at",
-            "id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "techniques_engagement_id_engagements_id_fk": {
-          "name": "techniques_engagement_id_engagements_id_fk",
-          "tableFrom": "techniques",
-          "tableTo": "engagements",
-          "columnsFrom": [
-            "engagement_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "technique_contract_version": {
-          "name": "technique_contract_version",
-          "value": "\"techniques\".\"contract_version\" = 1"
-        },
-        "technique_name_length": {
-          "name": "technique_name_length",
-          "value": "length(\"techniques\".\"name\") between 1 and 80 and \"techniques\".\"name\" = trim(\"techniques\".\"name\")"
-        },
-        "technique_when_useful_bytes": {
-          "name": "technique_when_useful_bytes",
-          "value": "length(cast(\"techniques\".\"when_useful\" as blob)) <= 2000"
-        },
-        "technique_prerequisites_json": {
-          "name": "technique_prerequisites_json",
-          "value": "json_valid(\"techniques\".\"prerequisites_json\") and length(cast(\"techniques\".\"prerequisites_json\" as blob)) <= 8192"
-        },
-        "technique_question_bytes": {
-          "name": "technique_question_bytes",
-          "value": "length(cast(\"techniques\".\"question\" as blob)) between 1 and 2000 and \"techniques\".\"question\" = trim(\"techniques\".\"question\")"
-        },
-        "technique_procedure_json": {
-          "name": "technique_procedure_json",
-          "value": "json_valid(\"techniques\".\"procedure_json\") and length(cast(\"techniques\".\"procedure_json\" as blob)) <= 16384"
-        },
-        "technique_meaning_bytes": {
-          "name": "technique_meaning_bytes",
-          "value": "length(cast(\"techniques\".\"meaning\" as blob)) <= 2000"
-        },
-        "technique_created_at": {
-          "name": "technique_created_at",
-          "value": "length(\"techniques\".\"created_at\") >= 20"
-        },
-        "technique_updated_at": {
-          "name": "technique_updated_at",
-          "value": "length(\"techniques\".\"updated_at\") >= 20"
         }
       }
     }

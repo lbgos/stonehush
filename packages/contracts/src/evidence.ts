@@ -405,10 +405,10 @@ export function isOperatorArtifactContentRoute(url: string): boolean {
   return OPERATOR_ARTIFACT_CONTENT_ROUTE_PATTERN.test(url.split("?")[0] ?? url);
 }
 
-// ADR-0003 `blackglass-backup-v1`: the deterministic manifest written into a
+// ADR-0003 `stonehush-backup-v1`: the deterministic manifest written into a
 // backup directory. Restore consumes it with strict parsing; every field is
 // verified against the copied bytes before a restore writes anything.
-export const BACKUP_PROTOCOL = "blackglass-backup-v1" as const;
+export const BACKUP_PROTOCOL = "stonehush-backup-v1" as const;
 export const BACKUP_MANIFEST_FILENAME = "backup-manifest" as const;
 export const BACKUP_INCOMPLETE_MARKER_FILENAME = "INCOMPLETE" as const;
 

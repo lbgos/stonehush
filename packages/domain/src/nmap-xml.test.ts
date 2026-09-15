@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NMAP_MAX_XML_BYTES } from "@blackglass/contracts";
+import { NMAP_MAX_XML_BYTES } from "@stonehush/contracts";
 import { parseNmapXml } from "./nmap-xml.js";
 const enc = new TextEncoder();
 const b = (s: string) => enc.encode(s);

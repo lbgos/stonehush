@@ -3,12 +3,12 @@ import {
   FindingSchema,
   ReportEngagementMetaSchema,
   type ReportBundle,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   ADVISOR_REDACTION_TOKEN,
   redactAdvisorText,
   stripAdvisorUrlUserinfo,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 
 // Derived sharing copy of a stored report bundle. Only operator-authored free
 // text is transformed (engagement name/description/authorization context,

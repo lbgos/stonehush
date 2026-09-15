@@ -21,7 +21,7 @@ import {
   type PersistedRunEvent,
   type RunnerLease,
   type RunTerminalKind,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   acceptHeartbeat,
   evaluateRunEventSequence,
@@ -30,7 +30,7 @@ import {
   isTerminalRunState,
   transitionRunState,
   validateLeaseAuthority,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 import { and, asc, desc, eq, max } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 

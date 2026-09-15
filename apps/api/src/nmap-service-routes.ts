@@ -1,5 +1,5 @@
-import { EngagementServicesParamsSchema, EngagementServicesResponseSchema } from "@blackglass/contracts";
-import type { NmapServiceRepository } from "@blackglass/db";
+import { EngagementServicesParamsSchema, EngagementServicesResponseSchema } from "@stonehush/contracts";
+import type { NmapServiceRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 function sendError(reply: FastifyReply, status: number, code: string) {

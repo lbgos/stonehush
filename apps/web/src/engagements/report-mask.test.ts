@@ -4,8 +4,8 @@ import {
   ENGAGEMENT_NOTES_MAX_BYTES,
   ReportBundleSchema,
   type ReportBundle,
-} from "@blackglass/contracts";
-import { ADVISOR_REDACTION_TOKEN } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { ADVISOR_REDACTION_TOKEN } from "@stonehush/domain";
 
 import { maskReportBundle } from "./report-mask.js";
 
@@ -36,6 +36,7 @@ function bundleFixture(): ReportBundle {
         status: "open",
         body: "detail",
         evidenceArtifactIds: [],
+        revision: 1,
         createdAt: "2026-08-12T12:00:00.000Z",
         updatedAt: "2026-08-12T12:00:00.000Z",
       },

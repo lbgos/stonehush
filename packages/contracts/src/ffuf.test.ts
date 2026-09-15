@@ -15,8 +15,8 @@ import {
 
 const validBase = {
   origin: "http://127.0.0.1:3130",
-  wordlistPath: "/var/lib/blackglass/wordlists/smoke.txt",
-  outputJsonPath: "/var/lib/blackglass/runs/run-1/ffuf.json",
+  wordlistPath: "/var/lib/stonehush/wordlists/smoke.txt",
+  outputJsonPath: "/var/lib/stonehush/runs/run-1/ffuf.json",
 } as const;
 
 describe("FfufActionOptionsSchema", () => {
@@ -152,7 +152,7 @@ describe("FfufDiscoveryLaunchSchema", () => {
     expectedEngagementRevision: 1,
     expectedActiveScopeRevisionId: null,
     origin: "http://127.0.0.1:3130",
-    wordlistPath: "/var/lib/blackglass/wordlists/smoke.txt",
+    wordlistPath: "/var/lib/stonehush/wordlists/smoke.txt",
   } as const;
 
   it("applies option defaults and omits the runner-owned output path", () => {

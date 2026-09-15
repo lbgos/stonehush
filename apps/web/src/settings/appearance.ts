@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 
-export const GLASS_OPACITY_STORAGE_KEY = "blackglass.glassOpacity";
-export const DENSITY_STORAGE_KEY = "blackglass.density";
-export const REDUCED_MOTION_STORAGE_KEY = "blackglass.reducedMotion";
+export const GLASS_OPACITY_STORAGE_KEY = "stonehush.glassOpacity";
+export const DENSITY_STORAGE_KEY = "stonehush.density";
+export const REDUCED_MOTION_STORAGE_KEY = "stonehush.reducedMotion";
 
 export const GLASS_OPACITY_MIN = 5;
 export const GLASS_OPACITY_MAX = 40;

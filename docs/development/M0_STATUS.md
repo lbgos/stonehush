@@ -4,7 +4,7 @@ Verified: 2026-08-08
 
 ## Repository
 
-- Repository: `Lbgosna/blackglass`.
+- Repository: `lbgos/stonehush`.
 - Visibility: public.
 - Default branch: `main`.
 - Bootstrap commit: `425f9f15a79d5b2b10551da0e9e49fad1b727864`.

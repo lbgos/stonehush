@@ -1,5 +1,5 @@
 {
-  "name": "@blackglass/db",
+  "name": "@stonehush/db",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,8 +16,8 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@blackglass/contracts": "workspace:*",
-    "@blackglass/domain": "workspace:*",
+    "@stonehush/contracts": "workspace:*",
+    "@stonehush/domain": "workspace:*",
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.2"
   },

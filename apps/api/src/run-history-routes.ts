@@ -5,8 +5,8 @@ import {
   RunHistoryErrorSchema,
   RunHistoryParamsSchema,
   RunHistoryResponseSchema,
-} from "@blackglass/contracts";
-import type { RunOutputRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { RunOutputRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 export interface RunHistoryDependencies {

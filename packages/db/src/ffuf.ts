@@ -5,8 +5,8 @@ import {
   EvidenceArtifactRecordSchema,
   FFUF_MAX_JSON_BYTES,
   FFUF_PARSER_VERSION,
-} from "@blackglass/contracts";
-import { parseFfufArtifactJson } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { parseFfufArtifactJson } from "@stonehush/domain";
 import * as schema from "./schema.js";
 import { actions, engagements, evidenceArtifacts, ffufResults, runs } from "./schema.js";
 

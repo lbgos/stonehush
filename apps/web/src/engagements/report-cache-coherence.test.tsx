@@ -1,11 +1,11 @@
 // @vitest-environment jsdom
-import { ThemeProvider } from "@blackglass/ui";
+import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { engagementReportMarkdown, type ReportBundle } from "@blackglass/contracts";
+import { engagementReportMarkdown, type ReportBundle } from "@stonehush/contracts";
 import { createAppQueryClient } from "../query-client.js";
 import { EngagementWorkspaceProvider } from "./workspace-context.js";
 import { ActionPlanner } from "./action-planner.js";
@@ -113,6 +113,12 @@ function renderReport(client: QueryClient, engagementId: string) {
       </QueryClientProvider>
     </ThemeProvider>,
   );
+}
+
+// The outline picker lists finding titles below the preview, so title
+// assertions scope to the Markdown preview region.
+function previewText() {
+  return document.querySelector("section[aria-label='Report'] pre")?.textContent ?? "";
 }
 
 function NotesSaver({
@@ -313,6 +319,7 @@ describe("report cache coherence", () => {
       status: "open",
       body: "# impact",
       evidenceArtifactIds: [],
+      revision: 1,
       createdAt: "2026-08-12T14:00:00.000Z",
       updatedAt: "2026-08-12T14:00:00.000Z",
     };
@@ -352,7 +359,7 @@ describe("report cache coherence", () => {
     expect(client.getQueryState(reportQueryKey(engagementA))?.isInvalidated).toBe(true);
 
     renderReport(client, engagementA);
-    expect(await screen.findByText(/Fresh finding/)).toBeTruthy();
+    await waitFor(() => expect(previewText()).toContain("Fresh finding"));
   });
 
   it("resolving a finding refreshes the report status", async () => {
@@ -366,10 +373,11 @@ describe("report cache coherence", () => {
       status: "open",
       body: "# impact",
       evidenceArtifactIds: [],
+      revision: 1,
       createdAt: "2026-08-12T12:00:00.000Z",
       updatedAt: "2026-08-12T12:00:00.000Z",
     };
-    const resolvedFinding = { ...openFinding, status: "resolved", updatedAt: "2026-08-12T14:00:00.000Z" };
+    const resolvedFinding = { ...openFinding, status: "resolved", revision: 2, updatedAt: "2026-08-12T14:00:00.000Z" };
     const v1 = bundleFixture(engagementA, {
       findings: [openFinding as ReportBundle["findings"][number]],
     });
@@ -420,6 +428,7 @@ describe("report cache coherence", () => {
           status: "open",
           body: "detail",
           evidenceArtifactIds: [],
+          revision: 1,
           createdAt: "2026-08-12T12:00:00.000Z",
           updatedAt: "2026-08-12T12:00:00.000Z",
         },
@@ -441,7 +450,7 @@ describe("report cache coherence", () => {
     const client = trackClient(createAppQueryClient());
     renderReport(client, engagementA);
 
-    expect(await screen.findByText(/Export finding/)).toBeTruthy();
+    await waitFor(() => expect(previewText()).toContain("Export finding"));
     expect(screen.getByText(/export-notes/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Download Markdown" }));

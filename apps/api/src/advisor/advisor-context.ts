@@ -2,8 +2,8 @@ import {
   CreateAdvisorExplanationRequestSchema,
   type AdvisorEvidenceBlock,
   type AdvisorSuppliedEvidenceId,
-} from "@blackglass/contracts";
-import type { EngagementRepository, EvidenceGrantRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { EngagementRepository, EvidenceGrantRepository } from "@stonehush/db";
 import {
   ADVISOR_HISTORY_ENTRY_MAX_BYTES,
   ADVISOR_HISTORY_MAX_TURNS,
@@ -12,7 +12,7 @@ import {
   truncateUtf8Bytes,
   type AdvisorExplanationPrompt,
   type AdvisorHistoryTurn,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 
 import type { EvidenceStore } from "../evidence/evidence-store.js";
 

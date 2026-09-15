@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AdvisorTurn } from "@blackglass/contracts";
+import type { AdvisorTurn } from "@stonehush/contracts";
 
 import { filterRuledOutSuggestions } from "./ruled-out.js";
 import {
@@ -55,10 +55,10 @@ describe("tried checks", () => {
 
   it("returns empty on corrupt storage", () => {
     const storage = memoryStorage();
-    storage.setItem("blackglass.advisor.tried-checks.eng-1", "not json{");
+    storage.setItem("stonehush.advisor.tried-checks.eng-1", "not json{");
     expect(loadTriedChecks(storage, "eng-1")).toEqual([]);
     storage.setItem(
-      "blackglass.advisor.tried-checks.eng-1",
+      "stonehush.advisor.tried-checks.eng-1",
       JSON.stringify([{ summary: "", conditions: "x", outcome: "ruled-out" }]),
     );
     expect(loadTriedChecks(storage, "eng-1")).toEqual([]);

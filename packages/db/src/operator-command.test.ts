@@ -23,7 +23,7 @@ const directories: string[] = [];
 const databases: ReturnType<typeof openEngagementDatabase>[] = [];
 
 function fixture() {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-command-test-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-command-test-"));
   directories.push(directory);
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
@@ -313,10 +313,10 @@ describe("operator command idempotency", () => {
           env: {
             ...process.env,
             FORCE_COLOR: "0",
-            BLACKGLASS_CONCURRENCY_DATA_DIRECTORY: directory,
-            BLACKGLASS_CONCURRENCY_READY_PATH: readyPath,
-            BLACKGLASS_CONCURRENCY_GO_PATH: goPath,
-            BLACKGLASS_CONCURRENCY_RESULT_PATH: resultPath,
+            STONEHUSH_CONCURRENCY_DATA_DIRECTORY: directory,
+            STONEHUSH_CONCURRENCY_READY_PATH: readyPath,
+            STONEHUSH_CONCURRENCY_GO_PATH: goPath,
+            STONEHUSH_CONCURRENCY_RESULT_PATH: resultPath,
           },
           stdio: ["ignore", "pipe", "pipe"],
         },

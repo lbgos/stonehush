@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { ActionSnapshot } from "@blackglass/contracts";
+import type { ActionSnapshot } from "@stonehush/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import fixtureData from "../../../docs/architecture/fixtures/d2/runner-identity.json" with {
@@ -58,7 +58,7 @@ const fixtures: Fixture[] = [];
 function createFixture(
   options: { runnerId?: string; leaseIds?: readonly string[] } = {},
 ): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-runner-db-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-runner-db-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   let now = new Date("2026-08-09T12:00:00.000Z");

@@ -7,7 +7,7 @@ import {
   formatRunnerAuthorization,
   type ActionSnapshot,
   type RunnerLease,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   bindActionSnapshot,
   EngagementRepository,
@@ -16,7 +16,7 @@ import {
   openEngagementDatabase,
   RunRepository,
   RunnerRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -87,7 +87,7 @@ function boundSnapshot(actionId: string): ActionSnapshot {
 }
 
 async function createHarness() {
-  const directory = await mkdtemp(path.join(tmpdir(), "blackglass-grant-api-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "stonehush-grant-api-"));
   directories.push(directory);
   await chmod(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });

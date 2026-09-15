@@ -1,4 +1,4 @@
-import type { ReportBundle } from "@blackglass/contracts";
+import type { ReportBundle } from "@stonehush/contracts";
 
 import { maskReportBundle } from "./report-mask.js";
 import {
@@ -121,7 +121,7 @@ export function exportSharingMarkdown(preview: SharingPreview): string {
 }
 
 export interface PortableBundleManifest {
-  readonly kind: "blackglass-portable-bundle-v1";
+  readonly kind: "stonehush-portable-bundle-v1";
   readonly engagementId: string;
   readonly generatedAt: string;
   readonly template: string;
@@ -137,7 +137,7 @@ export interface PortableBundleManifest {
 // history, or ambient state.
 export function buildPortableBundleManifest(input: SharingInput): PortableBundleManifest {
   return {
-    kind: "blackglass-portable-bundle-v1",
+    kind: "stonehush-portable-bundle-v1",
     engagementId: input.bundle.engagement.id,
     generatedAt: input.bundle.generatedAt,
     template: input.outline.template,

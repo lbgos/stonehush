@@ -1,4 +1,4 @@
-# Blackglass
+<img src="apps/web/public/brand/stonehush-wordmark.svg" width="280" alt="stonehush">
 
 A local-first workspace for security assessments, CTFs, and labs.
 
@@ -21,20 +21,20 @@ Runs on your Linux machine with a browser UI, SQLite, and local evidence files. 
 Requires Linux with glibc 2.28+, Node.js 24, pnpm 10.24.0, a C compiler (`cc`), and Node development headers (`node_api.h`).
 
 ```bash
-git clone https://github.com/Lbgosna/blackglass.git
-cd blackglass
+git clone https://github.com/lbgos/stonehush.git
+cd stonehush
 pnpm install --frozen-lockfile
-pnpm --filter @blackglass/evidence-native build
+pnpm --filter @stonehush/evidence-native build
 pnpm dev
 ```
 
-Open <http://127.0.0.1:5173>. Data lives in `.blackglass/dev` by default. The native build is required for evidence and advisor turns.
+Open <http://127.0.0.1:5173>. Data lives in `.stonehush/dev` by default. The native build is required for evidence and advisor turns.
 
-This starts the UI and API. Scans also need a separately [enrolled runner](docs/architecture/0002-actions-runs-runner-trust.md), installed tools, and a wordlist for ffuf. In the [runner configuration](apps/runner/src/config.ts), set `BLACKGLASS_API_BASE_URL` to `http://127.0.0.1:3001` for development.
+This starts the UI and API. Scans also need a separately [enrolled runner](docs/architecture/0002-actions-runs-runner-trust.md), installed tools, and a wordlist for ffuf. For a one-command isolated lab, see the [guided demo](docs/operator/demo.md) (`pnpm demo`). In the [runner configuration](apps/runner/src/config.ts), set `STONEHUSH_API_BASE_URL` to `http://127.0.0.1:3001` for development.
 
 ## Try it
 
-Use a dedicated lab and [tell me what breaks or gets in your way](https://github.com/Lbgosna/blackglass/issues). Include reproduction steps and your tested commit. Keep credentials and private target data out of reports.
+Use a dedicated lab and [tell me what breaks or gets in your way](https://github.com/lbgos/stonehush/issues). Include reproduction steps and your tested commit. Keep credentials and private target data out of reports.
 
 Considering it for your business? Tell me what you'd need before adopting it. Stars and sharing help others find the project.
 

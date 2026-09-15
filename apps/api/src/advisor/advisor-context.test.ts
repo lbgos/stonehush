@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { EngagementWithActiveScope, Finding } from "@blackglass/contracts";
-import type { EngagementArtifactRecord } from "@blackglass/db";
+import type { EngagementWithActiveScope, Finding } from "@stonehush/contracts";
+import type { EngagementArtifactRecord } from "@stonehush/db";
 
 import {
   assembleAdvisorContext,
@@ -177,6 +177,7 @@ function ownedFinding(id: string, body: string): Finding {
     status: "open",
     body,
     evidenceArtifactIds: [],
+    revision: 1,
     createdAt: STAMP,
     updatedAt: STAMP,
   };

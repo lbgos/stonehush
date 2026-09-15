@@ -1,5 +1,5 @@
 {
-  "name": "@blackglass/web",
+  "name": "@stonehush/web",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,9 +10,9 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@blackglass/contracts": "workspace:*",
-    "@blackglass/domain": "workspace:*",
-    "@blackglass/ui": "workspace:*",
+    "@stonehush/contracts": "workspace:*",
+    "@stonehush/domain": "workspace:*",
+    "@stonehush/ui": "workspace:*",
     "@fontsource-variable/dm-sans": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@tanstack/react-query": "5.101.4",

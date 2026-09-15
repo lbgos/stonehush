@@ -2,7 +2,7 @@ import {
   FfufDiscoveryOptionsSchema,
   type ActionSnapshot,
   type FfufDiscoveryOptions,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 /**
  * Slice 2 ffuf action marker.

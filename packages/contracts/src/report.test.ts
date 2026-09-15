@@ -153,6 +153,7 @@ describe("report contracts", () => {
           status: "open",
           body: "# impact\nAdmin access.",
           evidenceArtifactIds: [],
+          revision: 1,
           createdAt: "2026-08-12T12:00:00.000Z",
           updatedAt: "2026-08-12T12:00:00.000Z",
         },

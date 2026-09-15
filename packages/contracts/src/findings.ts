@@ -61,6 +61,7 @@ export const FindingSchema = z.strictObject({
   status: FindingStatusSchema,
   body: FindingBodySchema,
   evidenceArtifactIds: FindingEvidenceRefsSchema,
+  revision: z.number().int().safe().nonnegative(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
@@ -75,6 +76,13 @@ export const CreateFindingRequestSchema = z.strictObject({
   severity: FindingSeveritySchema,
   body: FindingBodySchema,
   evidenceArtifactIds: FindingEvidenceRefsSchema.optional().default([]),
+});
+
+export const UpdateFindingRequestSchema = z.strictObject({
+  title: FindingTitleSchema,
+  severity: FindingSeveritySchema,
+  body: FindingBodySchema,
+  expectedRevision: z.number().int().safe().nonnegative(),
 });
 
 export const FindingResponseSchema = FindingSchema;
@@ -94,6 +102,12 @@ export const FindingMutationErrorSchema = z.union([
   z.strictObject({ code: z.literal("finding_not_found") }),
   z.strictObject({ code: z.literal("engagement_archived") }),
   z.strictObject({ code: z.literal("invalid_finding_transition") }),
+  z.strictObject({
+    code: z.literal("revision_conflict"),
+    resourceType: z.literal("finding"),
+    resourceId: EngagementSchema.shape.id,
+    currentRevision: z.number().int().safe().nonnegative(),
+  }),
   z.strictObject({ code: z.literal("invalid_persisted_data") }),
   z.strictObject({ code: z.literal("storage_busy") }),
 ]);
@@ -102,5 +116,6 @@ export type FindingSeverity = z.infer<typeof FindingSeveritySchema>;
 export type FindingStatus = z.infer<typeof FindingStatusSchema>;
 export type Finding = z.infer<typeof FindingSchema>;
 export type CreateFindingRequest = z.infer<typeof CreateFindingRequestSchema>;
+export type UpdateFindingRequest = z.infer<typeof UpdateFindingRequestSchema>;
 export type FindingQueryError = z.infer<typeof FindingQueryErrorSchema>;
 export type FindingMutationError = z.infer<typeof FindingMutationErrorSchema>;

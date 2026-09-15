@@ -7,7 +7,7 @@ import {
   type ResolutionSnapshot,
   type WarningContextAddition,
   type WarningReasonCode,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { describe, expect, it } from "vitest";
 
 import resolutionFixtureData from "../../../docs/architecture/fixtures/d1/resolution-snapshot.json" with {

@@ -1,4 +1,4 @@
-import type { PersistedAction } from "@blackglass/contracts";
+import type { PersistedAction } from "@stonehush/contracts";
 import { queryOptions, skipToken } from "@tanstack/react-query";
 
 import { fetchPersistedAction } from "./action-mutations.js";

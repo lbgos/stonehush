@@ -4,24 +4,24 @@ import { dataDirectoryFromEnvironment } from "../config.js";
 import { runBackup, runRestore } from "../evidence/backup-restore.js";
 import { runEvidenceDoctor } from "../evidence/doctor.js";
 
-// Minimal dependency-free CLI entry for `blackglass doctor`, `backup`, and
+// Minimal dependency-free CLI entry for `stonehush doctor`, `backup`, and
 // `restore`. The only output channel is deterministic JSON on stdout; exit
 // code 0 means success, 1 means defects or an error outcome, 2 is usage or
 // configuration failure. No physical path ever appears in stdout output.
 
-export interface BlackglassCliIo {
+export interface StonehushCliIo {
   readonly writeOut: (line: string) => void;
   readonly writeError: (line: string) => void;
 }
 
-const defaultIo: BlackglassCliIo = {
+const defaultIo: StonehushCliIo = {
   writeOut: (line) => process.stdout.write(line),
   writeError: (line) => process.stderr.write(line),
 };
 
 const USAGE =
-  "usage: blackglass doctor | blackglass backup <absolute-directory> | " +
-  "blackglass restore <absolute-directory> (requires BLACKGLASS_DATA_DIR)";
+  "usage: stonehush doctor | stonehush backup <absolute-directory> | " +
+  "stonehush restore <absolute-directory> (requires STONEHUSH_DATA_DIR)";
 
 function absoluteDirectoryArgument(
   rawArgument: string | undefined,
@@ -37,10 +37,10 @@ function absoluteDirectoryArgument(
   return path.resolve(rawArgument);
 }
 
-export async function runBlackglassCli(
+export async function runStonehushCli(
   argv: readonly string[],
   environment: NodeJS.ProcessEnv,
-  io: BlackglassCliIo = defaultIo,
+  io: StonehushCliIo = defaultIo,
 ): Promise<number> {
   const command = argv[0];
   let directoryArgument: string | undefined;

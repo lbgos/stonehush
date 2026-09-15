@@ -5,14 +5,14 @@ import {
   type HttpProbeErrorCode,
   type HttpProbeHop,
   type HttpProbeRaw,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   buildProbeRawBytes,
   isHttpProbeSnapshot,
   parseProbeTitle,
   probeUrlsForSnapshot,
   selectProbeHeaders,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 
 export const HTTP_PROBE_TIMEOUT_MS = 15_000;
 

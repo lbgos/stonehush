@@ -8,7 +8,7 @@
       "description": "Traversal segments cannot escape the managed evidence root.",
       "given": {
         "requestedSegment": "..",
-        "evidenceRoot": "/var/lib/blackglass/evidence"
+        "evidenceRoot": "/var/lib/stonehush/evidence"
       },
       "error": {
         "code": "artifact_path_rejected",
@@ -87,7 +87,7 @@
       "id": "d3.path.rename-race-noreplace",
       "description": "Two publishes racing the same destination leave exactly one winner and never replace.",
       "given": {
-        "destination": "/var/lib/blackglass/evidence/published/artifact-fixture-5",
+        "destination": "/var/lib/stonehush/evidence/published/artifact-fixture-5",
         "concurrentRenames": 2,
         "renameFlags": "RENAME_NOREPLACE"
       },

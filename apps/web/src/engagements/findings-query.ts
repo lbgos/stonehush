@@ -2,8 +2,9 @@ import {
   CreateFindingRequestSchema,
   FindingListResponseSchema,
   FindingResponseSchema,
+  UpdateFindingRequestSchema,
   type Finding,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -139,6 +140,69 @@ export function useFindingTransitionMutation(
   return useMutation({
     mutationFn: (findingId: string) =>
       findingTransitionRequest(engagementId, findingId, operation),
+    onSuccess: (finding) => {
+      queryClient.setQueryData<Finding[]>(findingsQueryKey(engagementId), (current) =>
+        current === undefined
+          ? [finding]
+          : current.map((entry) => (entry.id === finding.id ? finding : entry)),
+      );
+      void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: findingsQueryKey(engagementId) });
+    },
+  });
+}
+
+export interface UpdateFindingInput {
+  findingId: string;
+  title: string;
+  severity: "info" | "low" | "medium" | "high" | "critical";
+  body: string;
+  expectedRevision: number;
+}
+
+export async function updateFindingRequest(
+  engagementId: string,
+  input: UpdateFindingInput,
+  signal?: AbortSignal,
+): Promise<Finding> {
+  const body = UpdateFindingRequestSchema.parse({
+    title: input.title,
+    severity: input.severity,
+    body: input.body,
+    expectedRevision: input.expectedRevision,
+  });
+  let response: Response;
+  try {
+    response = await fetch(
+      `/api/v1/engagements/${engagementId}/findings/${input.findingId}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
+      },
+    );
+  } catch {
+    throw new FindingMutationClientError("request_failed");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new FindingMutationClientError("request_failed");
+  }
+  if (response.status !== 200) throw parseFindingMutationError(payload);
+  const parsed = FindingResponseSchema.safeParse(payload);
+  if (!parsed.success) throw new FindingMutationClientError("invalid_persisted_data");
+  return parsed.data;
+}
+
+export function useUpdateFindingMutation(engagementId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateFindingInput) => updateFindingRequest(engagementId, input),
     onSuccess: (finding) => {
       queryClient.setQueryData<Finding[]>(findingsQueryKey(engagementId), (current) =>
         current === undefined

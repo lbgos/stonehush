@@ -19,7 +19,7 @@ import path from "node:path";
 
 import { promisify } from "node:util";
 
-import { O_CLOEXEC, loadEvidenceNative } from "@blackglass/evidence-native";
+import { O_CLOEXEC, loadEvidenceNative } from "@stonehush/evidence-native";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { EvidenceStore, DOWNLOAD_CHUNK_BYTES, VERIFIED_EXCERPT_MAX_BYTES } from "./evidence-store.js";

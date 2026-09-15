@@ -175,7 +175,7 @@ describe("AdvisorSettingsSchema", () => {
         ...ADVISOR_SETTINGS_DEFAULTS,
         endpointBaseUrl: "http://127.0.0.1:11434/v1",
         modelId: "qwen3:8b",
-        apiKeyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+        apiKeyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
         requestBudget: 25,
         rawResponseVisibility: false,
         publicEndpointOptIn: false,

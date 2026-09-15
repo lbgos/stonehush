@@ -1,4 +1,4 @@
-import type { AdvisorPartitionedCitation } from "@blackglass/contracts";
+import type { AdvisorPartitionedCitation } from "@stonehush/contracts";
 
 /**
  * Citation passage links (STONE-7).
@@ -14,8 +14,4 @@ export function citationPassageHref(
 ): string | null {
   if (!citation.valid || citation.kind !== "artifact") return null;
   return `/api/v1/engagements/${encodeURIComponent(engagementId)}/artifacts/${encodeURIComponent(citation.raw)}/content`;
-}
-
-export function isOpenableCitation(citation: AdvisorPartitionedCitation): boolean {
-  return citation.valid && citation.kind === "artifact";
 }

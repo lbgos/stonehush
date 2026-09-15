@@ -8,7 +8,7 @@ import {
   RecoverableError,
   Skeleton,
   StaleDataState,
-} from "@blackglass/ui";
+} from "@stonehush/ui";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

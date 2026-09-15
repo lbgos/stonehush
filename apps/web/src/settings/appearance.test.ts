@@ -63,7 +63,7 @@ describe("parseGlassOpacity bounds 5..40", () => {
   it("falls back to default for out-of-range persisted values", () => {
     type Storage = Parameters<typeof readGlassOpacity>[0];
     const mk = (value: string): Storage => ({
-      getItem: (key) => (key === "blackglass.glassOpacity" ? value : null),
+      getItem: (key) => (key === "stonehush.glassOpacity" ? value : null),
       setItem: () => {},
     });
     expect(readGlassOpacity(mk("4"))).toBe(DEFAULT_GLASS_OPACITY);
@@ -119,31 +119,31 @@ describe("installAppearanceSync", () => {
   it("syncs matching storage, theme mutation and cleanup", async () => {
     type GlassRoot = Parameters<typeof applyGlassOpacity>[0];
     const root = document.documentElement as unknown as GlassRoot;
-    window.localStorage.setItem("blackglass.glassOpacity", "26");
+    window.localStorage.setItem("stonehush.glassOpacity", "26");
     document.documentElement.dataset.glassOpacity = "26";
-    window.localStorage.setItem("blackglass.density", "compact");
+    window.localStorage.setItem("stonehush.density", "compact");
     document.documentElement.dataset.density = "compact";
     applyGlassOpacity(root, 26);
     const darkGlass = document.documentElement.style.getPropertyValue("--glass");
     const cleanup = installAppearanceSync(window);
-    window.dispatchEvent(new StorageEvent("storage", { key: "blackglass.glassOpacity", newValue: "30" }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "stonehush.glassOpacity", newValue: "30" }));
     expect(document.documentElement.dataset.glassOpacity).toBe("30");
-    window.dispatchEvent(new StorageEvent("storage", { key: "blackglass.glassOpacity", newValue: "4" }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "stonehush.glassOpacity", newValue: "4" }));
     expect(document.documentElement.dataset.glassOpacity).toBe("30");
-    window.dispatchEvent(new StorageEvent("storage", { key: "blackglass.density", newValue: "regular" }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "stonehush.density", newValue: "regular" }));
     expect(document.documentElement.dataset.density).toBe("regular");
-    window.dispatchEvent(new StorageEvent("storage", { key: "blackglass.reducedMotion", newValue: "true" }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "stonehush.reducedMotion", newValue: "true" }));
     expect(document.documentElement.dataset.reducedMotion).toBe("true");
     document.documentElement.dataset.theme = "light";
     await new Promise((r) => setTimeout(r, 0));
     expect(document.documentElement.style.getPropertyValue("--glass")).not.toBe(darkGlass);
-    window.localStorage.setItem("blackglass.glassOpacity", "30");
-    window.localStorage.setItem("blackglass.density", "regular");
+    window.localStorage.setItem("stonehush.glassOpacity", "30");
+    window.localStorage.setItem("stonehush.density", "regular");
     window.dispatchEvent(new StorageEvent("storage", { key: null, newValue: null }));
     expect(document.documentElement.dataset.glassOpacity).toBe("30");
     expect(document.documentElement.dataset.density).toBe("regular");
     cleanup();
-    window.dispatchEvent(new StorageEvent("storage", { key: "blackglass.glassOpacity", newValue: "32" }));
+    window.dispatchEvent(new StorageEvent("storage", { key: "stonehush.glassOpacity", newValue: "32" }));
     expect(document.documentElement.dataset.glassOpacity).toBe("30");
   });
 
@@ -181,7 +181,7 @@ describe("installAppearanceSync", () => {
     expect(el.dataset.reducedMotion).toBe(String(DEFAULT_REDUCED_MOTION));
 
     const direct = new StorageEvent("storage", {
-      key: "blackglass.glassOpacity",
+      key: "stonehush.glassOpacity",
       newValue: "30",
     });
     expect(() => {

@@ -2,7 +2,7 @@ import { mkdtempSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { ActionSnapshot } from "@blackglass/contracts";
+import type { ActionSnapshot } from "@stonehush/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { bindActionSnapshot } from "./action-snapshot.js";

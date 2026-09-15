@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { runBlackglassCli } from "./blackglass-cli.js";
+import { runStonehushCli } from "./stonehush-cli.js";
 
 const directories: string[] = [];
 
@@ -28,19 +28,19 @@ async function runCli(
 ): Promise<CliRun> {
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const exitCode = await runBlackglassCli(argv, environment, {
+  const exitCode = await runStonehushCli(argv, environment, {
     writeOut: (line) => stdout.push(line),
     writeError: (line) => stderr.push(line),
   });
   return { exitCode, stdout: stdout.join(""), stderr: stderr.join("") };
 }
 
-describe("blackglass doctor CLI", () => {
+describe("stonehush doctor CLI", () => {
   it("prints deterministic JSON and exits 0 for a healthy tree", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "doctor-cli-"));
     directories.push(directory);
 
-    const native = await import("@blackglass/evidence-native");
+    const native = await import("@stonehush/evidence-native");
     const loaded = native.loadEvidenceNative();
     if (!loaded.ok) throw new Error(`native binding unavailable: ${loaded.reason}`);
     const { EvidenceStore } = await import("../evidence/evidence-store.js");
@@ -48,11 +48,11 @@ describe("blackglass doctor CLI", () => {
     if (!storeResult.ok) throw new Error(`store open failed: ${storeResult.code}`);
     storeResult.store.close();
     // A migrated database with no rows keeps the report healthy.
-    const { openEngagementDatabase } = await import("@blackglass/db");
+    const { openEngagementDatabase } = await import("@stonehush/db");
     const database = openEngagementDatabase({ dataDirectory: directory });
     database.close();
 
-    const first = await runCli(["doctor"], { BLACKGLASS_DATA_DIR: directory });
+    const first = await runCli(["doctor"], { STONEHUSH_DATA_DIR: directory });
     expect(first.exitCode).toBe(0);
     expect(first.stderr).toBe("");
     const parsed = JSON.parse(first.stdout) as {
@@ -69,7 +69,7 @@ describe("blackglass doctor CLI", () => {
       },
     });
 
-    const second = await runCli(["doctor"], { BLACKGLASS_DATA_DIR: directory });
+    const second = await runCli(["doctor"], { STONEHUSH_DATA_DIR: directory });
     expect(second.stdout).toBe(first.stdout);
   });
 
@@ -77,7 +77,7 @@ describe("blackglass doctor CLI", () => {
     const directory = await mkdtemp(path.join(tmpdir(), "doctor-cli-"));
     directories.push(directory);
 
-    const native = await import("@blackglass/evidence-native");
+    const native = await import("@stonehush/evidence-native");
     const loaded = native.loadEvidenceNative();
     if (!loaded.ok) throw new Error(`native binding unavailable: ${loaded.reason}`);
     const { EvidenceStore } = await import("../evidence/evidence-store.js");
@@ -85,13 +85,13 @@ describe("blackglass doctor CLI", () => {
     if (!storeResult.ok) throw new Error(`store open failed: ${storeResult.code}`);
     storeResult.store.close();
     // Untracked published entry: extra_artifact without any database row.
-    const { openEngagementDatabase } = await import("@blackglass/db");
+    const { openEngagementDatabase } = await import("@stonehush/db");
     const database = openEngagementDatabase({ dataDirectory: directory });
     database.close();
     const { writeFile } = await import("node:fs/promises");
     await writeFile(path.join(directory, "evidence/published/extra-artifact"), "extra");
 
-    const result = await runCli(["doctor"], { BLACKGLASS_DATA_DIR: directory });
+    const result = await runCli(["doctor"], { STONEHUSH_DATA_DIR: directory });
     expect(result.exitCode).toBe(1);
     const parsed = JSON.parse(result.stdout) as {
       status: string;
@@ -112,19 +112,19 @@ describe("blackglass doctor CLI", () => {
 
     const unknownCommand = await runCli(["repair"], {});
     expect(unknownCommand.exitCode).toBe(2);
-    expect(unknownCommand.stderr).toContain("usage: blackglass");
+    expect(unknownCommand.stderr).toContain("usage: stonehush");
 
     const missingDataDir = await runCli(["doctor"], {});
     expect(missingDataDir.exitCode).toBe(2);
     expect(missingDataDir.stdout).toBe("");
 
-    const relativeDataDir = await runCli(["doctor"], { BLACKGLASS_DATA_DIR: "relative/dir" });
+    const relativeDataDir = await runCli(["doctor"], { STONEHUSH_DATA_DIR: "relative/dir" });
     expect(relativeDataDir.exitCode).toBe(2);
     expect(relativeDataDir.stdout).toBe("");
   });
 });
 
-describe("blackglass backup and restore CLI", () => {
+describe("stonehush backup and restore CLI", () => {
   it("rejects usage and configuration errors for backup and restore", async () => {
     const noArg = await runCli(["backup"], {});
     expect(noArg.exitCode).toBe(2);
@@ -149,7 +149,7 @@ describe("blackglass backup and restore CLI", () => {
     // The configured data directory does not exist, so the source is
     // unavailable; the refusal is typed JSON without any filesystem path.
     const result = await runCli(["backup", destination], {
-      BLACKGLASS_DATA_DIR: path.join(directory, "missing-data"),
+      STONEHUSH_DATA_DIR: path.join(directory, "missing-data"),
     });
     expect(result.exitCode).toBe(1);
     const parsed = JSON.parse(result.stdout) as { status: string; code: string };
@@ -161,7 +161,7 @@ describe("blackglass backup and restore CLI", () => {
     const directory = await mkdtemp(path.join(tmpdir(), "restore-cli-missing-"));
     directories.push(directory);
     const result = await runCli(["restore", directory], {
-      BLACKGLASS_DATA_DIR: path.join(directory, "missing-data"),
+      STONEHUSH_DATA_DIR: path.join(directory, "missing-data"),
     });
     expect(result.exitCode).toBe(1);
     const parsed = JSON.parse(result.stdout) as { status: string; code: string };

@@ -2,7 +2,7 @@ import {
   GetAdvisorSettingsResponseSchema,
   type AdvisorSettings,
   type UpdateAdvisorSettingsRequest,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { ADVISOR_STATUS_QUERY_KEY } from "../advisor-status-query.js";

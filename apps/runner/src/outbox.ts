@@ -9,7 +9,7 @@ import {
   type CommandJsonV1DigestProjection,
   type JsonValue,
   JsonValueSchema,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 export function generateIdempotencyKey(): string {
   return randomBytes(16).toString("base64url");

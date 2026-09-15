@@ -21,7 +21,7 @@ import {
   type RetryActionContext,
   type WarningAcknowledgment,
   type WarningContextAddition,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   activateAction,
   addScopeAndRun,
@@ -33,7 +33,7 @@ import {
   retryActionContext,
   snapshotIsCanonical,
   warningAdditionIsCanonical,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 import { and, asc, eq } from "drizzle-orm";
 
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";

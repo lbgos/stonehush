@@ -17,22 +17,22 @@ export interface RunnerConfig {
 export function resolveRunnerConfig(overrides: Partial<RunnerConfig> = {}): RunnerConfig {
   const apiBaseUrl =
     overrides.apiBaseUrl ??
-    process.env.BLACKGLASS_API_BASE_URL ??
+    process.env.STONEHUSH_API_BASE_URL ??
     "http://127.0.0.1:3000";
   const dataDir =
     overrides.dataDir ??
-    process.env.BLACKGLASS_RUNNER_DATA_DIR ??
+    process.env.STONEHUSH_RUNNER_DATA_DIR ??
     path.join(process.cwd(), "data");
-  const runnerId = overrides.runnerId ?? process.env.BLACKGLASS_RUNNER_ID ?? "";
-  const secret = overrides.secret ?? process.env.BLACKGLASS_RUNNER_SECRET ?? "";
+  const runnerId = overrides.runnerId ?? process.env.STONEHUSH_RUNNER_ID ?? "";
+  const secret = overrides.secret ?? process.env.STONEHUSH_RUNNER_SECRET ?? "";
   const sessionId = overrides.sessionId ?? randomUUID();
   const installationFingerprint =
     overrides.installationFingerprint ??
-    process.env.BLACKGLASS_INSTALLATION_FINGERPRINT ??
+    process.env.STONEHUSH_INSTALLATION_FINGERPRINT ??
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const executable =
     overrides.executable ??
-    process.env.BLACKGLASS_NMAP_EXECUTABLE ??
+    process.env.STONEHUSH_NMAP_EXECUTABLE ??
     "/usr/bin/nmap";
 
   return {

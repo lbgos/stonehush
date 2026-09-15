@@ -18,7 +18,7 @@ interface Fixture {
 const fixtures: Fixture[] = [];
 
 function createFixture(): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-findings-test-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-findings-test-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   let next = 1;
@@ -377,5 +377,171 @@ describe("scoped finding reads", () => {
       ok: false,
       error: { code: "engagement_not_found" },
     });
+  });
+});
+
+describe("finding content edits", () => {
+  it("creates at revision 1 and applies an edit without touching evidence or status", () => {
+    const { database, repository } = createFixture();
+    const engagement = createEngagement(repository);
+    seedRun(database, engagement.id, "edit-action-1", "edit-run-1");
+    seedArtifact(database, "nmap-xml-1", "edit-run-1");
+    const created = repository.createFinding(engagement.id, {
+      title: "Default credentials",
+      severity: "high",
+      body: "# impact\nAdmin access.",
+      evidenceArtifactIds: ["nmap-xml-1"],
+    });
+    if (!created.ok) throw new Error(`Create failed: ${created.error.code}`);
+    expect(created.value.revision).toBe(1);
+
+    const edited = repository.updateFinding(engagement.id, created.value.id, {
+      title: "Corrected title",
+      severity: "critical",
+      body: "# impact\nConfirmed.",
+      expectedRevision: 1,
+    });
+    if (!edited.ok) throw new Error(`Edit failed: ${edited.error.code}`);
+    expect(edited.value).toMatchObject({
+      title: "Corrected title",
+      severity: "critical",
+      body: "# impact\nConfirmed.",
+      status: "open",
+      evidenceArtifactIds: ["nmap-xml-1"],
+      revision: 2,
+    });
+
+    const listed = repository.listFindings(engagement.id);
+    if (!listed.ok) throw new Error(`List failed: ${listed.error.code}`);
+    expect(listed.value).toEqual([edited.value]);
+  });
+
+  it("rejects a stale writer with the current revision", () => {
+    const { repository } = createFixture();
+    const engagement = createEngagement(repository);
+    const created = repository.createFinding(engagement.id, {
+      title: "Banner",
+      severity: "low",
+      body: "",
+    });
+    if (!created.ok) throw new Error(`Create failed: ${created.error.code}`);
+
+    const first = repository.updateFinding(engagement.id, created.value.id, {
+      title: "Banner v2",
+      severity: "low",
+      body: "",
+      expectedRevision: 1,
+    });
+    if (!first.ok) throw new Error(`First edit failed: ${first.error.code}`);
+    expect(first.value.revision).toBe(2);
+
+    expect(
+      repository.updateFinding(engagement.id, created.value.id, {
+        title: "Stale overwrite",
+        severity: "low",
+        body: "",
+        expectedRevision: 1,
+      }),
+    ).toEqual({ ok: false, error: { code: "revision_conflict", currentRevision: 2 } });
+
+    const listed = repository.listFindings(engagement.id);
+    if (!listed.ok) throw new Error(`List failed: ${listed.error.code}`);
+    expect(listed.value[0]?.title).toBe("Banner v2");
+  });
+
+  it("keeps status transitions working and bumps their revision", () => {
+    const { repository } = createFixture();
+    const engagement = createEngagement(repository);
+    const created = repository.createFinding(engagement.id, {
+      title: "Banner",
+      severity: "low",
+      body: "",
+    });
+    if (!created.ok) throw new Error(`Create failed: ${created.error.code}`);
+
+    const edited = repository.updateFinding(engagement.id, created.value.id, {
+      title: "Banner v2",
+      severity: "medium",
+      body: "notes",
+      expectedRevision: 1,
+    });
+    if (!edited.ok) throw new Error(`Edit failed: ${edited.error.code}`);
+
+    const resolved = repository.resolveFinding(engagement.id, created.value.id);
+    if (!resolved.ok) throw new Error(`Resolve failed: ${resolved.error.code}`);
+    expect(resolved.value).toMatchObject({ status: "resolved", revision: 3 });
+
+    expect(
+      repository.updateFinding(engagement.id, created.value.id, {
+        title: "Late edit",
+        severity: "medium",
+        body: "notes",
+        expectedRevision: 2,
+      }),
+    ).toEqual({ ok: false, error: { code: "revision_conflict", currentRevision: 3 } });
+
+    const reopened = repository.reopenFinding(engagement.id, created.value.id);
+    if (!reopened.ok) throw new Error(`Reopen failed: ${reopened.error.code}`);
+    expect(reopened.value).toMatchObject({ status: "open", revision: 4, title: "Banner v2" });
+  });
+
+  it("rejects edits for archived, unknown, foreign, and invalid input", () => {
+    const { repository } = createFixture();
+    const first = createEngagement(repository);
+    const second = createEngagement(repository);
+    const created = repository.createFinding(first.id, {
+      title: "Owned finding",
+      severity: "low",
+      body: "",
+    });
+    if (!created.ok) throw new Error(`Create failed: ${created.error.code}`);
+    const valid = {
+      title: "Edited",
+      severity: "low",
+      body: "",
+      expectedRevision: 1,
+    } as const;
+
+    expect(repository.updateFinding(first.id, UNKNOWN_ID, valid)).toEqual({
+      ok: false,
+      error: { code: "finding_not_found" },
+    });
+    expect(repository.updateFinding(second.id, created.value.id, valid)).toEqual({
+      ok: false,
+      error: { code: "finding_not_found" },
+    });
+    expect(repository.updateFinding(UNKNOWN_ID, created.value.id, valid)).toEqual({
+      ok: false,
+      error: { code: "engagement_not_found" },
+    });
+    expect(
+      repository.updateFinding(first.id, created.value.id, { ...valid, title: "  padded  " }),
+    ).toEqual({ ok: false, error: { code: "invalid_repository_input" } });
+    expect(
+      repository.updateFinding(first.id, created.value.id, { ...valid, expectedRevision: undefined }),
+    ).toEqual({ ok: false, error: { code: "invalid_repository_input" } });
+
+    const archived = repository.archive(first.id, first.revision);
+    if (!archived.ok) throw new Error(`Archive failed: ${archived.error.code}`);
+    expect(repository.updateFinding(first.id, created.value.id, valid)).toEqual({
+      ok: false,
+      error: { code: "engagement_archived" },
+    });
+  });
+
+  it("initializes pre-existing findings at revision 1 through migration", () => {
+    const { database, repository } = createFixture();
+    const info = database.sqlite
+      .prepare("select dflt_value from pragma_table_info('findings') where name = 'revision'")
+      .get() as { dflt_value: string | null };
+    expect(info.dflt_value).toBe("1");
+    const engagement = createEngagement(repository);
+    const created = repository.createFinding(engagement.id, {
+      title: "Migrated finding",
+      severity: "info",
+      body: "",
+    });
+    if (!created.ok) throw new Error(`Create failed: ${created.error.code}`);
+    expect(created.value.revision).toBe(1);
   });
 });

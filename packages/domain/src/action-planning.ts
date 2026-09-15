@@ -20,7 +20,7 @@ import {
   type WarningAcknowledgmentSource,
   type WarningContextAddition,
   type WarningReasonCode,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import { normalizeTarget } from "./normalize-target.js";
 

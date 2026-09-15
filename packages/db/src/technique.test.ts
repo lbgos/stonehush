@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 function createFixture(nowIso = "2026-08-12T12:00:00.000Z"): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-technique-test-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-technique-test-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   const engagements = new EngagementRepository(database.db);

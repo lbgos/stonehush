@@ -1,4 +1,4 @@
-import type { Finding } from "@blackglass/contracts";
+import type { Finding } from "@stonehush/contracts";
 
 /**
  * Report outline selection model (STONE-7).

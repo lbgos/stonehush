@@ -5,7 +5,7 @@ import {
   EvidenceGrantResponseSchema,
   commandJsonV1RunnerArtifactGrantDigest,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import type { RunnerConfig } from "./config.js";
 import { getOrCreateOutboxEntry, removeOutboxAtomically } from "./outbox.js";
@@ -21,7 +21,7 @@ export class EvidencePublicationError extends Error {
 }
 
 function authHeader(runnerId: string, secret: string): string {
-  return `Blackglass-Runner ${runnerId} ${secret}`;
+  return `Stonehush-Runner ${runnerId} ${secret}`;
 }
 
 function sha256Hex(buffer: Buffer): string {

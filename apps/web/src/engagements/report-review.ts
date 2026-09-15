@@ -1,5 +1,5 @@
-import { redactAdvisorText } from "@blackglass/domain";
-import type { Finding } from "@blackglass/contracts";
+import { redactAdvisorText } from "@stonehush/domain";
+import type { Finding } from "@stonehush/contracts";
 
 import type { ReportOutline } from "./report-outline.js";
 

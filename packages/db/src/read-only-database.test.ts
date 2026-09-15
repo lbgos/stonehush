@@ -9,7 +9,7 @@ import { DATABASE_FILENAME, openEngagementDatabase, openReadOnlyEngagementDataba
 const directories: string[] = [];
 
 function createFixture(): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-db-readonly-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-db-readonly-"));
   chmodSync(directory, 0o700);
   directories.push(directory);
   return directory;

@@ -6,7 +6,7 @@ Date: 2026-08-09
 
 Decision gate: [D2](./DECISION_GATES.md#d2-actions-runs-concurrency-and-runner-trust)
 
-Issue: [#33](https://github.com/Lbgosna/blackglass/issues/33)
+Issue: [#33](https://github.com/lbgos/stonehush/issues/33)
 
 ## Context
 

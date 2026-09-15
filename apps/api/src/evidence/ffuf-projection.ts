@@ -1,5 +1,5 @@
-import { FFUF_MAX_JSON_BYTES, isFfufArtifactSlot } from "@blackglass/contracts";
-import type { FfufRepository } from "@blackglass/db";
+import { FFUF_MAX_JSON_BYTES, isFfufArtifactSlot } from "@stonehush/contracts";
+import type { FfufRepository } from "@stonehush/db";
 import type { EvidenceStore } from "./evidence-store.js";
 
 type ProjectionResult =

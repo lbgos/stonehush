@@ -1,4 +1,4 @@
-import { cn } from "@blackglass/ui";
+import { cn } from "@stonehush/ui";
 import { useEffect, useRef, type ReactNode } from "react";
 
 import { SETTINGS_SECTIONS, searchSettings, type SettingsSectionId } from "./model.js";
@@ -6,7 +6,7 @@ import { useSettingsView } from "./settings-view.js";
 
 function SearchIcon() {
   return (
-    <svg viewBox="0 0 16 16" className="size-[15px] shrink-0" aria-hidden="true">
+    <svg viewBox="0 0 16 16" className="size-4 shrink-0" aria-hidden="true">
       <circle cx="7" cy="7" r="4.25" fill="none" stroke="currentColor" strokeWidth="1.7" />
       <path d="M10.4 10.4 14 14" fill="none" stroke="currentColor" strokeWidth="1.7" />
     </svg>
@@ -23,7 +23,7 @@ function ClearIcon() {
 
 function BackIcon() {
   return (
-    <svg viewBox="0 0 16 16" className="size-[15px] shrink-0" aria-hidden="true">
+    <svg viewBox="0 0 16 16" className="size-4 shrink-0" aria-hidden="true">
       <path d="M9.6 3.6 5.2 8l4.4 4.4M5.2 8h6.4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -70,7 +70,7 @@ function SectionIcon({ id }: { id: SettingsSectionId }) {
   return (
     <svg
       viewBox="0 0 16 16"
-      className="size-[15px] shrink-0"
+      className="size-4 shrink-0"
       fill="none"
       stroke="currentColor"
       strokeWidth="1.7"

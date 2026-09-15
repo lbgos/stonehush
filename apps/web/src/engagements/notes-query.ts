@@ -2,7 +2,7 @@ import {
   EngagementNotesResponseSchema,
   UpdateEngagementNotesRequestSchema,
   type EngagementNotes,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 

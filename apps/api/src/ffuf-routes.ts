@@ -9,13 +9,13 @@ import {
   commandJsonV1CreateFfufDiscoveryDigest,
   type ActionMutationError,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   ActionRepositoryError,
   EngagementWriteTransaction,
   FfufRepository,
   OperatorCommandRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import {

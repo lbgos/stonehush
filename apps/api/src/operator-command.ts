@@ -10,13 +10,13 @@ import {
   projectCommandJsonV1DigestInput,
   type CommandJsonV1DigestProjection,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementWriteTransaction,
   OperatorCommandRepository,
   OperatorCommandResult,
   PreparedOperatorCommand,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 export const LOCAL_OPERATOR_ACTOR_ID = "local-operator-v1" as const;

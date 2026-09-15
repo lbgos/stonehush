@@ -95,11 +95,11 @@ describe("evidence publishing grant flow", () => {
     expect(stdoutGrant.eventSequence).toBe(2);
     expect(stdoutGrant.kind).toBe("stdout");
     expect(requests[0]?.headers["content-type"]).toContain("application/json");
-    expect(requests[0]?.headers["authorization"]).toBe(`Blackglass-Runner runner-1 ${"a".repeat(43)}`);
+    expect(requests[0]?.headers["authorization"]).toBe(`Stonehush-Runner runner-1 ${"a".repeat(43)}`);
     expect(requests[0]?.headers["idempotency-key"]).toMatch(/^[\x20-\x7e]{22,128}$/);
     // PUT headers
     expect(requests[1]?.headers["content-type"]).toBe("application/octet-stream");
-    expect(requests[1]?.headers["authorization"]).toBe(`Blackglass-Runner runner-1 ${"a".repeat(43)}`);
+    expect(requests[1]?.headers["authorization"]).toBe(`Stonehush-Runner runner-1 ${"a".repeat(43)}`);
     // complete body
     const stdoutComplete = requests[2]?.body as Record<string, unknown>;
     expect(stdoutComplete.sizeBytes).toBe(stdout.length);

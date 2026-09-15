@@ -7,8 +7,8 @@ import {
   HTTP_PROBE_MAX_RAW_BYTES,
   HTTP_PROBE_PARSER_VERSION,
   HttpProbeHopSchema,
-} from "@blackglass/contracts";
-import { parseProbeRawBytes } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { parseProbeRawBytes } from "@stonehush/domain";
 import * as schema from "./schema.js";
 import { actions, engagements, evidenceArtifacts, httpProbeResults, runs } from "./schema.js";
 

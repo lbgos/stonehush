@@ -1,4 +1,4 @@
-import type { AdvisorTurn } from "@blackglass/contracts";
+import type { AdvisorTurn } from "@stonehush/contracts";
 
 import type { HintDepthStorage } from "./hint-depth.js";
 import { splitAnswerParagraphs, toPrefilledAction } from "./pin-citation.js";
@@ -19,8 +19,8 @@ import type {
  * stays a different check.
  */
 
-const TRIED_CHECKS_PREFIX = "blackglass.advisor.tried-checks.";
-const ACCESS_CONTEXT_PREFIX = "blackglass.advisor.access-context.";
+const TRIED_CHECKS_PREFIX = "stonehush.advisor.tried-checks.";
+const ACCESS_CONTEXT_PREFIX = "stonehush.advisor.access-context.";
 const TRIED_CHECKS_MAX = 64;
 
 function normalize(value: string): string {

@@ -1217,6 +1217,7 @@ export const findings = sqliteTable(
     status: text("status", { enum: ["open", "resolved"] }).notNull(),
     body: text("body").notNull(),
     evidenceArtifactIdsJson: text("evidence_artifact_ids_json").notNull(),
+    revision: integer("revision").notNull().default(1),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -1242,6 +1243,7 @@ export const findings = sqliteTable(
       "finding_evidence_json",
       sql`json_valid(${table.evidenceArtifactIdsJson}) and length(cast(${table.evidenceArtifactIdsJson} as blob)) <= 8192`,
     ),
+    check("finding_revision", sql`${table.revision} >= 1`),
     check("finding_created_at", sql`length(${table.createdAt}) >= 20`),
     check("finding_updated_at", sql`length(${table.updatedAt}) >= 20`),
     index("finding_engagement_created_idx").on(

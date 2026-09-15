@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 function fixture(autoContinueWarnings = false) {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-ffuf-db-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-ffuf-db-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   fixtures.push({ directory, database });

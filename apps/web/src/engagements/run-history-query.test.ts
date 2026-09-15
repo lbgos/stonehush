@@ -2,7 +2,7 @@ import {
   encodeRunHistoryCursor,
   type RunHistoryResponse,
   type RunHistorySummary,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { skipToken } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 

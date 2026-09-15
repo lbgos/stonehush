@@ -135,7 +135,7 @@ describe("context preview", () => {
       credentials: "admin:hunter2",
       secretValues: ["sk-abc"],
       noteHistory: ["v1", "v2"],
-      rawArtifacts: ["bytes"],
+      rawArtifacts: ["raw-payload-1"],
       history: [{ question: "old", answer: "old" }],
     });
     const preview = buildContextPreview(picked);
@@ -143,7 +143,7 @@ describe("context preview", () => {
     expect(text).not.toContain("flag{secret}");
     expect(text).not.toContain("hunter2");
     expect(text).not.toContain("sk-abc");
-    expect(text).not.toContain("bytes");
+    expect(text).not.toContain("raw-payload-1");
   });
 });
 

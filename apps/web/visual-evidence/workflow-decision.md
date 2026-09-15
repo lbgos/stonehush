@@ -1,4 +1,4 @@
-# Blackglass v5 workflow decision
+# Stonehush v5 workflow decision
 
 Continued product and UI iteration on merged PR #44. The approved mock remains the visual source of truth. Its prototype logic is not automatically product logic.
 

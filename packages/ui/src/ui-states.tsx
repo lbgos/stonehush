@@ -59,8 +59,8 @@ export function StaleDataState({
       >
         <RefreshCw className="size-4 shrink-0 text-warning" aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="m-0 text-sm font-bold text-foreground">{title}</p>
-          <p className="mt-1 mb-0 text-sm text-muted-foreground">{description}</p>
+          <p className="m-0 text-[13px] font-semibold text-foreground">{title}</p>
+          <p className="mt-1 mb-0 text-[13px] text-muted-foreground">{description}</p>
         </div>
         {onRetry && (
           <Button variant="secondary" onClick={onRetry}>
@@ -100,10 +100,10 @@ export function RecoverableError({
         className={cn("size-5 text-warning", variant === "page" && "mx-auto")}
         aria-hidden="true"
       />
-      <h2 className={cn("mb-0 font-bold text-foreground", variant === "page" ? "mt-3 text-lg" : "mt-2 text-base")}>
+      <h2 className={cn("mb-0 font-semibold text-foreground", variant === "page" ? "mt-3 text-lg" : "mt-2 text-[13px]")}>
         {title}
       </h2>
-      <p className="mt-2 mb-0 text-sm leading-6 text-muted-foreground">{description}</p>
+      <p className="mt-2 mb-0 text-[13px] leading-6 text-muted-foreground">{description}</p>
       <Button className="mt-4" variant="secondary" onClick={onRetry}>
         {retryLabel}
       </Button>
@@ -128,17 +128,17 @@ export function FatalErrorView({
 }: FatalErrorViewProps) {
   return (
     <section className="rounded-xl border border-destructive/40 bg-destructive/10 px-6 py-10" role="alert">
-      <TriangleAlert className="size-6 text-destructive" aria-hidden="true" />
-      <h1 className="mt-3 mb-0 text-xl font-bold text-foreground">{title}</h1>
-      <p className="mt-2 mb-0 max-w-xl text-sm leading-6 text-muted-foreground">{description}</p>
+      <TriangleAlert className="size-5 text-destructive" aria-hidden="true" />
+      <h1 className="mt-3 mb-0 text-[26px] leading-none font-semibold tracking-[-0.04em] text-foreground">{title}</h1>
+      <p className="mt-2 mb-0 max-w-xl text-[13px] leading-6 text-muted-foreground">{description}</p>
       <div className="mt-5 flex flex-wrap gap-2">
         <Button onClick={onRetry}>Retry</Button>
         <Button variant="secondary" onClick={onReload}>
           Reload app
         </Button>
       </div>
-      <details className="mt-5 rounded-lg border border-border bg-card p-4 text-sm">
-        <summary className="cursor-pointer font-bold text-foreground">Technical details</summary>
+      <details className="mt-5 rounded-lg border border-border bg-card p-4 text-[13px]">
+        <summary className="cursor-pointer text-[13px] font-semibold text-foreground">Technical details</summary>
         <pre className="mt-3 mb-0 overflow-auto whitespace-pre-wrap font-mono text-xs text-muted-foreground">
           {technicalDetails}
         </pre>
@@ -196,7 +196,7 @@ export class FatalErrorBoundary extends Component<
         onReload={this.reload}
         onRetry={this.retry}
         technicalDetails={error.stack ?? error.message}
-        title={this.props.title ?? "Blackglass hit a fatal error"}
+        title={this.props.title ?? "Stonehush hit a fatal error"}
       />
     );
   }

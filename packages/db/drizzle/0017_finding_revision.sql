@@ -1,0 +1,1 @@
+ALTER TABLE `findings` ADD `revision` integer NOT NULL DEFAULT 1 CHECK(`revision` >= 1);

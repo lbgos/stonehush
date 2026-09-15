@@ -7,12 +7,9 @@
  * unprompted: depth 0 returns the question byte-identical.
  */
 
-export const HINT_DEPTH_MIN = 0 as const;
-export const HINT_DEPTH_MAX = 2 as const;
-
 export type HintDepth = 0 | 1 | 2;
 
-const HINT_DEPTH_STORAGE_PREFIX = "blackglass.advisor.hint-depth.";
+const HINT_DEPTH_STORAGE_PREFIX = "stonehush.advisor.hint-depth.";
 
 export const HINT_DEPTH_LABELS: Record<HintDepth, string> = {
   0: "Focused question",
@@ -58,11 +55,6 @@ export function saveHintDepth(
   } catch {
     // Depth persistence is a convenience; a failing store never blocks asking.
   }
-}
-
-export function advanceHintDepth(depth: HintDepth): HintDepth {
-  if (depth >= HINT_DEPTH_MAX) return HINT_DEPTH_MAX;
-  return (depth + 1) as HintDepth;
 }
 
 // Shape the outgoing question for the requested depth. Depth 0 is the

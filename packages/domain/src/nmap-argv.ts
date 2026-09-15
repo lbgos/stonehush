@@ -2,7 +2,7 @@ import {
   CanonicalTargetSchema,
   NmapTcpConnectOptionsSchema,
   type CanonicalTarget,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import { normalizeTarget } from "./normalize-target.js";
 import { normalizeScopePortRanges } from "./saved-scope.js";

@@ -33,7 +33,7 @@ const connectedStatus = {
   endpointHost: "127.0.0.1",
   publicEndpoint: false,
   optIn: false,
-  keyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+  keyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
   keyPresent: true,
   latencyMs: 12,
   reason: "ok",
@@ -112,7 +112,7 @@ describe("AdvisorStatusCard", () => {
           response({
             ...unconfiguredStatus,
             configured: true,
-            keyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+            keyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
             reason: "key_unset",
           }),
         ),
@@ -121,7 +121,7 @@ describe("AdvisorStatusCard", () => {
     const { router } = await renderCard();
 
     expect(await screen.findByText("Advisor API key is not set")).toBeTruthy();
-    expect(await screen.findByText(/BLACKGLASS_ADVISOR_API_KEY/)).toBeTruthy();
+    expect(await screen.findByText(/STONEHUSH_ADVISOR_API_KEY/)).toBeTruthy();
     router.history.destroy();
   });
 

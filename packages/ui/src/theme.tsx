@@ -9,8 +9,8 @@ import {
   type ReactNode,
 } from "react";
 
-export const THEME_STORAGE_KEY = "blackglass.theme";
-export const THEME_FAMILY_STORAGE_KEY = "blackglass.themeFamily";
+export const THEME_STORAGE_KEY = "stonehush.theme";
+export const THEME_FAMILY_STORAGE_KEY = "stonehush.themeFamily";
 export const THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
 export const THEME_FAMILIES = [

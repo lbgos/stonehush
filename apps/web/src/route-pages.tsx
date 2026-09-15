@@ -37,7 +37,7 @@ export function UnknownRoutePage() {
           Page not found
         </h1>
         <p className="mt-2 mb-0 max-w-xl text-[13px] leading-5 text-muted-foreground">
-          Blackglass does not have a page at <code className="font-mono">{pathname}</code>.
+          Stonehush does not have a page at <code className="font-mono">{pathname}</code>.
         </p>
         <Link
           to="/"

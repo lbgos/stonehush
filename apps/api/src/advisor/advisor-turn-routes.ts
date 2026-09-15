@@ -9,19 +9,19 @@ import {
   parseAdvisorTurnListQuery,
   projectCommandJsonV1DigestInput,
   type AdvisorTurn,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   AdvisorTurnRecord,
   AdvisorTurnsRepository,
   EngagementRepository,
   EvidenceGrantRepository,
   SettingsRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import {
   partitionAdvisorCitations,
   redactAdvisorText,
   truncateUtf8Bytes,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import {

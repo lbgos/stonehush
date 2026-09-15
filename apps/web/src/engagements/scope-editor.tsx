@@ -1,4 +1,4 @@
-import type { SavedScopeRule, ScopeRevision } from "@blackglass/contracts";
+import type { SavedScopeRule, ScopeRevision } from "@stonehush/contracts";
 import {
   Button,
   LoadingRegion,
@@ -6,7 +6,7 @@ import {
   Skeleton,
   StaleDataState,
   cn,
-} from "@blackglass/ui";
+} from "@stonehush/ui";
 import { useId, useState, type FormEvent, type ReactNode } from "react";
 
 import { engagementMutationMessage, isRevisionConflict } from "./errors.js";

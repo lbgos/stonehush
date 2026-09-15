@@ -82,7 +82,7 @@
       "given": {
         "filePresent": true,
         "rowPresent": false,
-        "path": "/var/lib/blackglass/evidence/published/artifact-fixture-10"
+        "path": "/var/lib/stonehush/evidence/published/artifact-fixture-10"
       },
       "expected": {
         "finding": "extra_artifact",

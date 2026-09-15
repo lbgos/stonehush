@@ -1,10 +1,10 @@
 {
-  "name": "@blackglass/api",
+  "name": "@stonehush/api",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "bin": {
-    "blackglass": "./dist/cli/blackglass.js"
+    "stonehush": "./dist/cli/stonehush.js"
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
@@ -13,10 +13,10 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@blackglass/contracts": "workspace:*",
-    "@blackglass/db": "workspace:*",
-    "@blackglass/domain": "workspace:*",
-    "@blackglass/evidence-native": "workspace:*",
+    "@stonehush/contracts": "workspace:*",
+    "@stonehush/db": "workspace:*",
+    "@stonehush/domain": "workspace:*",
+    "@stonehush/evidence-native": "workspace:*",
     "fastify": "5.11.3"
   },
   "devDependencies": {

@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 
-import { ThemeProvider } from "@blackglass/ui";
+import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ReportBundle } from "@blackglass/contracts";
-import { engagementReportMarkdown } from "@blackglass/contracts";
+import type { ReportBundle } from "@stonehush/contracts";
+import { engagementReportMarkdown } from "@stonehush/contracts";
 import { createAppQueryClient } from "../query-client.js";
 import { maskReportBundle } from "./report-mask.js";
 import { reportQueryKey } from "./report-query.js";
@@ -39,6 +39,7 @@ function bundleFixture(): ReportBundle {
         status: "open",
         body: "# impact\nAdmin access.",
         evidenceArtifactIds: [],
+        revision: 1,
         createdAt: "2026-08-12T12:00:00.000Z",
         updatedAt: "2026-08-12T12:00:00.000Z",
       },
@@ -76,6 +77,12 @@ function renderSection() {
     </ThemeProvider>,
   );
   return { queryClient, ...rendered };
+}
+
+// The outline picker lists finding titles below the preview, so title
+// assertions scope to the Markdown preview region.
+function previewText() {
+  return document.querySelector("section[aria-label='Report'] pre")?.textContent ?? "";
 }
 
 beforeEach(() => {
@@ -148,7 +155,7 @@ describe("engagement report", () => {
     renderSection();
 
     expect(await screen.findByText(/1 findings/)).toBeTruthy();
-    expect(screen.getByText(/Default credentials on admin panel/)).toBeTruthy();
+    expect(previewText()).toContain("Default credentials on admin panel");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
     await waitFor(() =>
@@ -188,7 +195,7 @@ describe("engagement report", () => {
     renderSection();
     expect(await screen.findByRole("button", { name: "Download Markdown" })).toBeTruthy();
     // Preview and export share one bundle-derived snapshot.
-    expect(screen.getByText(/Default credentials on admin panel/)).toBeTruthy();
+    expect(previewText()).toContain("Default credentials on admin panel");
     fireEvent.click(screen.getByRole("button", { name: "Download Markdown" }));
     await waitFor(() =>
       expect(
@@ -249,6 +256,7 @@ describe("engagement report", () => {
           status: "open",
           body: `impact ${secretBody}`,
           evidenceArtifactIds: [],
+          revision: 1,
           createdAt: "2026-08-12T12:00:00.000Z",
           updatedAt: "2026-08-12T12:00:00.000Z",
         },
@@ -374,9 +382,6 @@ describe("engagement report", () => {
         </QueryClientProvider>
       </ThemeProvider>,
     );
-    const previewText = () =>
-      document.querySelector("section[aria-label='Report'] pre")?.textContent ?? "";
-
     expect(await screen.findByText(/Fields masked: 1/)).toBeTruthy();
     expect(previewText()).not.toContain("flag{synthetic-reset-0001}");
 
@@ -403,7 +408,8 @@ describe("engagement report", () => {
         </QueryClientProvider>
       </ThemeProvider>,
     );
-    expect(await screen.findByText(/Default credentials on admin panel/)).toBeTruthy();
+    expect(await screen.findByText(/Fields masked: 1/)).toBeTruthy();
+    expect(previewText()).toContain("Default credentials on admin panel");
     expect(screen.getByRole("button", { name: "Show original" })).toBeTruthy();
     expect(previewText()).not.toContain("flag{synthetic-reset-0001}");
     expect(queryClient.getQueryData(reportQueryKey(engagementId))).toEqual(bundleA);

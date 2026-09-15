@@ -6,14 +6,14 @@ import {
   capReportRows,
   engagementReportMarkdown,
   type ReportBundle,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementRepository,
   FfufRepository,
   HttpProbeRepository,
   NmapServiceRepository,
   RunOutputRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 export interface ReportRouteDependencies {

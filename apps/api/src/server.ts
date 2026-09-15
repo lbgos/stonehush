@@ -29,9 +29,9 @@ async function main(): Promise<void> {
     process.once("SIGINT", () => void shutdown());
     process.once("SIGTERM", () => void shutdown());
     await app.listen({ host: HOST, port });
-    console.log(`Blackglass API listening at http://${HOST}:${port}`);
+    console.log(`Stonehush API listening at http://${HOST}:${port}`);
   } catch {
-    console.error("Blackglass API failed to start. Check its configuration and development storage.");
+    console.error("Stonehush API failed to start. Check its configuration and development storage.");
     process.exitCode = 1;
     await closeOnce();
   }

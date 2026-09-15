@@ -1,4 +1,4 @@
-import { TECHNIQUE_PLACEHOLDER_PATTERN } from "@blackglass/contracts";
+import { TECHNIQUE_PLACEHOLDER_PATTERN } from "@stonehush/contracts";
 
 /**
  * Pure technique rules (Stonehush STONE-7).

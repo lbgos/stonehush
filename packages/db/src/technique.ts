@@ -7,7 +7,7 @@ import {
   TECHNIQUE_CONTRACT_VERSION,
   TechniqueSchema,
   type Technique,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import * as schema from "./schema.js";
 import { engagements, techniques } from "./schema.js";

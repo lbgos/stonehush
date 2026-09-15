@@ -1,5 +1,5 @@
-import { NMAP_MAX_XML_BYTES } from "@blackglass/contracts";
-import type { NmapServiceRepository } from "@blackglass/db";
+import { NMAP_MAX_XML_BYTES } from "@stonehush/contracts";
+import type { NmapServiceRepository } from "@stonehush/db";
 import type { EvidenceStore } from "./evidence-store.js";
 
 type ProjectionResult =

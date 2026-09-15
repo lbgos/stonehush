@@ -1,4 +1,4 @@
-import { Button, LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@blackglass/ui";
+import { Button, LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
 import { useId } from "react";
 
 import { engagementNotesMutationMessage, isNotesRevisionConflict } from "./errors.js";

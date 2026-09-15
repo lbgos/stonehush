@@ -9,7 +9,7 @@ import {
   UpdateSettingsRequestSchema,
   type AdvisorSettings,
   type RunnerSettings,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import * as schema from "./schema.js";
 import { settings } from "./schema.js";
 

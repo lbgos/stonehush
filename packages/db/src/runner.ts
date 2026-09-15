@@ -28,7 +28,7 @@ import {
   type PersistedRunnerIdentity,
   type RunnerHandshakeAcceptedResponse,
   type RunnerVerifierRecord,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { and, eq, isNull, ne } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 

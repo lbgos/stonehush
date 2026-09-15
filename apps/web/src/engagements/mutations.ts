@@ -11,7 +11,7 @@ import {
   type PersistedAction,
   type SavedScopeRule,
   type ScopeRevision,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useRef } from "react";
 
@@ -21,6 +21,7 @@ import {
   parseEngagementMutationError,
 } from "./errors.js";
 import { createIdempotencyKey, createIntentKeyHolder, requestFingerprint } from "./idempotency.js";
+import { canonicalTargetIdentities } from "./action-targets.js";
 import { ENGAGEMENTS_QUERY_KEY, engagementDetailQueryKey } from "./query.js";
 
 const SUCCESS_STATUSES = new Set([200, 201]);
@@ -239,15 +240,36 @@ export function useCreateEngagementMutation() {
   const queryClient = useQueryClient();
   const keys = useRef(createIntentKeyHolder());
 
+  // The creation intent covers the first scan targets alongside the stored
+  // metadata. Two starts that differ only in targets are different intents:
+  // reopening after a lost response with a new target must create a fresh
+  // engagement instead of replaying the abandoned one. Targets enter in
+  // canonical sorted form so equivalent inputs and reorderings keep the same
+  // key and still replay. Identical retries keep the same key so a committed
+  // create still replays.
+  const keyFor = (body: CreateEngagementInput, targets?: readonly string[]) =>
+    keys.current.keyFor(
+      requestFingerprint(
+        targets === undefined ? body : { ...body, targets: canonicalTargetIdentities(targets) },
+      ),
+    );
+  const resetKey = (body: CreateEngagementInput, targets?: readonly string[]) =>
+    keys.current.reset(
+      requestFingerprint(
+        targets === undefined ? body : { ...body, targets: canonicalTargetIdentities(targets) },
+      ),
+    );
+
   return useMutation({
-    mutationFn: (input: CreateEngagementInput) => {
-      const body = CreateEngagementRequestSchema.parse(input);
-      const intent = requestFingerprint(body);
-      return createEngagementRequest(body, keys.current.keyFor(intent));
+    mutationFn: (input: CreateEngagementInput & { targets?: readonly string[] }) => {
+      const { targets, ...rest } = input;
+      const body = CreateEngagementRequestSchema.parse(rest);
+      return createEngagementRequest(body, keyFor(body, targets));
     },
     onSuccess: (engagement, input) => {
       upsertEngagementInCache(queryClient, engagement);
-      keys.current.reset(requestFingerprint(CreateEngagementRequestSchema.parse(input)));
+      const { targets, ...rest } = input;
+      resetKey(CreateEngagementRequestSchema.parse(rest), targets);
     },
   });
 }

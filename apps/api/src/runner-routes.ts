@@ -14,14 +14,14 @@ import {
   commandJsonV1RunnerAppendStartedDigest,
   commandJsonV1RunnerCompleteDigest,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementRepository,
   OperatorCommandRepository,
   RunRepository,
   RunnerRepository,
-} from "@blackglass/db";
-import { selectOldestQueuedRun } from "@blackglass/db";
+} from "@stonehush/db";
+import { selectOldestQueuedRun } from "@stonehush/db";
 import type { FastifyInstance } from "fastify";
 
 import { readPathParam } from "./operator-command.js";

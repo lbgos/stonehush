@@ -1,4 +1,4 @@
-import { ReportBundleSchema, type ReportBundle } from "@blackglass/contracts";
+import { ReportBundleSchema, type ReportBundle } from "@stonehush/contracts";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import { ReportQueryError } from "./errors.js";

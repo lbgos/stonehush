@@ -2,7 +2,7 @@ import type {
   AdvisorEvidenceKind,
   AdvisorPartitionedCitation,
   AdvisorSuppliedEvidenceId,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 /**
  * Pure citation partition for read-only evidence explanations.

@@ -13,12 +13,12 @@ import {
   commandJsonV1CreateEngagementDigest,
   projectCommandJsonV1DigestInput,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   EngagementRepository,
   OperatorCommandRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import {
   LOCAL_OPERATOR_ACTOR_ID,
   executeOperatorMutation,
@@ -182,7 +182,7 @@ const commandFixturesDirs: string[] = [];
 const commandDatabases: ReturnType<typeof openEngagementDatabase>[] = [];
 
 function commandRepositoryFixture() {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-command-seam-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-command-seam-"));
   commandFixturesDirs.push(directory);
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });

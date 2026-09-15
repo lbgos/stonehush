@@ -310,6 +310,7 @@ function testFinding(id: string, title: string) {
     status: "open",
     body: "",
     evidenceArtifactIds: [],
+    revision: 1,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };

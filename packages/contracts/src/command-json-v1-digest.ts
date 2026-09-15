@@ -117,6 +117,13 @@ export const CommandJsonV1ContinueActionBodyDigestSchema = z.object({
   snapshotBinding: jsonField,
 });
 
+export const CommandJsonV1ContinueLateWarningActionBodyDigestSchema = z.object({
+  expectedRevision: jsonField,
+  snapshotVersion: jsonField,
+  snapshotBinding: jsonField,
+  pendingEventId: jsonField,
+});
+
 export const CommandJsonV1AddScopeAndRunBodyDigestSchema = z.object({
   expectedEngagementRevision: jsonField,
   expectedActionRevision: jsonField,
@@ -420,6 +427,12 @@ export const commandJsonV1ContinueActionDigest = digestProjection({
   path: CommandJsonV1ActionIdPathDigestSchema,
   query: CommandJsonV1EmptyObjectDigestSchema,
   body: objectProjection(CommandJsonV1ContinueActionBodyDigestSchema),
+});
+
+export const commandJsonV1ContinueLateWarningActionDigest = digestProjection({
+  path: CommandJsonV1ActionIdPathDigestSchema,
+  query: CommandJsonV1EmptyObjectDigestSchema,
+  body: objectProjection(CommandJsonV1ContinueLateWarningActionBodyDigestSchema),
 });
 
 export const commandJsonV1AddScopeAndRunActionDigest = digestProjection({

@@ -1,4 +1,4 @@
-import { SavedScopeRuleSchema } from "@blackglass/contracts";
+import { SavedScopeRuleSchema } from "@stonehush/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

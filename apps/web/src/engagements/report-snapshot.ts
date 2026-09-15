@@ -3,7 +3,7 @@
  * Every export captures a coherent snapshot: the rendered text, the outline
  * keys it was built from, and the live bundle timestamp it reflects. When
  * the engagement changes afterwards, the snapshot is visibly stale instead
- * of silently before behind. Snapshots are local UI state, never persisted
+ * of silently lagging behind. Snapshots are local UI state, never persisted
  * records.
  */
 

@@ -4,8 +4,8 @@ import { buildFfufArgv } from "./ffuf-argv.js";
 
 const baseOptions = {
   origin: "http://127.0.0.1:3130",
-  wordlistPath: "/var/lib/blackglass/wordlists/smoke.txt",
-  outputJsonPath: "/var/lib/blackglass/runs/run-1/ffuf.json",
+  wordlistPath: "/var/lib/stonehush/wordlists/smoke.txt",
+  outputJsonPath: "/var/lib/stonehush/runs/run-1/ffuf.json",
 };
 
 describe("buildFfufArgv deterministic order", () => {
@@ -18,9 +18,9 @@ describe("buildFfufArgv deterministic order", () => {
         "-u",
         "http://127.0.0.1:3130/FUZZ",
         "-w",
-        "/var/lib/blackglass/wordlists/smoke.txt",
+        "/var/lib/stonehush/wordlists/smoke.txt",
         "-o",
-        "/var/lib/blackglass/runs/run-1/ffuf.json",
+        "/var/lib/stonehush/runs/run-1/ffuf.json",
         "-of",
         "json",
         "-t",

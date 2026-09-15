@@ -6,13 +6,13 @@ import {
   encodeRunHistoryCursor,
   formatRunnerAuthorization,
   type ActionSnapshot,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   bindActionSnapshot,
   EngagementRepository,
   RunOutputRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";

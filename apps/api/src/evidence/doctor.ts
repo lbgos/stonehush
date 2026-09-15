@@ -8,11 +8,11 @@ import {
 } from "node:fs";
 import { promisify } from "node:util";
 
-import { OPAQUE_EVIDENCE_ID_PATTERN } from "@blackglass/contracts";
-import { openReadOnlyEngagementDatabase } from "@blackglass/db";
-import { O_CLOEXEC, loadEvidenceNative } from "@blackglass/evidence-native";
+import { OPAQUE_EVIDENCE_ID_PATTERN } from "@stonehush/contracts";
+import { openReadOnlyEngagementDatabase } from "@stonehush/db";
+import { O_CLOEXEC, loadEvidenceNative } from "@stonehush/evidence-native";
 
-// ADR-0003 `blackglass doctor` evidence check: strictly read-only integrity
+// ADR-0003 `stonehush doctor` evidence check: strictly read-only integrity
 // verification of the managed evidence tree plus the SQLite metadata. Every
 // filesystem decision starts at startup-opened directory descriptors and
 // walks no-follow through the native binding; nothing is ever rewritten,

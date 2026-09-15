@@ -1,5 +1,5 @@
 {
-  "name": "@blackglass/domain",
+  "name": "@stonehush/domain",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@blackglass/contracts": "workspace:*",
+    "@stonehush/contracts": "workspace:*",
     "tr46": "5.0.0"
   },
   "devDependencies": {

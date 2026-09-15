@@ -21,7 +21,7 @@ import {
   type RunTransitionResult,
   type SelectSseResumeResult,
   type SelfFenceDeadlineResult,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 const RUN_TRANSITIONS = new Set<string>([
   "queued:leased",

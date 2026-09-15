@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { CanonicalTarget } from "@blackglass/contracts";
+import type { CanonicalTarget } from "@stonehush/contracts";
 
 import { buildNmapArgv } from "./nmap-argv.js";
 
@@ -47,7 +47,7 @@ function hostnameTarget(hostname: string): CanonicalTarget {
   return { kind: "hostname", normalizationProfile: "d1-v1", hostname };
 }
 
-const xmlPath = "/var/lib/blackglass-runner/runs/run-fixture-19/nmap-xml";
+const xmlPath = "/var/lib/stonehush-runner/runs/run-fixture-19/nmap-xml";
 
 describe("buildNmapArgv deterministic order", () => {
   it("matches D2 process-supervision fixture nmap-unprivileged-typed-argv", () => {
@@ -235,7 +235,7 @@ describe("buildNmapArgv deterministic order", () => {
     const r = buildNmapArgv({
       options: { ...baseOptions, ports: [{ from: 80, to: 80 }] } as typeof baseOptions,
       canonicalTargets: [ipTarget("192.0.2.10")],
-      xmlPath: "/var/lib/blackglass-runner/runs/run-1/nmap.xml",
+      xmlPath: "/var/lib/stonehush-runner/runs/run-1/nmap.xml",
     });
     expect(r.ok && r.argv.includes("-oX")).toBe(true);
     expect((r as Extract<typeof r, { ok: true }>).argv).not.toContain("/tmp/evil.xml");

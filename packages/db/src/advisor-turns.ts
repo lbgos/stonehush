@@ -11,7 +11,7 @@ import {
   CommandRequestDigestSchema,
   IdempotencyKeySchema,
   type AdvisorSuppliedEvidenceId,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import * as schema from "./schema.js";
 import { advisorTurns, engagements } from "./schema.js";

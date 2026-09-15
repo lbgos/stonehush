@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Finding, ReportBundle } from "@blackglass/contracts";
+import type { Finding, ReportBundle } from "@stonehush/contracts";
 
 import {
   addOutlineItem,
@@ -37,6 +37,7 @@ function findingFixture(overrides: Partial<Finding> = {}): Finding {
     status: "open",
     body: "1. Open the login form.\n2. Try admin/admin.\n\nEvidence shows the login succeeded.",
     evidenceArtifactIds: ["nmap-xml-1"],
+    revision: 1,
     createdAt: "2026-08-12T12:00:00.000Z",
     updatedAt: "2026-08-12T12:00:00.000Z",
     ...overrides,
@@ -306,7 +307,7 @@ describe("sharing preview", () => {
     });
     const preview = buildSharingPreview({ bundle, outline });
     const manifest = buildPortableBundleManifest({ bundle, outline });
-    expect(manifest.kind).toBe("blackglass-portable-bundle-v1");
+    expect(manifest.kind).toBe("stonehush-portable-bundle-v1");
     expect(manifest.findingIds).toEqual([FINDING_ID]);
     expect(manifest.excludes.join(",")).toContain("scratchpad");
     expect(JSON.stringify(manifest)).not.toBe(preview.markdown);

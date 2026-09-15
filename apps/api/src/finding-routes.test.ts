@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { EngagementRepository, openEngagementDatabase } from "@blackglass/db";
+import { EngagementRepository, openEngagementDatabase } from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -21,7 +21,7 @@ afterEach(async () => {
 
 async function createRepositoryBackedApp() {
   const dataDirectory = await mkdtemp(
-    path.join(tmpdir(), "blackglass-findings-route-test-"),
+    path.join(tmpdir(), "stonehush-findings-route-test-"),
   );
   temporaryDirectories.push(dataDirectory);
   await chmod(dataDirectory, 0o700);
@@ -273,6 +273,132 @@ describe("findings routes", () => {
         evidenceArtifactIds: ["foreign-api-art-1"],
       },
     });
+    expect(late.statusCode).toBe(409);
+    expect(late.json()).toEqual({ code: "engagement_archived" });
+  });
+
+  it("edits content with a revision precondition and rejects stale writers", async () => {
+    const { app, repository, database } = await createRepositoryBackedApp();
+    const createdEngagement = repository.createEngagement({
+      name: "Findings lab",
+      kind: "lab",
+      autoContinueWarnings: false,
+    });
+    if (!createdEngagement.ok) throw new Error(`Fixture failed: ${createdEngagement.error.code}`);
+    const engagementId = createdEngagement.value.id;
+    seedRouteRun(database, engagementId, "edit-api-action-1", "edit-api-run-1");
+    seedRouteArtifact(database, "nmap-xml-1", "edit-api-run-1");
+
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/findings`,
+      payload: {
+        title: "Default credentials",
+        severity: "high",
+        body: "# impact\nAdmin access.",
+        evidenceArtifactIds: ["nmap-xml-1"],
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const finding = created.json() as { id: string; revision: number };
+
+    const edited = await app.inject({
+      method: "PUT",
+      url: `/api/v1/engagements/${engagementId}/findings/${finding.id}`,
+      payload: {
+        title: "Corrected title",
+        severity: "critical",
+        body: "# impact\nConfirmed.",
+        expectedRevision: finding.revision,
+      },
+    });
+    expect(edited.statusCode).toBe(200);
+    expect(edited.json()).toMatchObject({
+      title: "Corrected title",
+      severity: "critical",
+      body: "# impact\nConfirmed.",
+      status: "open",
+      evidenceArtifactIds: ["nmap-xml-1"],
+      revision: finding.revision + 1,
+    });
+
+    const stale = await app.inject({
+      method: "PUT",
+      url: `/api/v1/engagements/${engagementId}/findings/${finding.id}`,
+      payload: {
+        title: "Stale overwrite",
+        severity: "low",
+        body: "",
+        expectedRevision: finding.revision,
+      },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual({
+      code: "revision_conflict",
+      resourceType: "finding",
+      resourceId: finding.id,
+      currentRevision: finding.revision + 1,
+    });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${engagementId}/findings`,
+    });
+    expect((listed.json() as { title: string }[]).map((entry) => entry.title)).toEqual([
+      "Corrected title",
+    ]);
+  });
+
+  it("rejects finding edits for bad input, unknown ids, and archived engagements", async () => {
+    const { app, repository } = await createRepositoryBackedApp();
+    const createdEngagement = repository.createEngagement({
+      name: "Findings lab",
+      kind: "lab",
+      autoContinueWarnings: false,
+    });
+    if (!createdEngagement.ok) throw new Error(`Fixture failed: ${createdEngagement.error.code}`);
+    const engagementId = createdEngagement.value.id;
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/findings`,
+      payload: { title: "Banner", severity: "low", body: "" },
+    });
+    const finding = created.json() as { id: string; revision: number };
+    const editUrl = `/api/v1/engagements/${engagementId}/findings/${finding.id}`;
+    const valid = {
+      title: "Edited",
+      severity: "low",
+      body: "",
+      expectedRevision: finding.revision,
+    };
+
+    expect((await app.inject({ method: "PUT", url: editUrl, payload: { ...valid, title: "" } })).statusCode).toBe(400);
+    expect(
+      (await app.inject({ method: "PUT", url: editUrl, payload: { ...valid, expectedRevision: undefined } }))
+        .statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: `/api/v1/engagements/${engagementId}/findings/10000000-0000-4000-8000-000000000099`,
+          payload: valid,
+        })
+      ).statusCode,
+    ).toBe(404);
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: "/api/v1/engagements/not-an-id/findings/10000000-0000-4000-8000-000000000001",
+          payload: valid,
+        })
+      ).statusCode,
+    ).toBe(400);
+
+    const archived = repository.archive(engagementId, createdEngagement.value.revision);
+    if (!archived.ok) throw new Error(`Fixture failed: ${archived.error.code}`);
+    const late = await app.inject({ method: "PUT", url: editUrl, payload: valid });
     expect(late.statusCode).toBe(409);
     expect(late.json()).toEqual({ code: "engagement_archived" });
   });

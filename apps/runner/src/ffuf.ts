@@ -7,8 +7,8 @@ import {
   FfufDiscoveryOutputSchema,
   type FfufDiscoveryOutput,
   type FfufErrorCode,
-} from "@blackglass/contracts";
-import { buildFfufArgv } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { buildFfufArgv } from "@stonehush/domain";
 
 import { runSupervisedCommand } from "./process.js";
 

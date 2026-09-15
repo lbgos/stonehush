@@ -10,7 +10,7 @@ import {
   type CommandJsonV1DigestProjection,
   type JsonValue,
   type RunnerMutationError,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementWriteTransaction,
   EvidenceGrantRepositoryError,
@@ -18,7 +18,7 @@ import type {
   RunRepositoryError,
   RunnerRepository,
   RunnerRepositoryError,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import {

@@ -7,7 +7,7 @@ import {
   type AdvisorTurnError,
   type AdvisorTurnListResponse,
   type CreateAdvisorTurnRequest,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   infiniteQueryOptions,
   skipToken,

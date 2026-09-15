@@ -6,7 +6,7 @@ Date: 2026-08-16
 
 Decision gate: [D3](./DECISION_GATES.md#d3-evidence-durability-privacy-and-recovery)
 
-Issue: [#34](https://github.com/Lbgosna/blackglass/issues/34)
+Issue: [#34](https://github.com/lbgos/stonehush/issues/34)
 
 ## Context
 
@@ -26,11 +26,11 @@ The managed roots are:
 
 | Role | Path | Mode | Notes |
 | --- | --- | --- | --- |
-| data directory | `/var/lib/blackglass` | `0700` | control-plane user |
-| SQLite database | `/var/lib/blackglass/blackglass.sqlite3` | `0600` | WAL siblings share the directory |
-| evidence root | `/var/lib/blackglass/evidence` | `0700` | managed root |
-| published artifacts | `/var/lib/blackglass/evidence/published/{artifactId}` | file `0600` | durable evidence |
-| staging uploads | `/var/lib/blackglass/evidence/staging/{uploadId}` | file `0600` | in-flight only |
+| data directory | `/var/lib/stonehush` | `0700` | control-plane user |
+| SQLite database | `/var/lib/stonehush/stonehush.sqlite3` | `0600` | WAL siblings share the directory |
+| evidence root | `/var/lib/stonehush/evidence` | `0700` | managed root |
+| published artifacts | `/var/lib/stonehush/evidence/published/{artifactId}` | file `0600` | durable evidence |
+| staging uploads | `/var/lib/stonehush/evidence/staging/{uploadId}` | file `0600` | in-flight only |
 
 Development storage uses the same relative layout under the isolated development data directory. Fixture and production examples never embed owner home paths.
 
@@ -177,7 +177,7 @@ Cache-Control: private, no-store
 
 ### Doctor
 
-`blackglass doctor` evidence checks are read-only. They never rewrite, restat-as-repair, or delete. The check walks no-follow from the evidence root and verifies:
+`stonehush doctor` evidence checks are read-only. They never rewrite, restat-as-repair, or delete. The check walks no-follow from the evidence root and verifies:
 
 - every evidence row has a regular file at exactly `published/{artifactId}`;
 - size and streaming SHA-256 match the row;
@@ -192,13 +192,13 @@ Findings use the codes `healthy`, `missing_artifact`, `corrupt_artifact`, `unsaf
 
 ### Backup and restore
 
-Backup protocol `blackglass-backup-v1` produces a consistent SQLite-plus-published-artifact snapshot. Staging is excluded.
+Backup protocol `stonehush-backup-v1` produces a consistent SQLite-plus-published-artifact snapshot. Staging is excluded.
 
 1. The destination directory must be empty. Otherwise `backup_destination_not_empty`.
 2. Create an `INCOMPLETE` marker and acquire the backup lock. The lock blocks new grants and publication with HTTP 503 `storage_backup_quiesced`. Doctor remains read-only.
-3. Copy SQLite with the better-sqlite3 backup API into `sqlite/blackglass.sqlite3` so the backup is a standalone consistent database.
+3. Copy SQLite with the better-sqlite3 backup API into `sqlite/stonehush.sqlite3` so the backup is a standalone consistent database.
 4. Copy each published artifact through no-follow opens into `evidence/published/{artifactId}` and verify size and digest after copy. Do not hardlink live files.
-5. Write `backup-manifest` with protocol `blackglass-backup-v1`, UTC timestamp, schema version, SQLite digest, artifact list `{artifactId,sizeBytes,digest}`, and counts. `fsync` files and directories.
+5. Write `backup-manifest` with protocol `stonehush-backup-v1`, UTC timestamp, schema version, SQLite digest, artifact list `{artifactId,sizeBytes,digest}`, and counts. `fsync` files and directories.
 6. Set manifest `state=complete`, `fsync`, remove `INCOMPLETE`, release the lock.
 
 An interrupted backup keeps `INCOMPLETE` or a manifest whose `state` is not `complete`. Restore refuses it with `backup_incomplete`.
@@ -263,7 +263,7 @@ Implement D3 through separate bounded issues in this order:
 3. **Publication:** no-follow staging, streaming SHA-256, fsync, `RENAME_NOREPLACE`, and metadata-after-file.
 4. **Download:** operator authorization, fixed headers, and sanitized names.
 5. **Doctor:** read-only integrity findings without repair.
-6. **Backup and restore commands:** `blackglass-backup-v1` with the refusal codes above. Host rehearsal stays in M9.
+6. **Backup and restore commands:** `stonehush-backup-v1` with the refusal codes above. Host rehearsal stays in M9.
 
 ## Acceptance evidence
 

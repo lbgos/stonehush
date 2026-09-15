@@ -7,7 +7,7 @@ import {
   MAX_CANONICAL_JSON_BYTES,
   type ActionSnapshot,
   type WarningContextAddition,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { bindActionSnapshot } from "./action-snapshot.js";
@@ -42,7 +42,7 @@ const fixtures: Fixture[] = [];
 function createFixture(
   migrationsFolder?: string,
 ): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-action-db-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-action-db-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({
     dataDirectory: directory,
@@ -174,7 +174,7 @@ function expectNoPersistedAction(
 }
 
 function writePartialMigrations(): string {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-partial-migrate-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-partial-migrate-"));
   chmodSync(directory, 0o700);
   mkdirSync(path.join(directory, "meta"), { recursive: true });
   for (const fileName of [

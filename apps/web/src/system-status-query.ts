@@ -1,7 +1,7 @@
 import {
   SystemStatusResponseSchema,
   type SystemStatusResponse,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const SYSTEM_STATUS_QUERY_KEY = ["system", "status"] as const;

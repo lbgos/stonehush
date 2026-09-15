@@ -18,8 +18,8 @@ import {
   type EvidenceQuotaConfig,
   type PublishedCompleteness,
   type RunnerLease,
-} from "@blackglass/contracts";
-import { isTerminalRunState, validateLeaseAuthority } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { isTerminalRunState, validateLeaseAuthority } from "@stonehush/domain";
 import { and, eq, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 

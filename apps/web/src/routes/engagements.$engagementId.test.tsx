@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { ThemeProvider } from "@blackglass/ui";
+import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
@@ -128,6 +128,23 @@ describe("engagement detail route search", () => {
     ).toEqual({ tab: "runs" });
   });
 
+  it("passes a paused-action id through and drops non-string values", () => {
+    expect(validateEngagementSearch({ action: "action-1", tab: "runs" })).toEqual({
+      action: "action-1",
+      tab: "runs",
+    });
+    expect(validateEngagementSearch({ action: 5 })).toEqual({});
+  });
+
+  it("records the opened engagement for Resume", async () => {
+    vi.stubGlobal("fetch", stubBaseFetch());
+    window.localStorage.clear();
+    await renderRoute(`/engagements/${activeEngagement.id}`);
+
+    expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
+    expect(window.localStorage.getItem("stonehush.lastEngagementId")).toBe(activeEngagement.id);
+  });
+
   it("drops non-string tab and run values", () => {
     expect(validateEngagementSearch({ tab: 3, run: ["run-1"] })).toEqual({});
     expect(validateEngagementSearch({ tab: null, run: undefined })).toEqual({});
@@ -157,5 +174,19 @@ describe("engagement detail route search", () => {
 
     expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
     expect(screen.getByText(/Selected run/).textContent).toContain("run-7");
+  });
+
+  it("keeps the paused action id across workspace tab navigation", async () => {
+    vi.stubGlobal("fetch", stubBaseFetch());
+    const { router } = await renderRoute(`/engagements/${activeEngagement.id}?action=action-1`);
+
+    expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("link", { name: "Notes" }));
+
+    // Normal tab moves must not strand the paused scan warning. The planner
+    // picks the warning back up from the retained action id.
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ tab: "notes", action: "action-1" }),
+    );
   });
 });

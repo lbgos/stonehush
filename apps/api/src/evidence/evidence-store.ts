@@ -15,8 +15,8 @@ import {
 import { promisify } from "node:util";
 import path from "node:path";
 
-import { OPAQUE_EVIDENCE_ID_PATTERN } from "@blackglass/contracts";
-import { O_CLOEXEC, type EvidenceNativeBinding } from "@blackglass/evidence-native";
+import { OPAQUE_EVIDENCE_ID_PATTERN } from "@stonehush/contracts";
+import { O_CLOEXEC, type EvidenceNativeBinding } from "@stonehush/evidence-native";
 
 // Descriptor-relative filesystem boundary for ADR-0003 publication. Every
 // managed-tree operation starts at a startup-opened directory descriptor and
@@ -340,9 +340,9 @@ export class EvidenceStore {
   private probeRenameNoReplaceSupport(): { ok: true } | { ok: false; code: EvidenceStorageErrorCode } {
     const outcome = this.binding.renameNoReplace(
       this.staging.fd,
-      ".blackglass-rename-probe-source",
+      ".stonehush-rename-probe-source",
       this.staging.fd,
-      ".blackglass-rename-probe-destination",
+      ".stonehush-rename-probe-destination",
     );
     if (outcome.ok || outcome.errno === ERRNO.ENOENT) return { ok: true };
     return { ok: false, code: "evidence_storage_unsupported" };
