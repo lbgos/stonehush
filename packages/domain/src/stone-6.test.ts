@@ -102,6 +102,11 @@ describe("search excludes secrets", () => {
     // land one past the real match start.
     expect(findMatchOffset("İ admin", "admin")).toEqual({ index: 2, length: 5 });
   });
+
+  it("matches across final and medial sigma", () => {
+    expect(findMatchOffset("ΟΣ", "σ")).toEqual({ index: 1, length: 1 });
+    expect(findMatchOffset("οσ", "Σ")).toEqual({ index: 1, length: 1 });
+  });
 });
 
 describe("ffuf grouping with hide and undo", () => {

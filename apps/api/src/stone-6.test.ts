@@ -188,6 +188,43 @@ describe("engagement resume routes", () => {
     expect(body.changes.map((change) => change.id)).not.toContain("f-1");
     await app.close();
   });
+
+  it("keeps the newest findings and reports truncation", async () => {
+    const app = Fastify();
+    const deps = resumeDeps();
+    const oldestFirst = Array.from({ length: 51 }, (_, index) => ({
+      contractVersion: 1 as const,
+      id: `f-${String(index).padStart(2, "0")}`,
+      engagementId: ENGAGEMENT_ID,
+      title: `Finding ${String(index).padStart(2, "0")}`,
+      severity: "low" as const,
+      status: "open" as const,
+      body: "details",
+      evidenceArtifactIds: [] as string[],
+      revision: 1,
+      createdAt: `2026-08-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+      updatedAt: `2026-08-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+    }));
+    registerEngagementResumeRoutes(app, {
+      ...deps,
+      engagements: {
+        ...deps.engagements,
+        listFindings: (_id: string) => ({ ok: true as const, value: oldestFirst }),
+      },
+    });
+    const resumed = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/resume`,
+    });
+    expect(resumed.statusCode).toBe(200);
+    const body = resumed.json() as { complete: boolean; changes: { kind: string; id: string }[] };
+    expect(body.complete).toBe(false);
+    const findingIds = body.changes.filter((change) => change.kind === "finding").map((change) => change.id);
+    // Newest kept (f-50), oldest dropped (f-00).
+    expect(findingIds).toContain("f-50");
+    expect(findingIds).not.toContain("f-00");
+    await app.close();
+  });
 });
 
 describe("engagement search routes", () => {

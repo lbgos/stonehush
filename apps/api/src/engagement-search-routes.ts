@@ -85,12 +85,14 @@ export function noteMatchAnchor(title: string, text: string, query: string): str
 }
 
 /**
- * Exact ffuf row anchor. The fuzz keyword names the row within its run;
- * capped so the anchor always fits the 500-char contract bound.
+ * Exact ffuf row anchor. The fuzz keyword names the row within its run,
+ * capped so the anchor always fits the 500-char contract bound. Rows
+ * sharing a 200-char fuzz prefix are disambiguated by total length, so
+ * distinct rows never collapse to one anchor.
  */
 export function ffufRowAnchor(runId: string, fuzz: string): string {
-  const key = fuzz.length > 200 ? fuzz.slice(0, 200) : fuzz;
-  return `run:${runId}:fuzz:${key}`;
+  if (fuzz.length <= 200) return `run:${runId}:fuzz:${fuzz}`;
+  return `run:${runId}:fuzz:${fuzz.slice(0, 200)}...${fuzz.length}`;
 }
 
 /**
@@ -131,9 +133,10 @@ export function registerEngagementSearchRoutes(
       for (const revision of scopes.value) {
         for (const rule of revision.rules) {
           const label = scopeRuleLabel(rule);
+          const ruleId = boundedSearchId("scope", `${revision.id}:${rule.id}`);
           corpus.push({
             kind: "target",
-            id: `scope:${revision.id}:${rule.id}`,
+            id: ruleId,
             title: label,
             text: label,
             anchor: `scope:${revision.id}:${rule.id}`,
@@ -160,7 +163,7 @@ export function registerEngagementSearchRoutes(
           if (service.hostname !== null && service.hostname.length > 0) {
             corpus.push({
               kind: "hostname",
-              id: `hostname:${service.hostname}`,
+              id: boundedSearchId("hostname", service.hostname),
               title: service.hostname,
               text: service.hostname,
               anchor: `service:${service.address}:${service.port}`,

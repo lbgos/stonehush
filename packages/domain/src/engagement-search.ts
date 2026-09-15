@@ -29,6 +29,15 @@ const SECRET_PATTERNS: readonly RegExp[] = [
 
 export const SEARCH_SECRET_REDACTION = "[redacted]" as const;
 
+/**
+ * Final sigma (U+03C2) and medial sigma (U+03C3) are one UTF-16 unit each,
+ * so folding them keeps offsets aligned while letting queries match
+ * context-dependent lowercasing in either direction.
+ */
+function normalizeSigma(value: string): string {
+  return value.replace(/ς/g, "σ");
+}
+
 export function redactSecretsForSnippet(value: string): string {
   let redacted = value;
   for (const pattern of SECRET_PATTERNS) {
@@ -68,9 +77,9 @@ export function findMatchOffset(
   haystack: string,
   needle: string,
 ): { index: number; length: number } | null {
-  const trimmed = needle.trim().toLowerCase();
+  const trimmed = normalizeSigma(needle.trim().toLowerCase());
   if (trimmed.length === 0) return null;
-  const utf16Index = haystack.toLowerCase().indexOf(trimmed);
+  const utf16Index = normalizeSigma(haystack.toLowerCase()).indexOf(trimmed);
   if (utf16Index < 0) return null;
   let index = 0;
   let consumed = 0;

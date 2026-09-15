@@ -130,8 +130,10 @@ export function diffRuns(input: RunDiffInput): RunDiff {
   }
   for (const [key, service] of beforeServices) {
     if (afterServices.has(key) === false) {
+      // Coverage is unknown here: the after run may not have scanned this
+      // port at all, so absence is reported neutrally, never as closed.
       removedFromView.push(
-        `No longer observed at ${key} (was ${serviceDescription(service)}). Not observed is not closed: the port was not covered by both runs.`,
+        `No longer observed at ${key} (was ${serviceDescription(service)}). Not observed is not closed.`,
       );
     }
   }

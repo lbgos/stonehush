@@ -113,7 +113,8 @@ export function registerEngagementResumeRoutes(
         const findings = deps.engagements.listFindings(engagementId);
         if (!findings.ok) return sendRepositoryError(reply, findings.error);
         if (findings.value.length > 50) truncated = true;
-        for (const finding of findings.value.slice(0, 50)) {
+        // The store returns oldest first; resume shows recent changes.
+        for (const finding of findings.value.slice(-50)) {
           inputs.push({
             kind: "finding",
             id: finding.id,
@@ -127,7 +128,11 @@ export function registerEngagementResumeRoutes(
         const runs = deps.runs.listRunsForEngagement(engagementId, { limit: 50 });
         if (!runs.ok) return sendRepositoryError(reply, runs);
         if (runs.runs.length > 50) truncated = true;
-        for (const run of runs.runs.slice(0, 50)) {
+        // Recency for resume is the last update, not creation.
+        const recentRuns = [...runs.runs]
+          .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+          .slice(0, 50);
+        for (const run of recentRuns) {
           inputs.push({
             kind: "run",
             id: run.id,
@@ -143,7 +148,11 @@ export function registerEngagementResumeRoutes(
         const validatedServices = EngagementServicesResponseSchema.safeParse(services.value);
         if (!validatedServices.success) return sendResumeError(reply, 500, "invalid_persisted_data");
         if (validatedServices.data.length > 50) truncated = true;
-        for (const service of validatedServices.data.slice(0, 50)) {
+        // Projection order is arbitrary; resume keeps the latest observations.
+        const recentServices = [...validatedServices.data]
+          .sort((a, b) => (a.observedAt < b.observedAt ? 1 : a.observedAt > b.observedAt ? -1 : 0))
+          .slice(0, 50);
+        for (const service of recentServices) {
           inputs.push({
             kind: "service",
             // Artifact id keeps the change id unique when several runs
@@ -159,7 +168,8 @@ export function registerEngagementResumeRoutes(
       const scopes = deps.engagements.listScopeRevisions(engagementId);
       if (!scopes.ok) return sendRepositoryError(reply, scopes.error);
       if (scopes.value.length > 20) truncated = true;
-      for (const revision of scopes.value.slice(0, 20)) {
+      // The store returns oldest first; resume shows recent changes.
+      for (const revision of scopes.value.slice(-20)) {
         inputs.push({
           kind: "scope",
           id: revision.id,
@@ -213,6 +223,8 @@ export function registerEngagementResumeRoutes(
           });
         case "storage_busy":
           return sendResumeError(reply, 503, "storage_busy");
+        case "invalid_persisted_data":
+          return sendResumeError(reply, 500, "invalid_persisted_data");
         default:
           return sendResumeError(reply, 400, "invalid_request");
       }

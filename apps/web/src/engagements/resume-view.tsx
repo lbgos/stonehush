@@ -114,6 +114,11 @@ export function NextStepEditor({
 }) {
   const save = useSaveNextStepMutation(engagementId);
   const [draft, setDraft] = useState<string | undefined>(undefined);
+  // The query refetch after a save is async; the mutation result carries
+  // the new revision, so a second quick edit uses it instead of sending a
+  // stale expectedRevision into a false conflict.
+  const [confirmedRevision, setConfirmedRevision] = useState<number | undefined>(undefined);
+  const effectiveRevision = Math.max(revision, confirmedRevision ?? 0);
   const value = draft ?? nextStep ?? "";
 
   return (
@@ -140,8 +145,8 @@ export function NextStepEditor({
           disabled={archived || save.isPending || value.trim().length === 0}
           onClick={() =>
             save.mutate(
-              { nextStep: value.trim(), expectedRevision: revision },
-              { onSuccess: () => setDraft(undefined) },
+              { nextStep: value.trim(), expectedRevision: effectiveRevision },
+              { onSuccess: (result) => { setDraft(undefined); setConfirmedRevision(result.revision); } },
             )
           }
         >
@@ -154,8 +159,8 @@ export function NextStepEditor({
             disabled={archived || save.isPending}
             onClick={() => {
               save.mutate(
-                { nextStep: null, expectedRevision: revision },
-                { onSuccess: () => setDraft(undefined) },
+                { nextStep: null, expectedRevision: effectiveRevision },
+                { onSuccess: (result) => { setDraft(undefined); setConfirmedRevision(result.revision); } },
               );
             }}
           >
