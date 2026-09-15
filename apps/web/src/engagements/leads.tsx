@@ -226,6 +226,12 @@ function LeadsBody({
                             <span className="font-mono">{lead.target}</span>
                           </>
                         ) : null}
+                        {lead.serviceRef !== null ? (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono">{lead.serviceRef}</span>
+                          </>
+                        ) : null}
                         <span aria-hidden="true">·</span>
                         <span className="font-mono">
                           {lead.source.kind}:{lead.source.ref}
@@ -453,6 +459,12 @@ function LeadDetail({
           ) : null}
         </div>
       </div>
+
+      {lead.nextStep !== null ? (
+        <p className="m-0 text-[12px] leading-5 text-muted-foreground">
+          Next step: {lead.nextStep}
+        </p>
+      ) : null}
 
       {lead.disposition === "parked" ? (
         <div className="grid gap-2">
