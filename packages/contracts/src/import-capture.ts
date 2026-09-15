@@ -113,9 +113,9 @@ export function originLabelForKind(
 
 export function proposeCaptureTitle(input: {
   kind: z.infer<typeof StoneCaptureKindSchema>;
-  command?: string;
-  targetLabel?: string;
-  fileName?: string;
+  command?: string | undefined;
+  targetLabel?: string | undefined;
+  fileName?: string | undefined;
 }): string {
   const target = input.targetLabel?.trim() ?? "";
   if (input.command !== undefined && input.command.trim().length > 0) {

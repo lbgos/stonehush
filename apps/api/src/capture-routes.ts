@@ -4,8 +4,8 @@ import {
   StoneCaptureSchema,
   StoneEngagementIdParamsSchema,
   findInventedExecutionFacts,
-} from "@blackglass/contracts";
-import type { StoneTargetRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { StoneTargetRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type Captures = Pick<

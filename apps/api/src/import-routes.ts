@@ -4,9 +4,9 @@ import {
   StoneEngagementIdParamsSchema,
   StoneImportBodySchema,
   findInventedExecutionFacts,
-} from "@blackglass/contracts";
-import type { StoneTargetRepository } from "@blackglass/db";
-import { countFfufJsonResults, countNmapXmlServices } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import type { StoneTargetRepository } from "@stonehush/db";
+import { countFfufJsonResults, countNmapXmlServices } from "@stonehush/domain";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type Imports = Pick<StoneTargetRepository, "createCapture">;

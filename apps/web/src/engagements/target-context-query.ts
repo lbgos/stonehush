@@ -5,7 +5,7 @@ import {
   type StoneAddressBinding,
   type StoneHostnameAssociation,
   type StoneTarget,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const STONE_TARGETS_QUERY_KEY = ["stone-targets"] as const;
@@ -111,20 +111,6 @@ export function useStoneBindingsQuery(engagementId: string, targetId: string | n
         ? Promise.resolve({ current: [], historical: [] } satisfies StoneBindings)
         : fetchStoneBindings(engagementId, targetId, signal),
   });
-}
-
-export async function createStoneTargetRequest(
-  engagementId: string,
-  input: { label: string; initialAddress: string },
-): Promise<StoneTarget> {
-  const response = await fetch(`/api/v1/engagements/${engagementId}/stone-targets`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const payload: unknown = await response.json();
-  if (response.status !== 201) throw new StoneTargetMutationError(responseCode(payload));
-  return payload as StoneTarget;
 }
 
 export async function changeStoneAddressRequest(

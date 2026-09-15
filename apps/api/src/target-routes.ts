@@ -10,8 +10,8 @@ import {
   StoneTargetIdParamsSchema,
   StoneTargetListResponseSchema,
   StoneTargetSchema,
-} from "@blackglass/contracts";
-import type { StoneTargetRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { StoneTargetRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type Targets = Pick<

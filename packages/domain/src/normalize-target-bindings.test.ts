@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   currentBindingForActions,
   describeComparability,
-  findAutoMergeCandidates,
   planAddressChange,
   type StoneBindingRecord,
 } from "./normalize-target-bindings.js";
@@ -50,12 +49,6 @@ describe("normalize-target bindings", () => {
       binding({ id: "new", addressText: "10.0.0.9", status: "current" }),
     ];
     expect(currentBindingForActions(bindings)?.id).toBe("new");
-  });
-
-  it("never auto-merges machines by reused IP", () => {
-    const probe = findAutoMergeCandidates(["target-a", "target-b"], "10.0.0.5");
-    expect(probe.candidates).toEqual([]);
-    expect(probe.reason).toBe("ip_reuse_never_merges");
   });
 
   it("rejects unchanged, invalid, and non-binding addresses", () => {

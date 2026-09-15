@@ -11,12 +11,12 @@ import {
   type StoneCaptureKind,
   type StoneHostnameAssociation,
   type StoneTarget,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   decideRedirectHostnameAssociation,
   planAddressChange,
   proposeRedirectHostnameAssociation,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 
 import * as schema from "./schema.js";
 import {
@@ -546,38 +546,6 @@ export class StoneTargetRepository {
         return { ok: false, error: { code: "invalid_persisted_data" } };
       }
       return { ok: true, value: { capture: toCapture(row), deduplicated: false } };
-    } catch (error) {
-      return busyOrCorrupt(error);
-    }
-  }
-
-  // Second import of identical content resolves to a provenance pointer at
-  // the existing capture without doubling facts. No pointer row is written:
-  // the returned capture carries provenanceExistingId set to the existing
-  // item id, which is the reference the acceptance check requires.
-  recordImportProvenance(input: {
-    engagementId: string;
-    existingCaptureId: string;
-    kind: StoneCaptureKind;
-    title: string;
-    targetId: string | null;
-  }): StoneTargetCaptureResult<{ capture: StoneCapture; deduplicated: boolean }> {
-    try {
-      const existing = this.db
-        .select()
-        .from(stoneCaptures)
-        .where(eq(stoneCaptures.id, input.existingCaptureId))
-        .get();
-      if (existing === undefined || existing.engagementId !== input.engagementId) {
-        return { ok: false, error: { code: "invalid_request" } };
-      }
-      return {
-        ok: true,
-        value: {
-          capture: { ...toCapture(existing), provenanceExistingId: existing.id },
-          deduplicated: true,
-        },
-      };
     } catch (error) {
       return busyOrCorrupt(error);
     }

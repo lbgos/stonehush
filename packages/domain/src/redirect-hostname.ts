@@ -2,7 +2,7 @@ import {
   HOSTS_FILE_EDIT_POLICY,
   RUNNER_HOST_MAPPING_NOTE,
   RUNNER_MAPPING_NEXT_STEP,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import { normalizeTarget } from "./normalize-target.js";
 
@@ -82,19 +82,4 @@ export function decideRedirectHostnameAssociation(
   if (decision === "associated") return { ok: true, status: "associated", decidedAt: now };
   if (decision === "declined") return { ok: true, status: "declined", decidedAt: now };
   return { ok: false, error: { code: "invalid_decision" } };
-}
-
-// Negative-test guard: no planned operator or runner action may silently edit
-// the OS hosts file. Returns the offending descriptions, empty when clean.
-export function findHostsFileEdits(
-  plannedActions: readonly { description: string }[],
-): string[] {
-  const offending: string[] = [];
-  for (const action of plannedActions) {
-    const text = action.description.toLowerCase();
-    if (text.includes("hosts") && /edit|write|modify|append|patch/.test(text)) {
-      offending.push(action.description);
-    }
-  }
-  return offending;
 }

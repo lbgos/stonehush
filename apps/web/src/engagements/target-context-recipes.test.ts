@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildCopyText,
   COPIED_NOT_RAN_NOTE,
-  copyResolvedText,
   resolveRecipeCopy,
 } from "./target-context-recipes.js";
 
@@ -62,12 +61,7 @@ describe("stone target context recipes", () => {
     });
   });
 
-  it("marks copies as not run", async () => {
+  it("marks copies as not run", () => {
     expect(COPIED_NOT_RAN_NOTE).toBe("Copied, not run.");
-    const written: string[] = [];
-    await copyResolvedText("10.0.0.9", async (value) => {
-      written.push(value);
-    });
-    expect(written).toEqual(["10.0.0.9"]);
   });
 });

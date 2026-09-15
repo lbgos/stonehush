@@ -1,5 +1,5 @@
-import { proposeCaptureTitle, type StoneCaptureKind } from "@blackglass/contracts";
-import { Button } from "@blackglass/ui";
+import { proposeCaptureTitle, type StoneCaptureKind } from "@stonehush/contracts";
+import { Button } from "@stonehush/ui";
 import { useState } from "react";
 
 import {
