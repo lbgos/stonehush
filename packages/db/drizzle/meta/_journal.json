@@ -127,6 +127,13 @@
       "when": 1789023502844,
       "tag": "0017_finding_revision",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1789023600000,
+      "tag": "0018_evidence_excerpts",
+      "breakpoints": true
     }
   ]
 }
