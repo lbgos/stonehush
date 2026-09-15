@@ -1,5 +1,33 @@
 export { normalizeTarget } from "./normalize-target.js";
 export {
+  currentBindingForActions,
+  describeComparability,
+  planAddressChange,
+  type BindingComparability,
+  type PlanAddressChangeErrorCode,
+  type PlanAddressChangeResult,
+  type StoneBindingRecord,
+} from "./normalize-target-bindings.js";
+export {
+  REDIRECT_HOSTS_FILE_EDIT_POLICY,
+  REDIRECT_MAPPING_NEXT_STEP,
+  REDIRECT_RUNNER_ONLY_NOTE,
+  decideRedirectHostnameAssociation,
+  proposeRedirectHostnameAssociation,
+  type DecideRedirectHostnameResult,
+  type ProposeRedirectHostnameErrorCode,
+  type ProposeRedirectHostnameResult,
+  type RedirectHostnameOffer,
+} from "./redirect-hostname.js";
+export {
+  countNmapXmlServices,
+  type CountNmapXmlServicesResult,
+} from "./nmap-xml-import.js";
+export {
+  countFfufJsonResults,
+  type CountFfufJsonResultsResult,
+} from "./ffuf-json-import.js";
+export {
   acceptHeartbeat,
   calculateSelfFenceDeadline,
   evaluateRunEventSequence,
