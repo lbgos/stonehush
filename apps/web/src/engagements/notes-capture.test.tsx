@@ -111,6 +111,45 @@ afterEach(() => {
 
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
+// Shared workspace shell for image-capture stubs: status, engagement list
+// and detail, services, and notes. Tests add only their attachment routes.
+function shellResponse(
+  url: string,
+  init?: RequestInit,
+  engagements: typeof activeEngagement[] = [activeEngagement],
+): Promise<Response> | undefined {
+  if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
+  if (url === "/api/v1/engagements") return Promise.resolve(response(engagements));
+  const detail = /\/api\/v1\/engagements\/([^/]+)$/.exec(url);
+  if (detail?.[1] !== undefined && (init?.method === undefined || init.method === "GET")) {
+    const engagement = engagements.find((entry) => entry.id === detail[1]);
+    if (engagement === undefined) return undefined;
+    return Promise.resolve(response({ engagement, activeScopeRevision: null }));
+  }
+  if (url.endsWith("/services")) return Promise.resolve(response([]));
+  const notes = /\/api\/v1\/engagements\/([^/]+)\/notes$/.exec(url);
+  if (notes?.[1] !== undefined && (init?.method === undefined || init.method === "GET")) {
+    return Promise.resolve(
+      response({
+        engagementId: notes[1],
+        markdown: "",
+        updatedAt: "2026-08-12T12:00:00.000Z",
+        revision: 0,
+      }),
+    );
+  }
+  return undefined;
+}
+
+function stubFetch(
+  handler: (url: string, init?: RequestInit) => Promise<Response>,
+): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => handler(String(input), init)),
+  );
+}
+
 function stubNotes(
   upload: (body: Record<string, unknown>) => Promise<Response>,
   patch: (attachmentId: string, body: Record<string, unknown>) => Promise<Response> = (attachmentId, body) =>
@@ -126,42 +165,21 @@ function stubNotes(
     ),
 ) {
   const posts: { url: string; body: unknown }[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
-      if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
-      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
-        return Promise.resolve(
-          response({ engagement: activeEngagement, activeScopeRevision: null }),
-        );
-      }
-      if (url.endsWith("/services")) return Promise.resolve(response([]));
-      if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
-        return Promise.resolve(
-          response({
-            engagementId: ENGAGEMENT_ID,
-            markdown: "",
-            updatedAt: "2026-08-12T12:00:00.000Z",
-            revision: 0,
-          }),
-        );
-      }
-      if (url.endsWith("/attachments") && init?.method === "POST") {
-        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        posts.push({ url, body });
-        return upload(body);
-      }
-      const patchMatch = /\/attachments\/([^/]+)$/.exec(url);
-      if (patchMatch?.[1] !== undefined && init?.method === "PATCH") {
-        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-        return patch(patchMatch[1], body);
-      }
-      if (url.endsWith("/attachments")) return Promise.resolve(response([]));
-      return Promise.resolve(response([]));
-    }),
-  );
+  stubFetch(async (url, init) => {
+    const shell = shellResponse(url, init);
+    if (shell !== undefined) return shell;
+    if (url.endsWith("/attachments") && init?.method === "POST") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      posts.push({ url, body });
+      return upload(body);
+    }
+    const patchMatch = /\/attachments\/([^/]+)$/.exec(url);
+    if (patchMatch?.[1] !== undefined && init?.method === "PATCH") {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return patch(patchMatch[1], body);
+    }
+    return Promise.resolve(response([]));
+  });
   return posts;
 }
 
@@ -266,38 +284,18 @@ describe("notes image capture", () => {
       crop: { x: 0, y: 0, width: 100, height: 60 },
       createdAt: "2026-08-14T12:00:00.000Z",
     };
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
-        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
-          return Promise.resolve(
-            response({ engagement: activeEngagement, activeScopeRevision: null }),
-          );
-        }
-        if (url.endsWith("/services")) return Promise.resolve(response([]));
-        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
-          return Promise.resolve(
-            response({
-              engagementId: ENGAGEMENT_ID,
-              markdown: "",
-              updatedAt: "2026-08-12T12:00:00.000Z",
-              revision: 0,
-            }),
-          );
-        }
-        if (url.endsWith("/attachments") && init?.method === "POST") {
-          return Promise.resolve(response(uploadedRow, 201));
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments/${seeded.id}/derived`) {
-          return Promise.resolve(response(child, 201));
-        }
-        if (url.endsWith("/attachments")) return Promise.resolve(response([seeded]));
-        return Promise.resolve(response([]));
-      }),
-    );
+    stubFetch(async (url, init) => {
+      const shell = shellResponse(url, init);
+      if (shell !== undefined) return shell;
+      if (url.endsWith("/attachments") && init?.method === "POST") {
+        return Promise.resolve(response(uploadedRow, 201));
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments/${seeded.id}/derived`) {
+        return Promise.resolve(response(child, 201));
+      }
+      if (url.endsWith("/attachments")) return Promise.resolve(response([seeded]));
+      return Promise.resolve(response([]));
+    });
 
     await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
     await screen.findByText(/alpha-screen/);
@@ -451,41 +449,20 @@ describe("notes image capture", () => {
     // characters, which the derived-attachment schema rejects on every
     // retry. The client must fit the composed caption in the bound.
     const derivedPosts: { url: string; body: Record<string, unknown> }[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
-        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
-          return Promise.resolve(
-            response({ engagement: activeEngagement, activeScopeRevision: null }),
-          );
-        }
-        if (url.endsWith("/services")) return Promise.resolve(response([]));
-        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
-          return Promise.resolve(
-            response({
-              engagementId: ENGAGEMENT_ID,
-              markdown: "",
-              updatedAt: "2026-08-12T12:00:00.000Z",
-              revision: 0,
-            }),
-          );
-        }
-        if (url.endsWith("/attachments") && init?.method === "POST") {
-          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-          return Promise.resolve(response({ ...savedAttachment(), caption: body["caption"] }, 201));
-        }
-        if (url.endsWith("/derived") && init?.method === "POST") {
-          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-          derivedPosts.push({ url, body });
-          return Promise.resolve(response({ ...savedAttachment(), id: `${ATTACHMENT_ID}-crop` }, 201));
-        }
-        if (url.endsWith("/attachments")) return Promise.resolve(response([]));
-        return Promise.resolve(response([]));
-      }),
-    );
+    stubFetch(async (url, init) => {
+      const shell = shellResponse(url, init);
+      if (shell !== undefined) return shell;
+      if (url.endsWith("/attachments") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return Promise.resolve(response({ ...savedAttachment(), caption: body["caption"] }, 201));
+      }
+      if (url.endsWith("/derived") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        derivedPosts.push({ url, body });
+        return Promise.resolve(response({ ...savedAttachment(), id: `${ATTACHMENT_ID}-crop` }, 201));
+      }
+      return Promise.resolve(response([]));
+    });
 
     await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
     await screen.findByLabelText("Markdown");
@@ -517,38 +494,18 @@ describe("notes image capture", () => {
     const initialGate = new Promise<Response>((resolve) => {
       resolveInitial = resolve;
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
-        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
-          return Promise.resolve(
-            response({ engagement: activeEngagement, activeScopeRevision: null }),
-          );
-        }
-        if (url.endsWith("/services")) return Promise.resolve(response([]));
-        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
-          return Promise.resolve(
-            response({
-              engagementId: ENGAGEMENT_ID,
-              markdown: "",
-              updatedAt: "2026-08-12T12:00:00.000Z",
-              revision: 0,
-            }),
-          );
-        }
-        if (url.endsWith("/attachments") && init?.method === "POST") {
-          return Promise.resolve(response(uploaded, 201));
-        }
-        if (/\/attachments\/[^/]+$/.test(url) && init?.method === "PATCH") {
-          return Promise.resolve(response(saved, 200));
-        }
-        if (url.endsWith("/attachments")) return initialGate;
-        return Promise.resolve(response([]));
-      }),
-    );
+    stubFetch(async (url, init) => {
+      const shell = shellResponse(url, init);
+      if (shell !== undefined) return shell;
+      if (url.endsWith("/attachments") && init?.method === "POST") {
+        return Promise.resolve(response(uploaded, 201));
+      }
+      if (/\/attachments\/[^/]+$/.test(url) && init?.method === "PATCH") {
+        return Promise.resolve(response(saved, 200));
+      }
+      if (url.endsWith("/attachments")) return initialGate;
+      return Promise.resolve(response([]));
+    });
 
     await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
     await screen.findByLabelText("Markdown");
@@ -599,45 +556,20 @@ describe("notes image capture", () => {
     const reloadGate = new Promise<Response>((resolve) => {
       resolveReload = resolve;
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
-        if (url === "/api/v1/engagements") {
-          return Promise.resolve(response([activeEngagement, engagementB]));
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
-          return Promise.resolve(
-            response({ engagement: activeEngagement, activeScopeRevision: null }),
-          );
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}`) {
-          return Promise.resolve(response({ engagement: engagementB, activeScopeRevision: null }));
-        }
-        if (url.endsWith("/services")) return Promise.resolve(response([]));
-        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
-          return Promise.resolve(
-            response({
-              engagementId: url.includes(ENGAGEMENT_B_ID) ? ENGAGEMENT_B_ID : ENGAGEMENT_ID,
-              markdown: "",
-              updatedAt: "2026-08-12T12:00:00.000Z",
-              revision: 0,
-            }),
-          );
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments`) {
-          attachmentGetsA += 1;
-          // First load fails so the Retry button appears; the retry hangs.
-          if (attachmentGetsA === 1) return Promise.reject(new Error("offline"));
-          return reloadGate;
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}/attachments`) {
-          return Promise.resolve(response([fileB]));
-        }
-        return Promise.resolve(response([]));
-      }),
-    );
+    stubFetch(async (url, init) => {
+      const shell = shellResponse(url, init, [activeEngagement, engagementB]);
+      if (shell !== undefined) return shell;
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments`) {
+        attachmentGetsA += 1;
+        // First load fails so the Retry button appears; the retry hangs.
+        if (attachmentGetsA === 1) return Promise.reject(new Error("offline"));
+        return reloadGate;
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}/attachments`) {
+        return Promise.resolve(response([fileB]));
+      }
+      return Promise.resolve(response([]));
+    });
 
     const history = createMemoryHistory({ initialEntries: [`/engagements/${ENGAGEMENT_ID}?tab=notes`] });
     const router = createAppRouter(history);
@@ -699,47 +631,22 @@ describe("notes image capture", () => {
     });
     const attachmentGets: string[] = [];
     const derivePosts: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
-        if (url === "/api/v1/engagements") {
-          return Promise.resolve(response([activeEngagement, engagementB]));
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
-          return Promise.resolve(
-            response({ engagement: activeEngagement, activeScopeRevision: null }),
-          );
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}`) {
-          return Promise.resolve(response({ engagement: engagementB, activeScopeRevision: null }));
-        }
-        if (url.endsWith("/services")) return Promise.resolve(response([]));
-        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
-          return Promise.resolve(
-            response({
-              engagementId: url.includes(ENGAGEMENT_B_ID) ? ENGAGEMENT_B_ID : ENGAGEMENT_ID,
-              markdown: "",
-              updatedAt: "2026-08-12T12:00:00.000Z",
-              revision: 0,
-            }),
-          );
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments`) {
-          return Promise.resolve(response([fileA]));
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}/attachments`) {
-          attachmentGets.push(url);
-          return Promise.resolve(response([]));
-        }
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments/${fileA.id}/derived`) {
-          derivePosts.push(url);
-          return deriveGate;
-        }
+    stubFetch(async (url, init) => {
+      const shell = shellResponse(url, init, [activeEngagement, engagementB]);
+      if (shell !== undefined) return shell;
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments`) {
+        return Promise.resolve(response([fileA]));
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_B_ID}/attachments`) {
+        attachmentGets.push(url);
         return Promise.resolve(response([]));
-      }),
-    );
+      }
+      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}/attachments/${fileA.id}/derived`) {
+        derivePosts.push(url);
+        return deriveGate;
+      }
+      return Promise.resolve(response([]));
+    });
 
     const history = createMemoryHistory({ initialEntries: [`/engagements/${ENGAGEMENT_ID}?tab=notes`] });
     const router = createAppRouter(history);
@@ -784,38 +691,18 @@ describe("notes image capture", () => {
       resolveInitial = resolve;
     });
     let initialCalls = 0;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.includes("/system/status")) return Promise.resolve(response(readyStatus));
-        if (url === "/api/v1/engagements") return Promise.resolve(response([activeEngagement]));
-        if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) {
-          return Promise.resolve(
-            response({ engagement: activeEngagement, activeScopeRevision: null }),
-          );
-        }
-        if (url.endsWith("/services")) return Promise.resolve(response([]));
-        if (url.endsWith("/notes") && (init?.method === undefined || init.method === "GET")) {
-          return Promise.resolve(
-            response({
-              engagementId: ENGAGEMENT_ID,
-              markdown: "",
-              updatedAt: "2026-08-12T12:00:00.000Z",
-              revision: 0,
-            }),
-          );
-        }
-        if (url.endsWith("/attachments") && init?.method === "POST") {
-          return Promise.resolve(response(fresh, 201));
-        }
-        if (url.endsWith("/attachments")) {
-          initialCalls += 1;
-          return initialGate;
-        }
-        return Promise.resolve(response([]));
-      }),
-    );
+    stubFetch(async (url, init) => {
+      const shell = shellResponse(url, init);
+      if (shell !== undefined) return shell;
+      if (url.endsWith("/attachments") && init?.method === "POST") {
+        return Promise.resolve(response(fresh, 201));
+      }
+      if (url.endsWith("/attachments")) {
+        initialCalls += 1;
+        return initialGate;
+      }
+      return Promise.resolve(response([]));
+    });
 
     await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=notes`);
     await screen.findByLabelText("Markdown");

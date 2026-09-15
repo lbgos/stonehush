@@ -126,13 +126,24 @@ function stubFetch(handler: (url: string, init?: RequestInit) => Promise<Respons
   vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => handler(String(input), init)));
 }
 
+// Shared workspace shell: engagement list and detail, services, and system
+// status. Tests add only their run-output, search, excerpt, and source routes.
+function shellResponse(url: string): Promise<Response> | undefined {
+  if (url === "/api/v1/engagements") return Promise.resolve(response(engagementList()));
+  if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return Promise.resolve(response(engagementDetail()));
+  if (url.endsWith("/services")) return Promise.resolve(response([]));
+  if (url === "/api/v1/system/status") {
+    return Promise.resolve(response({ version: 1, overall: "ready", developmentStorage: "ready" }));
+  }
+  return undefined;
+}
+
 describe("run output fast capture", () => {
   it("keeps an excerpt from a search match without rendering the whole file", async () => {
     const posts: { url: string; body: unknown }[] = [];
     stubFetch(async (url, init) => {
-      if (url === "/api/v1/engagements") return response(engagementList());
-      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
-      if (url.endsWith("/services")) return response([]);
+      const shell = shellResponse(url);
+      if (shell !== undefined) return shell;
       if (url.endsWith("/runs/latest/output")) return response(runOutput());
       if (url.includes("/output/search")) {
         return response({
@@ -157,9 +168,6 @@ describe("run output fast capture", () => {
         return response({ ...KEPT_EXCERPT, ...body }, 201);
       }
       if (url.endsWith("/excerpts")) return response(posts.length > 0 ? [KEPT_EXCERPT] : []);
-      if (url === "/api/v1/system/status") {
-        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
-      }
       return response({ code: "invalid_request" }, 400);
     });
 
@@ -200,9 +208,8 @@ describe("run output fast capture", () => {
     const calls: string[] = [];
     stubFetch(async (url) => {
       calls.push(url);
-      if (url === "/api/v1/engagements") return response(engagementList());
-      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
-      if (url.endsWith("/services")) return response([]);
+      const shell = shellResponse(url);
+      if (shell !== undefined) return shell;
       if (url.endsWith("/runs/run-old/output")) return response({ code: "missing_artifact" }, 409);
       if (url.endsWith("/excerpt-sources")) {
         return response([
@@ -214,9 +221,6 @@ describe("run output fast capture", () => {
             completeness: "complete",
           },
         ]);
-      }
-      if (url === "/api/v1/system/status") {
-        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
       }
       return response({ code: "invalid_request" }, 400);
     });
@@ -276,9 +280,8 @@ describe("run output fast capture", () => {
       attempt: 1,
     };
     stubFetch(async (url) => {
-      if (url === "/api/v1/engagements") return response(engagementList());
-      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
-      if (url.endsWith("/services")) return response([]);
+      const shell = shellResponse(url);
+      if (shell !== undefined) return shell;
       if (url.endsWith("/runs/latest/output")) return response({ code: "missing_artifact" }, 409);
       if (url.includes(`/api/v1/engagements/${ENGAGEMENT_ID}/runs?`)) {
         if (url.includes("before=")) return response({ runs: [latest], nextCursor: null });
@@ -306,9 +309,6 @@ describe("run output fast capture", () => {
           },
         ]);
       }
-      if (url === "/api/v1/system/status") {
-        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
-      }
       return response({ code: "invalid_request" }, 400);
     });
 
@@ -324,14 +324,10 @@ describe("run output fast capture", () => {
 
   it("labels Add to lead as a future action until STONE-4", async () => {
     stubFetch(async (url, init) => {
-      if (url === "/api/v1/engagements") return response(engagementList());
-      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
-      if (url.endsWith("/services")) return response([]);
+      const shell = shellResponse(url);
+      if (shell !== undefined) return shell;
       if (url.endsWith("/runs/latest/output")) return response(runOutput());
       if (url.endsWith("/excerpts") && init?.method !== "POST") return response([KEPT_EXCERPT]);
-      if (url === "/api/v1/system/status") {
-        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
-      }
       return response({ code: "invalid_request" }, 400);
     });
 
@@ -347,9 +343,8 @@ describe("run output fast capture", () => {
 
   it("states skipped artifacts instead of reporting a complete scan", async () => {
     stubFetch(async (url) => {
-      if (url === "/api/v1/engagements") return response(engagementList());
-      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
-      if (url.endsWith("/services")) return response([]);
+      const shell = shellResponse(url);
+      if (shell !== undefined) return shell;
       if (url.endsWith("/runs/latest/output")) return response(runOutput());
       if (url.includes("/output/search")) {
         return response({
@@ -358,9 +353,6 @@ describe("run output fast capture", () => {
           scanCapped: false,
           unavailableArtifactIds: ["artifact-stderr"],
         });
-      }
-      if (url === "/api/v1/system/status") {
-        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
       }
       return response({ code: "invalid_request" }, 400);
     });
@@ -383,13 +375,9 @@ describe("run output fast capture", () => {
 
   it("commits a keyboard selection for excerpt keeps", async () => {
     stubFetch(async (url) => {
-      if (url === "/api/v1/engagements") return response(engagementList());
-      if (url === `/api/v1/engagements/${ENGAGEMENT_ID}`) return response(engagementDetail());
-      if (url.endsWith("/services")) return response([]);
+      const shell = shellResponse(url);
+      if (shell !== undefined) return shell;
       if (url.endsWith("/runs/latest/output")) return response(runOutput());
-      if (url === "/api/v1/system/status") {
-        return response({ version: 1, overall: "ready", developmentStorage: "ready" });
-      }
       return response({ code: "invalid_request" }, 400);
     });
 

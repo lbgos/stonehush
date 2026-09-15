@@ -136,56 +136,71 @@ describe("secret masking for excerpts", () => {
     expect(projected.text).toBe(maskExcerptText("ordinary line here").text);
   });
 
-  it("detects mid-token continuation across a cut context", () => {
-    expect(selectionStartsMidToken("Bearer abcdefgh", "ijklmnop")).toBe(true);
-    expect(selectionStartsMidToken("login ok\n", "flag{abc}")).toBe(false);
-    expect(selectionStartsMidToken("", "abc")).toBe(false);
-    expect(selectionStartsMidToken("abc", "")).toBe(false);
-    expect(selectionStartsMidToken("target: ", "10.0.0.5")).toBe(false);
+  it.each([
+    ["Bearer abcdefgh", "ijklmnop", true],
+    ["login ok\n", "flag{abc}", false],
+    ["", "abc", false],
+    ["abc", "", false],
+    ["target: ", "10.0.0.5", false],
+  ])("detects mid-token continuation across a cut context: %j %j", (prefix, requested, expected) => {
+    expect(selectionStartsMidToken(prefix, requested)).toBe(expected);
   });
 
-  it("spots assignment values whose key may sit beyond a cut lookback", () => {
+  it.each([
     // Value side with the `=` inside the selection.
-    expect(selectionLooksLikeHiddenAssignmentValue("   ", "=hunter2")).toBe(true);
-    expect(selectionLooksLikeHiddenAssignmentValue("password", "=hunter2")).toBe(true);
+    ["   ", "=hunter2"],
+    ["password", "=hunter2"],
     // Value starting immediately after a visible `=`.
-    expect(selectionLooksLikeHiddenAssignmentValue("key=", "hunter2")).toBe(true);
+    ["key=", "hunter2"],
     // JSON colon assignments: separator-led, adjacent, and quoted.
-    expect(selectionLooksLikeHiddenAssignmentValue('"key"', ': "value"')).toBe(true);
-    expect(selectionLooksLikeHiddenAssignmentValue('"key":', '"value"')).toBe(true);
-    expect(selectionLooksLikeHiddenAssignmentValue('"key": ', '"value"')).toBe(true);
-    expect(selectionLooksLikeHiddenAssignmentValue('"key":\n  ', "'value'")).toBe(true);
-    expect(selectionLooksLikeHiddenAssignmentValue("key = ", '"v"')).toBe(true);
+    ['"key"', ': "value"'],
+    ['"key":', '"value"'],
+    ['"key": ', '"value"'],
+    ['"key":\n  ', "'value'"],
+    ["key = ", '"v"'],
+  ])("spots assignment values whose key may sit beyond a cut lookback: %j %j", (prefix, requested) => {
+    expect(selectionLooksLikeHiddenAssignmentValue(prefix, requested)).toBe(true);
+  });
+
+  it.each([
     // Ordinary shapes still pass: bare values after a spaced separator,
     // quoted strings after commas, plain words, timestamps by shape.
-    expect(selectionLooksLikeHiddenAssignmentValue("key = ", "hunter2")).toBe(false);
-    expect(selectionLooksLikeHiddenAssignmentValue("count = ", "42")).toBe(false);
-    expect(selectionLooksLikeHiddenAssignmentValue('", "', '"b"')).toBe(false);
-    expect(selectionLooksLikeHiddenAssignmentValue("login ok\n", "flag{abc}")).toBe(false);
-    expect(selectionLooksLikeHiddenAssignmentValue("target: ", "10.0.0.5")).toBe(false);
+    ["key = ", "hunter2"],
+    ["count = ", "42"],
+    ['", "', '"b"'],
+    ["login ok\n", "flag{abc}"],
+    ["target: ", "10.0.0.5"],
+  ])("passes ordinary shapes without hidden assignment keys: %j %j", (prefix, requested) => {
+    expect(selectionLooksLikeHiddenAssignmentValue(prefix, requested)).toBe(false);
   });
 
-  it("spots URL-shaped edges whose scheme may sit beyond a cut lookback", () => {
+  it.each([
     // An `@` inside the selection, or a URL-structural delimiter right
     // before it: a hidden `https://user:` prefix leaves these traces.
-    expect(selectionMayHideUrlValue("", "a@b")).toBe(true);
-    expect(selectionMayHideUrlValue("x", "a@b")).toBe(true);
-    expect(selectionMayHideUrlValue("foo;", "bar")).toBe(true);
-    expect(selectionMayHideUrlValue("a,", "b")).toBe(true);
-    expect(selectionMayHideUrlValue("100%", "20")).toBe(true);
-    expect(selectionMayHideUrlValue("a?", "b")).toBe(true);
-    expect(selectionMayHideUrlValue("a#", "b")).toBe(true);
-    expect(selectionMayHideUrlValue("a@", "b")).toBe(true);
+    ["", "a@b"],
+    ["x", "a@b"],
+    ["foo;", "bar"],
+    ["a,", "b"],
+    ["100%", "20"],
+    ["a?", "b"],
+    ["a#", "b"],
+    ["a@", "b"],
     // Delimiter-leading selections: the trigger sits before the span, so
     // the prefix check alone would miss them.
-    expect(selectionMayHideUrlValue("AAA", ";SECRET")).toBe(true);
-    expect(selectionMayHideUrlValue("AAA", ",SECRET")).toBe(true);
-    expect(selectionMayHideUrlValue("AAA", ";S")).toBe(true);
-    // Ordinary shapes without URL structure stay quiet.
-    expect(selectionMayHideUrlValue("abc", "def")).toBe(false);
-    expect(selectionMayHideUrlValue("key = ", "v")).toBe(false);
-    expect(selectionMayHideUrlValue("", "plain")).toBe(false);
-    expect(selectionMayHideUrlValue("a: ", "b")).toBe(false);
+    ["AAA", ";SECRET"],
+    ["AAA", ",SECRET"],
+    ["AAA", ";S"],
+  ])("spots URL-shaped edges whose scheme may sit beyond a cut lookback: %j %j", (prefix, requested) => {
+    expect(selectionMayHideUrlValue(prefix, requested)).toBe(true);
+  });
+
+  it.each([
+    ["abc", "def"],
+    ["key = ", "v"],
+    ["", "plain"],
+    ["a: ", "b"],
+  ])("leaves ordinary shapes without URL structure quiet: %j %j", (prefix, requested) => {
+    expect(selectionMayHideUrlValue(prefix, requested)).toBe(false);
   });
 
   it("treats percent as a token continuation but keeps colons as boundaries", () => {
@@ -226,15 +241,13 @@ describe("secret masking for excerpts", () => {
     expect(containsPrivateKeyBeginMarker(endOnly)).toBe(false);
   });
 
-  it("spots key-block tails holding an END marker without its BEGIN", () => {
-    expect(selectionHasDanglingKeyEnd("MIIB\n-----END RSA PRIVATE KEY-----\n")).toBe(true);
-    expect(
-      selectionHasDanglingKeyEnd(
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n",
-      ),
-    ).toBe(false);
-    expect(selectionHasDanglingKeyEnd("-----BEGIN RSA PRIVATE KEY-----\nMIIB\n")).toBe(false);
-    expect(selectionHasDanglingKeyEnd("ordinary output\n")).toBe(false);
+  it.each([
+    ["MIIB\n-----END RSA PRIVATE KEY-----\n", true],
+    ["-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----\n", false],
+    ["-----BEGIN RSA PRIVATE KEY-----\nMIIB\n", false],
+    ["ordinary output\n", false],
+  ])("spots key-block tails holding an END marker without its BEGIN: %j", (requested, expected) => {
+    expect(selectionHasDanglingKeyEnd(requested)).toBe(expected);
   });
 
   it("masks key-block bodies past an unterminated BEGIN only when truncated", () => {
@@ -337,10 +350,12 @@ describe("attachment naming and crops", () => {
     expect(deriveAttachmentName("", "")).toBe("evidence-image");
   });
 
-  it("validates crop rects while keeping the original intact", () => {
-    expect(isCropRectValid({ x: 4, y: 4, width: 100, height: 60 })).toBe(true);
-    expect(isCropRectValid({ x: 0, y: 0, width: 0, height: 60 })).toBe(false);
-    expect(isCropRectValid({ x: -1, y: 0, width: 10, height: 10 })).toBe(false);
+  it.each([
+    [{ x: 4, y: 4, width: 100, height: 60 }, true],
+    [{ x: 0, y: 0, width: 0, height: 60 }, false],
+    [{ x: -1, y: 0, width: 10, height: 10 }, false],
+  ])("validates crop rects while keeping the original intact: %j", (rect, expected) => {
+    expect(isCropRectValid(rect)).toBe(expected);
   });
 });
 

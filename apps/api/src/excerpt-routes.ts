@@ -57,6 +57,12 @@ export interface ExcerptRouteDependencies {
 
 type ExcerptMutationStatus = 400 | 404 | 409 | 500 | 503;
 
+type ContractErrorSender = (
+  reply: FastifyReply,
+  status: ExcerptMutationStatus,
+  code: string,
+) => unknown;
+
 function sendExcerptError(reply: FastifyReply, status: ExcerptMutationStatus, code: string) {
   return reply
     .code(status)
@@ -64,11 +70,7 @@ function sendExcerptError(reply: FastifyReply, status: ExcerptMutationStatus, co
     .send(ExcerptErrorSchema.parse({ code }));
 }
 
-function sendAttachmentError(
-  reply: FastifyReply,
-  status: 400 | 404 | 409 | 500 | 503,
-  code: string,
-) {
+function sendAttachmentError(reply: FastifyReply, status: ExcerptMutationStatus, code: string) {
   return reply
     .code(status)
     .type("application/json")
@@ -79,6 +81,34 @@ function storageStatus(error: { code: string }): 503 | 500 {
   return error.code === "storage_busy" ? 503 : 500;
 }
 
+// Shared repository failure mapping for excerpt and attachment reads and
+// writes: unknown engagement, archived engagement, missing row, busy
+// storage, and invalid persisted data each keep their exact status and code
+// in every handler. notFoundCode names the missing-row shape of the caller
+// (excerpts and attachments each keep their own error union).
+function sendRepositoryError(
+  reply: FastifyReply,
+  error: { code: string },
+  send: ContractErrorSender,
+  notFoundCode: string,
+): unknown {
+  switch (error.code) {
+    case "engagement_not_found":
+      return send(reply, 404, "engagement_not_found");
+    case "engagement_archived":
+      return send(reply, 409, "engagement_archived");
+    case "excerpt_not_found":
+    case "attachment_not_found":
+      return send(reply, 404, notFoundCode);
+    default:
+      return send(
+        reply,
+        storageStatus(error),
+        error.code === "storage_busy" ? "storage_busy" : "invalid_persisted_data",
+      );
+  }
+}
+
 // Engagement gate shared by excerpt and attachment writes. Reads stay
 // available on archived engagements; new annotations do not. The sender
 // keeps each route's error shape.
@@ -86,7 +116,7 @@ async function engagementWriteGate(
   reply: FastifyReply,
   engagements: Pick<EngagementRepository, "getEngagement">,
   engagementId: string,
-  send: (reply: FastifyReply, status: 400 | 404 | 409 | 500 | 503, code: string) => unknown,
+  send: ContractErrorSender,
 ): Promise<{ ok: true } | { ok: false }> {
   let found: ReturnType<EngagementRepository["getEngagement"]>;
   try {
@@ -112,6 +142,52 @@ async function engagementWriteGate(
     return { ok: false };
   }
   return { ok: true };
+}
+
+type RunArtifactRows = Extract<
+  ReturnType<RunOutputRepository["artifactsForRun"]>,
+  { ok: true }
+>["artifacts"];
+
+// Shared run-membership gate for the excerpt-sources and search endpoints:
+// the run must belong to the engagement, and artifact rows come from stored
+// metadata only. Every failure keeps its exact status and code.
+function loadRunArtifacts(
+  reply: FastifyReply,
+  runs: ExcerptRouteDependencies["runs"],
+  engagementId: string,
+  runId: string,
+): { ok: true; runId: string; artifacts: RunArtifactRows } | { ok: false } {
+  let run: ReturnType<RunOutputRepository["runForEngagement"]>;
+  let artifacts: ReturnType<RunOutputRepository["artifactsForRun"]>;
+  try {
+    run = runs.runForEngagement(engagementId, runId);
+    artifacts = runs.artifactsForRun(runId);
+  } catch {
+    sendExcerptError(reply, 500, "invalid_persisted_data");
+    return { ok: false };
+  }
+  if (!run.ok) {
+    if (run.code === "engagement_not_found") {
+      sendExcerptError(reply, 404, "engagement_not_found");
+    } else {
+      sendExcerptError(reply, storageStatus({ code: run.code }), run.code);
+    }
+    return { ok: false };
+  }
+  if (run.run === undefined || run.run.engagementId !== engagementId) {
+    sendExcerptError(reply, 404, "run_not_found");
+    return { ok: false };
+  }
+  if (!artifacts.ok) {
+    sendExcerptError(
+      reply,
+      storageStatus({ code: artifacts.code }),
+      artifacts.code,
+    );
+    return { ok: false };
+  }
+  return { ok: true, runId: run.run.id, artifacts: artifacts.artifacts };
 }
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: false });
@@ -342,17 +418,7 @@ export function registerExcerptRoutes(
       targetNote: body.data.targetNote ?? null,
     });
     if (!created.ok) {
-      if (created.error.code === "engagement_not_found") {
-        return sendExcerptError(reply, 404, "engagement_not_found");
-      }
-      if (created.error.code === "engagement_archived") {
-        return sendExcerptError(reply, 409, "engagement_archived");
-      }
-      return sendExcerptError(
-        reply,
-        storageStatus(created.error),
-        created.error.code === "storage_busy" ? "storage_busy" : "invalid_persisted_data",
-      );
+      return sendRepositoryError(reply, created.error, sendExcerptError, "excerpt_not_found");
     }
     const validated = ExcerptSchema.safeParse(created.value);
     if (!validated.success) return sendExcerptError(reply, 500, "invalid_persisted_data");
@@ -369,13 +435,7 @@ export function registerExcerptRoutes(
       return sendExcerptError(reply, 500, "invalid_persisted_data");
     }
     if (!listed.ok) {
-      if (listed.error.code === "engagement_not_found") {
-        return sendExcerptError(reply, 404, "engagement_not_found");
-      }
-      if (listed.error.code === "storage_busy") {
-        return sendExcerptError(reply, 503, "storage_busy");
-      }
-      return sendExcerptError(reply, 500, "invalid_persisted_data");
+      return sendRepositoryError(reply, listed.error, sendExcerptError, "excerpt_not_found");
     }
     const validated = ExcerptListResponseSchema.safeParse(listed.value);
     if (!validated.success) return sendExcerptError(reply, 500, "invalid_persisted_data");
@@ -392,32 +452,10 @@ export function registerExcerptRoutes(
         request.params,
       );
       if (!params.success) return sendExcerptError(reply, 400, "invalid_request");
-      let run: ReturnType<RunOutputRepository["runForEngagement"]>;
-      let artifacts: ReturnType<RunOutputRepository["artifactsForRun"]>;
-      try {
-        run = runs.runForEngagement(params.data.engagementId, params.data.runId);
-        artifacts = runs.artifactsForRun(params.data.runId);
-      } catch {
-        return sendExcerptError(reply, 500, "invalid_persisted_data");
-      }
-      if (!run.ok) {
-        if (run.code === "engagement_not_found") {
-          return sendExcerptError(reply, 404, "engagement_not_found");
-        }
-        return sendExcerptError(reply, storageStatus({ code: run.code }), run.code);
-      }
-      if (run.run === undefined || run.run.engagementId !== params.data.engagementId) {
-        return sendExcerptError(reply, 404, "run_not_found");
-      }
-      if (!artifacts.ok) {
-        return sendExcerptError(
-          reply,
-          storageStatus({ code: artifacts.code }),
-          artifacts.code,
-        );
-      }
-      const refs = artifacts.artifacts
-        .filter((artifact) => artifact.runId === run.run?.id)
+      const loaded = loadRunArtifacts(reply, runs, params.data.engagementId, params.data.runId);
+      if (!loaded.ok) return reply;
+      const refs = loaded.artifacts
+        .filter((artifact) => artifact.runId === loaded.runId)
         .map((artifact) => ({
           artifactId: artifact.artifactId,
           kind: artifact.kind,
@@ -452,32 +490,10 @@ export function registerExcerptRoutes(
             : Number((request.query as Record<string, unknown>)?.["limit"]),
       });
       if (!query.success) return sendExcerptError(reply, 400, "invalid_request");
-      let run: ReturnType<RunOutputRepository["runForEngagement"]>;
-      let artifacts: ReturnType<RunOutputRepository["artifactsForRun"]>;
-      try {
-        run = runs.runForEngagement(params.data.engagementId, params.data.runId);
-        artifacts = runs.artifactsForRun(params.data.runId);
-      } catch {
-        return sendExcerptError(reply, 500, "invalid_persisted_data");
-      }
-      if (!run.ok) {
-        if (run.code === "engagement_not_found") {
-          return sendExcerptError(reply, 404, "engagement_not_found");
-        }
-        return sendExcerptError(reply, storageStatus({ code: run.code }), run.code);
-      }
-      if (run.run === undefined || run.run.engagementId !== params.data.engagementId) {
-        return sendExcerptError(reply, 404, "run_not_found");
-      }
-      if (!artifacts.ok) {
-        return sendExcerptError(
-          reply,
-          storageStatus({ code: artifacts.code }),
-          artifacts.code,
-        );
-      }
-      const eligible = artifacts.artifacts
-        .filter((artifact) => artifact.runId === run.run?.id)
+      const loaded = loadRunArtifacts(reply, runs, params.data.engagementId, params.data.runId);
+      if (!loaded.ok) return reply;
+      const eligible = loaded.artifacts
+        .filter((artifact) => artifact.runId === loaded.runId)
         .filter((artifact) => artifact.kind === "stdout" || artifact.kind === "stderr")
         .filter((artifact) =>
           query.data.stream === undefined ? true : artifact.kind === query.data.stream,
@@ -661,17 +677,7 @@ export function registerExcerptRoutes(
       contentBase64: raw.toString("base64"),
     });
     if (!created.ok) {
-      if (created.error.code === "engagement_not_found") {
-        return sendAttachmentError(reply, 404, "engagement_not_found");
-      }
-      if (created.error.code === "engagement_archived") {
-        return sendAttachmentError(reply, 409, "engagement_archived");
-      }
-      return sendAttachmentError(
-        reply,
-        storageStatus(created.error),
-        created.error.code === "storage_busy" ? "storage_busy" : "invalid_persisted_data",
-      );
+      return sendRepositoryError(reply, created.error, sendAttachmentError, "attachment_not_found");
     }
     const validated = AttachmentSchema.safeParse(created.value);
     if (!validated.success) return sendAttachmentError(reply, 500, "invalid_persisted_data");
@@ -689,14 +695,7 @@ export function registerExcerptRoutes(
       return sendAttachmentError(reply, 500, "invalid_persisted_data");
     }
     if (!listed.ok) {
-      if (listed.error.code === "engagement_not_found") {
-        return sendAttachmentError(reply, 404, "engagement_not_found");
-      }
-      return sendAttachmentError(
-        reply,
-        storageStatus(listed.error),
-        listed.error.code === "storage_busy" ? "storage_busy" : "invalid_persisted_data",
-      );
+      return sendRepositoryError(reply, listed.error, sendAttachmentError, "attachment_not_found");
     }
     const validated = AttachmentListResponseSchema.safeParse(listed.value);
     if (!validated.success) return sendAttachmentError(reply, 500, "invalid_persisted_data");
@@ -718,17 +717,7 @@ export function registerExcerptRoutes(
         return sendAttachmentError(reply, 500, "invalid_persisted_data");
       }
       if (!bytes.ok) {
-        if (bytes.error.code === "engagement_not_found") {
-          return sendAttachmentError(reply, 404, "engagement_not_found");
-        }
-        if (bytes.error.code === "attachment_not_found") {
-          return sendAttachmentError(reply, 404, "attachment_not_found");
-        }
-        return sendAttachmentError(
-          reply,
-          storageStatus(bytes.error),
-          bytes.error.code === "storage_busy" ? "storage_busy" : "invalid_persisted_data",
-        );
+        return sendRepositoryError(reply, bytes.error, sendAttachmentError, "attachment_not_found");
       }
       const raw = Buffer.from(bytes.value.contentBase64, "base64");
       return reply
@@ -761,23 +750,7 @@ export function registerExcerptRoutes(
       return sendAttachmentError(reply, 500, "invalid_persisted_data");
     }
     if (!updated.ok) {
-      if (updated.error.code === "engagement_not_found") {
-        return sendAttachmentError(reply, 404, "engagement_not_found");
-      }
-      if (updated.error.code === "engagement_archived") {
-        return sendAttachmentError(reply, 409, "engagement_archived");
-      }
-      if (
-        updated.error.code === "excerpt_not_found" ||
-        updated.error.code === "attachment_not_found"
-      ) {
-        return sendAttachmentError(reply, 404, "attachment_not_found");
-      }
-      return sendAttachmentError(
-        reply,
-        storageStatus(updated.error),
-        updated.error.code === "storage_busy" ? "storage_busy" : "invalid_persisted_data",
-      );
+      return sendRepositoryError(reply, updated.error, sendAttachmentError, "attachment_not_found");
     }
     const validated = AttachmentSchema.safeParse(updated.value);
     if (!validated.success) return sendAttachmentError(reply, 500, "invalid_persisted_data");

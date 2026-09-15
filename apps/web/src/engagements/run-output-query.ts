@@ -231,6 +231,38 @@ export class ExcerptQueryError extends Error {
   }
 }
 
+interface JsonListSchema<T> {
+  safeParse: (payload: unknown) => { success: true; data: T } | { success: false; error: unknown };
+}
+
+// Shared GET/POST round trip for the capture endpoints below: every failure
+// mode (network, status, unparsable body, contract mismatch) surfaces the
+// same query error so panels show one truthful failure state.
+async function fetchCaptureJson<T>(
+  url: string,
+  schema: JsonListSchema<T>,
+  expectedStatus: number,
+  init?: RequestInit,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, ...(signal ? { signal } : {}) });
+  } catch {
+    throw new ExcerptQueryError();
+  }
+  if (response.status !== expectedStatus) throw new ExcerptQueryError();
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ExcerptQueryError();
+  }
+  const result = schema.safeParse(payload);
+  if (!result.success) throw new ExcerptQueryError();
+  return result.data;
+}
+
 export function excerptsQueryKey(engagementId: string) {
   return ["engagements", engagementId, "excerpts"] as const;
 }
@@ -239,25 +271,13 @@ export async function fetchExcerpts(
   engagementId: string,
   signal?: AbortSignal,
 ): Promise<Excerpt[]> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/v1/engagements/${encodeURIComponent(engagementId)}/excerpts`,
-      signal ? { signal } : undefined,
-    );
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  if (response.status !== 200) throw new ExcerptQueryError();
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  const result = ExcerptListResponseSchema.safeParse(payload);
-  if (!result.success) throw new ExcerptQueryError();
-  return result.data;
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/excerpts`,
+    ExcerptListResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
 }
 
 export function excerptsQueryOptions(engagementId: string | undefined) {
@@ -291,27 +311,13 @@ export async function createExcerptRequest(
   signal?: AbortSignal,
 ): Promise<Excerpt> {
   const body = CreateExcerptRequestSchema.parse(input);
-  let response: Response;
-  try {
-    response = await fetch(`/api/v1/engagements/${encodeURIComponent(engagementId)}/excerpts`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-      ...(signal ? { signal } : {}),
-    });
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  if (response.status !== 201) throw new ExcerptQueryError();
-  const parsed = ExcerptSchema.safeParse(payload);
-  if (!parsed.success) throw new ExcerptQueryError();
-  return parsed.data;
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/excerpts`,
+    ExcerptSchema,
+    201,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+    signal,
+  );
 }
 
 export function useCreateExcerptMutation(engagementId: string) {
@@ -338,25 +344,13 @@ export async function searchRunOutput(
 ): Promise<ExcerptSearchResponse> {
   const params = new URLSearchParams({ q: query });
   if (stream !== undefined) params.set("stream", stream);
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/v1/engagements/${encodeURIComponent(engagementId)}/runs/${encodeURIComponent(runId)}/output/search?${params.toString()}`,
-      signal ? { signal } : undefined,
-    );
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  if (response.status !== 200) throw new ExcerptQueryError();
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  const result = ExcerptSearchResponseSchema.safeParse(payload);
-  if (!result.success) throw new ExcerptQueryError();
-  return result.data;
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/runs/${encodeURIComponent(runId)}/output/search?${params.toString()}`,
+    ExcerptSearchResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
 }
 
 export function excerptSourcesQueryKey(engagementId: string, runId: string) {
@@ -368,25 +362,13 @@ export async function fetchExcerptSources(
   runId: string,
   signal?: AbortSignal,
 ): Promise<ExcerptSourceRef[]> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/v1/engagements/${encodeURIComponent(engagementId)}/runs/${encodeURIComponent(runId)}/excerpt-sources`,
-      signal ? { signal } : undefined,
-    );
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  if (response.status !== 200) throw new ExcerptQueryError();
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  const result = ExcerptSourceListResponseSchema.safeParse(payload);
-  if (!result.success) throw new ExcerptQueryError();
-  return result.data;
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/runs/${encodeURIComponent(runId)}/excerpt-sources`,
+    ExcerptSourceListResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
 }
 
 export function useExcerptSourcesQuery(engagementId: string, runId: string) {
@@ -405,25 +387,13 @@ export async function fetchAttachments(
   engagementId: string,
   signal?: AbortSignal,
 ): Promise<Attachment[]> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/v1/engagements/${encodeURIComponent(engagementId)}/attachments`,
-      signal ? { signal } : undefined,
-    );
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  if (response.status !== 200) throw new ExcerptQueryError();
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  const result = AttachmentListResponseSchema.safeParse(payload);
-  if (!result.success) throw new ExcerptQueryError();
-  return result.data;
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/attachments`,
+    AttachmentListResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
 }
 
 export async function createAttachmentRequest(
@@ -437,27 +407,13 @@ export async function createAttachmentRequest(
   },
   signal?: AbortSignal,
 ): Promise<Attachment> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/v1/engagements/${encodeURIComponent(engagementId)}/attachments`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-      ...(signal ? { signal } : {}),
-    });
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ExcerptQueryError();
-  }
-  if (response.status !== 201) throw new ExcerptQueryError();
-  const parsed = AttachmentSchema.safeParse(payload);
-  if (!parsed.success) throw new ExcerptQueryError();
-  return parsed.data;
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/attachments`,
+    AttachmentSchema,
+    201,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
+    signal,
+  );
 }
 
 // Pending finding prefill handoff between the Raw output tab and the
