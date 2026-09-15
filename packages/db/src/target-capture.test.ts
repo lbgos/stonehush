@@ -254,4 +254,28 @@ describe("stone target capture repository", () => {
       expect(names).not.toContain(forbidden);
     }
   });
+
+  it("persists submitted content and file names on captures", () => {
+    const fixture = createFixture();
+    const engagementId = createEngagement(fixture);
+    const created = fixture.targets.createCapture({
+      engagementId,
+      targetId: null,
+      leadId: null,
+      kind: "pasted_terminal",
+      title: "pasted output",
+      contentText: "terminal bytes",
+      fileName: "session.txt",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.value.capture.contentText).toBe("terminal bytes");
+    expect(created.value.capture.fileName).toBe("session.txt");
+    const listed = fixture.targets.listCaptures(engagementId);
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value).toHaveLength(1);
+    expect(listed.value[0]?.contentText).toBe("terminal bytes");
+    expect(listed.value[0]?.fileName).toBe("session.txt");
+  });
 });

@@ -183,4 +183,108 @@ describe("TargetContextPanel", () => {
       expect(screen.getByRole("button", { name: "Associate" })).toBeDefined();
     });
   });
+
+  it("copies the associated hostname even when the binding is an IP", async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const proposed = {
+      contractVersion: 1,
+      id: "10000000-0000-4000-8000-000000000005",
+      engagementId: ENGAGEMENT_ID,
+      targetId: TARGET_ID,
+      connectionAddress: "10.0.0.9",
+      requestedHostname: "app.internal",
+      status: "proposed",
+      runnerOnlyNote:
+        "This name mapping applies to the runner only. An ordinary browser will not resolve it.",
+      nextStep:
+        "Next step: share the intended hostname with the operator and use it for HTTP host and TLS server name; do not edit the OS hosts file.",
+      hostsFileEdited: false,
+      createdAt: "2026-08-12T12:02:00.000Z",
+      decidedAt: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      stubTargetsFetch((input) => {
+        const url = String(input);
+        if (url.includes("/decision")) return response({ ...proposed, status: "associated" });
+        if (url.includes("/hostname-associations")) return response(proposed, 201);
+        return undefined;
+      }),
+    );
+    renderPanel();
+
+    expect(await screen.findByTestId("recorded-session")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Requested hostname"), {
+      target: { value: "app.internal" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Propose association" }));
+    await screen.findByTestId("hostname-offer");
+    fireEvent.click(screen.getByRole("button", { name: "Associate" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("hostname-offer").textContent).toContain("Status: associated.");
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Copy hostname" }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("app.internal");
+    });
+  });
+
+  it("discards a hostname proposal that resolves after switching targets", async () => {
+    const secondTarget = { ...target, id: "10000000-0000-4000-8000-000000000006", label: "web02" };
+    const pending: { resolve: ((value: Response) => void) | null } = { resolve: null };
+    const association = {
+      contractVersion: 1,
+      id: "10000000-0000-4000-8000-000000000005",
+      engagementId: ENGAGEMENT_ID,
+      targetId: TARGET_ID,
+      connectionAddress: "10.0.0.9",
+      requestedHostname: "app.internal",
+      status: "proposed",
+      runnerOnlyNote:
+        "This name mapping applies to the runner only. An ordinary browser will not resolve it.",
+      nextStep:
+        "Next step: share the intended hostname with the operator and use it for HTTP host and TLS server name; do not edit the OS hosts file.",
+      hostsFileEdited: false,
+      createdAt: "2026-08-12T12:02:00.000Z",
+      decidedAt: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/hostname-associations")) {
+          return new Promise<Response>((resolve) => {
+            pending.resolve = resolve;
+          });
+        }
+        if (url.endsWith("/stone-targets")) return Promise.resolve(response([target, secondTarget]));
+        if (url.endsWith("/bindings")) {
+          return Promise.resolve(
+            response({ current: [currentBinding], historical: [historicalBinding] }),
+          );
+        }
+        return Promise.resolve(response({ code: "invalid_request" }, 400));
+      }),
+    );
+    renderPanel();
+
+    expect(await screen.findByTestId("recorded-session")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Requested hostname"), {
+      target: { value: "app.internal" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Propose association" }));
+    await waitFor(() => {
+      expect(pending.resolve).not.toBeNull();
+    });
+    fireEvent.change(screen.getByLabelText("Target"), { target: { value: secondTarget.id } });
+    pending.resolve?.(response(association, 201));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Propose association" })).toBeDefined();
+    });
+    expect(screen.queryByTestId("hostname-offer")).toBeNull();
+  });
 });

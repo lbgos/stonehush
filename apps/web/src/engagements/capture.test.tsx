@@ -70,21 +70,26 @@ describe("CaptureView", () => {
       title: "nmap on web01",
       command: "nmap -sV 10.0.0.9",
       observation: "port 80 open",
+      contentText: "Nmap scan report",
+      fileName: null,
       contentDigest:
         "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       provenanceExistingId: null,
       byteSize: 16,
       createdAt: "2026-08-12T12:00:00.000Z",
     };
+    let posted = false;
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (init?.method === "POST") {
           postedBodies.push(init.body !== undefined ? JSON.parse(String(init.body)) : undefined);
+          posted = true;
           return Promise.resolve(response({ deduplicated: false, capture }, 201));
         }
-        if (url.endsWith("/stone-captures")) return Promise.resolve(response([]));
+        if (url.endsWith("/stone-captures"))
+          return Promise.resolve(response(posted ? [capture] : []));
         return Promise.resolve(response({ code: "invalid_request" }, 400));
       }),
     );
@@ -110,6 +115,7 @@ describe("CaptureView", () => {
     for (const invented of ["startedAt", "finishedAt", "exitCode", "executedCommand", "runnerTarget"]) {
       expect(body).not.toHaveProperty(invented);
     }
+    expect(await screen.findByText("Nmap scan report")).toBeDefined();
   });
 
   it("points a repeated import at the existing capture", async () => {
@@ -124,6 +130,8 @@ describe("CaptureView", () => {
       title: "Nmap import",
       command: null,
       observation: null,
+      contentText: "<nmaprun></nmaprun>",
+      fileName: null,
       contentDigest:
         "sha256:0000000000000000000000000000000000000000000000000000000000000000",
       provenanceExistingId: null,

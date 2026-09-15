@@ -80,6 +80,8 @@ describe("stone import capture contracts", () => {
       title: "Nmap import for web01",
       command: null,
       observation: null,
+      contentText: "<nmaprun></nmaprun>",
+      fileName: null,
       contentDigest: DIGEST,
       provenanceExistingId: null,
       byteSize: 128,
@@ -112,6 +114,57 @@ describe("stone import capture contracts", () => {
         leadId: null,
         title: "Nmap import",
         contentText: "<nmaprun></nmaprun>",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects typed parser kinds on the ordinary capture boundary", () => {
+    for (const kind of ["nmap_xml", "ffuf_json"]) {
+      expect(
+        CreateStoneCaptureRequestSchema.safeParse({
+          engagementId: ENGAGEMENT_ID,
+          targetId: null,
+          leadId: null,
+          kind,
+          title: "typed evidence",
+          contentText: "output",
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("requires presented content on the import boundary", () => {
+    expect(
+      StoneImportBodySchema.safeParse({
+        targetId: null,
+        leadId: null,
+        title: "Nmap import",
+        contentDigest: DIGEST,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts code-point titles in stored captures", () => {
+    // 61 astral characters are 61 code points but 122 UTF-16 units.
+    const title = "\u{1F600}".repeat(61);
+    expect(
+      StoneCaptureSchema.safeParse({
+        contractVersion: 1,
+        id: CAPTURE_ID,
+        engagementId: ENGAGEMENT_ID,
+        targetId: TARGET_ID,
+        leadId: null,
+        kind: "pasted_terminal",
+        originLabel: "pasted",
+        title,
+        command: null,
+        observation: null,
+        contentText: "output",
+        fileName: null,
+        contentDigest: DIGEST,
+        provenanceExistingId: null,
+        byteSize: 6,
+        createdAt: "2026-08-12T12:00:00.000Z",
       }).success,
     ).toBe(true);
   });

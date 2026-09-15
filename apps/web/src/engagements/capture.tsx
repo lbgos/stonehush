@@ -336,6 +336,14 @@ export function CaptureView({
             {capture.observation !== null ? (
               <p className="m-0">Observation: {capture.observation}</p>
             ) : null}
+            {capture.fileName !== null ? (
+              <p className="m-0 font-mono">File: {capture.fileName}</p>
+            ) : null}
+            {capture.contentText !== null ? (
+              <pre className="m-0 font-mono text-[12px] leading-5 whitespace-pre-wrap break-all">
+                {capture.contentText}
+              </pre>
+            ) : null}
           </div>
         ))}
         {captures.data !== undefined && captures.data.length === 0 && !captures.isFetching ? (

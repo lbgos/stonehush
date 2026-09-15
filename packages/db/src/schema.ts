@@ -1494,6 +1494,8 @@ export const stoneCaptures = sqliteTable(
     title: text("title").notNull(),
     command: text("command"),
     observation: text("observation"),
+    contentText: text("content_text"),
+    fileName: text("file_name"),
     contentDigest: text("content_digest").notNull(),
     provenanceExistingId: text("provenance_existing_id"),
     byteSize: integer("byte_size").notNull(),
@@ -1520,6 +1522,10 @@ export const stoneCaptures = sqliteTable(
     check(
       "stone_capture_observation_single_line",
       sql`${table.observation} is null or (length(${table.observation}) between 1 and 2048 and instr(${table.observation}, char(10)) = 0 and instr(${table.observation}, char(13)) = 0)`,
+    ),
+    check(
+      "stone_capture_file_name_length",
+      sql`${table.fileName} is null or length(${table.fileName}) between 1 and 255`,
     ),
     check(
       "stone_capture_digest",

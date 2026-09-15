@@ -73,6 +73,8 @@ CREATE TABLE `stone_captures` (
 	`title` text NOT NULL,
 	`command` text,
 	`observation` text,
+	`content_text` text,
+	`file_name` text,
 	`content_digest` text NOT NULL,
 	`provenance_existing_id` text,
 	`byte_size` integer NOT NULL,
@@ -85,6 +87,7 @@ CREATE TABLE `stone_captures` (
 	CONSTRAINT "stone_capture_title_length" CHECK(length("stone_captures"."title") between 1 and 120 and "stone_captures"."title" = trim("stone_captures"."title")),
 	CONSTRAINT "stone_capture_command_length" CHECK("stone_captures"."command" is null or length("stone_captures"."command") between 1 and 2048),
 	CONSTRAINT "stone_capture_observation_single_line" CHECK("stone_captures"."observation" is null or (length("stone_captures"."observation") between 1 and 2048 and instr("stone_captures"."observation", char(10)) = 0 and instr("stone_captures"."observation", char(13)) = 0)),
+	CONSTRAINT "stone_capture_file_name_length" CHECK("stone_captures"."file_name" is null or length("stone_captures"."file_name") between 1 and 255),
 	CONSTRAINT "stone_capture_digest" CHECK(length("stone_captures"."content_digest") = 71 and "stone_captures"."content_digest" glob 'sha256:[0-9a-f]*' and "stone_captures"."content_digest" not glob 'sha256:*[^0-9a-f]*'),
 	CONSTRAINT "stone_capture_byte_size" CHECK("stone_captures"."byte_size" >= 0),
 	CONSTRAINT "stone_capture_created_at" CHECK(length("stone_captures"."created_at") >= 20)
