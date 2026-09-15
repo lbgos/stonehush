@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
   EngagementNextStepRecordSchema,
@@ -36,6 +36,15 @@ function isStorageBusy(error: unknown): boolean {
 
 function failed<T>(error: EngagementResumeRepositoryError): EngagementResumeResult<T> {
   return { ok: false, error };
+}
+
+function isPrimaryKeyConflict(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY"
+  );
 }
 
 /**
@@ -99,51 +108,76 @@ export class EngagementResumeRepository {
       const step = EngagementNextStepSchema.safeParse(parsed.data.nextStep);
       if (!step.success) return failed({ code: "invalid_repository_input" });
     }
+    const expectedRevision = parsed.data.expectedRevision;
+    if (expectedRevision >= Number.MAX_SAFE_INTEGER) {
+      return failed({ code: "invalid_repository_input" });
+    }
+    const nextRevision = expectedRevision + 1;
+    const updatedAt = this.now().toISOString();
+    // Check and write run atomically: the revision read, the archived
+    // check, and the write share one transaction, and the write itself is
+    // conditional on the expected revision, so a concurrent writer or an
+    // archival between the read and the write turns into a conflict or an
+    // archived rejection instead of a silent overwrite.
     try {
-      const engagement = this.db
-        .select({ status: engagements.status })
-        .from(engagements)
-        .where(eq(engagements.id, engagementId))
-        .get();
-      if (engagement === undefined) return failed({ code: "engagement_not_found" });
-      if (engagement.status === "archived") return failed({ code: "engagement_archived" });
-      const expectedRevision = parsed.data.expectedRevision;
-      const existing = this.db
-        .select()
-        .from(engagementNextSteps)
-        .where(eq(engagementNextSteps.engagementId, engagementId))
-        .get();
-      const currentRevision = existing?.revision ?? 0;
-      if (expectedRevision !== currentRevision) {
-        return failed({ code: "revision_conflict", currentRevision });
-      }
-      if (expectedRevision >= Number.MAX_SAFE_INTEGER) {
-        return failed({ code: "invalid_repository_input" });
-      }
-      const nextRevision = expectedRevision + 1;
-      const updatedAt = this.now().toISOString();
-      if (existing === undefined) {
-        this.db
-          .insert(engagementNextSteps)
-          .values({ engagementId, nextStep: parsed.data.nextStep, updatedAt, revision: nextRevision })
-          .run();
-      } else {
-        this.db
-          .update(engagementNextSteps)
-          .set({ nextStep: parsed.data.nextStep, updatedAt, revision: nextRevision })
+      return this.db.transaction((tx) => {
+        const engagement = tx
+          .select({ status: engagements.status })
+          .from(engagements)
+          .where(eq(engagements.id, engagementId))
+          .get();
+        if (engagement === undefined) return failed({ code: "engagement_not_found" });
+        if (engagement.status === "archived") return failed({ code: "engagement_archived" });
+        const existing = tx
+          .select()
+          .from(engagementNextSteps)
           .where(eq(engagementNextSteps.engagementId, engagementId))
-          .run();
-      }
-      const validated = EngagementNextStepRecordSchema.safeParse({
-        engagementId,
-        nextStep: parsed.data.nextStep,
-        updatedAt,
-        revision: nextRevision,
+          .get();
+        const currentRevision = existing?.revision ?? 0;
+        if (expectedRevision !== currentRevision) {
+          return failed({ code: "revision_conflict", currentRevision });
+        }
+        if (existing === undefined) {
+          // No conditional insert primitive here: a concurrent first write
+          // surfaces as a primary-key conflict below and is reported as a
+          // revision conflict, never a silent overwrite.
+          tx
+            .insert(engagementNextSteps)
+            .values({ engagementId, nextStep: parsed.data.nextStep, updatedAt, revision: nextRevision })
+            .run();
+        } else {
+          const updated = tx
+            .update(engagementNextSteps)
+            .set({ nextStep: parsed.data.nextStep, updatedAt, revision: nextRevision })
+            .where(
+              and(
+                eq(engagementNextSteps.engagementId, engagementId),
+                eq(engagementNextSteps.revision, expectedRevision),
+              ),
+            )
+            .run();
+          if (updated.changes === 0) {
+            return failed({ code: "revision_conflict", currentRevision: expectedRevision });
+          }
+        }
+        const validated = EngagementNextStepRecordSchema.safeParse({
+          engagementId,
+          nextStep: parsed.data.nextStep,
+          updatedAt,
+          revision: nextRevision,
+        });
+        if (!validated.success) return failed({ code: "invalid_persisted_data" });
+        return { ok: true, value: validated.data };
       });
-      if (!validated.success) return failed({ code: "invalid_persisted_data" });
-      return { ok: true, value: validated.data };
     } catch (error) {
-      return failed({ code: isStorageBusy(error) ? "storage_busy" : "invalid_persisted_data" });
+      if (isStorageBusy(error)) return failed({ code: "storage_busy" });
+      if (isPrimaryKeyConflict(error)) {
+        const reread = this.getNextStep(engagementId);
+        if (reread.ok) {
+          return failed({ code: "revision_conflict", currentRevision: reread.value.revision });
+        }
+      }
+      return failed({ code: "invalid_persisted_data" });
     }
   }
 }

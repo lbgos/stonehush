@@ -63,6 +63,18 @@ const SEARCH_KINDS: readonly EngagementSearchResultKind[] = [
   "excerpt",
 ];
 
+/**
+ * Bounded search-result id. Raw values such as ffuf and probe URLs run up
+ * to 2048 chars while the result contract caps ids at 255; an overlong id
+ * would fail response validation and turn a valid search into a 500.
+ * Truncation keeps a length suffix so distinct long values stay distinct.
+ */
+export function boundedSearchId(prefix: string, raw: string): string {
+  const candidate = `${prefix}:${raw}`;
+  if (candidate.length <= 255) return candidate;
+  return `${candidate.slice(0, 220)}...${candidate.length}`;
+}
+
 /** Character offset of the match inside the notes text for `note:notes@<offset>`. */
 export function noteMatchAnchor(title: string, text: string, query: string): string {
   const match = findMatchOffset(`${title}\n${text}`, query);
@@ -198,7 +210,7 @@ export function registerEngagementSearchRoutes(
         for (const row of validatedFfuf.data.slice(0, 200)) {
           corpus.push({
             kind: "artifact",
-            id: `ffuf:${row.url}`,
+            id: boundedSearchId("ffuf", `${row.runId}:${row.fuzz}:${row.url}`),
             title: row.url,
             text: `${row.fuzz} ${row.status}`,
             anchor: ffufRowAnchor(row.runId, row.fuzz),
@@ -217,10 +229,10 @@ export function registerEngagementSearchRoutes(
         for (const probe of validatedProbes.data.slice(0, 200)) {
           corpus.push({
             kind: "hostname",
-            id: `probe:${probe.url}`,
+            id: boundedSearchId("probe", `${probe.runId}:${probe.url}`),
             title: probe.url,
             text: `${probe.url} ${probe.title ?? ""}`,
-            anchor: `probe:${probe.url}`,
+            anchor: `probe:${probe.runId}:${probe.artifactId}`,
           });
         }
       }

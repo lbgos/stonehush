@@ -30,7 +30,7 @@ export function SearchResultGroups({
             <h3 className="m-0 text-[12px] font-semibold capitalize text-foreground">{kind}</h3>
             <ul className="m-0 list-none space-y-1 p-0">
               {results.map((result) => (
-                <li key={`${result.kind}:${result.id}`}>
+                <li key={`${result.kind}:${result.id}:${result.anchor}`}>
                   <button
                     type="button"
                     onClick={() => onOpen(result.anchor)}

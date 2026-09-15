@@ -58,8 +58,11 @@ export function buildSnippet(text: string, matchIndex: number, matchLength: numb
  * Case-insensitive substring offset in code points (not UTF-16 units), so
  * snippet windows and note anchors stay exact on non-BMP text. Returns the
  * code-point index of the match start and the match length in code points,
- * or null when absent. Case expansion under lowercasing (e.g. Turkish dot)
- * stays approximate; astral-plane text is exact.
+ * or null when absent. Lowercasing can expand characters (e.g. U+0130),
+ * so the UTF-16 offset in the lowered string is mapped back through the
+ * original characters instead of being reused directly. Length-changing
+ * mappings are context-free in practice, which keeps this linear walk
+ * exact; context-sensitive rewrites stay approximate.
  */
 export function findMatchOffset(
   haystack: string,
@@ -69,8 +72,16 @@ export function findMatchOffset(
   if (trimmed.length === 0) return null;
   const utf16Index = haystack.toLowerCase().indexOf(trimmed);
   if (utf16Index < 0) return null;
+  let index = 0;
+  let consumed = 0;
+  for (const character of Array.from(haystack)) {
+    const next = consumed + character.toLowerCase().length;
+    if (next > utf16Index) break;
+    consumed = next;
+    index += 1;
+  }
   return {
-    index: Array.from(haystack.slice(0, utf16Index)).length,
+    index,
     length: Array.from(trimmed).length,
   };
 }

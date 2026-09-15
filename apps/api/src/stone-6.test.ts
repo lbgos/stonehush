@@ -337,4 +337,75 @@ describe("engagement search routes", () => {
     expect((await app.inject({ method: "GET", url: `/api/v1/engagements/${ENGAGEMENT_ID}/search?q=a&limit=5` })).statusCode).toBe(400);
     await app.close();
   });
+
+  it("bounds overlong ffuf and probe urls instead of failing the search", async () => {
+    const longPath = `admin-${"x".repeat(2000)}`;
+    const longUrl = `http://svc.example/${longPath}`;
+    const app = Fastify();
+    const deps = searchDeps();
+    registerEngagementSearchRoutes(app, {
+      ...deps,
+      ffuf: {
+        listForEngagement: (_id: string) => ({
+          ok: true as const,
+          value: [
+            {
+              source: "ffuf" as const,
+              parserVersion: "ffuf-json-v1" as const,
+              url: longUrl,
+              status: 200,
+              length: 512,
+              words: 40,
+              lines: 12,
+              redirectlocation: null,
+              fuzz: longPath,
+              runId: "run-9",
+              artifactId: "artifact-9",
+              artifactDigest:
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              observedAt: "2026-09-09T00:00:00.000Z",
+            },
+          ],
+        }),
+      },
+      probes: {
+        listForEngagement: (_id: string) => ({
+          ok: true as const,
+          value: [
+            {
+              source: "http-probe" as const,
+              parserVersion: "http-probe-raw-v1",
+              url: longUrl,
+              fetchedAt: "2026-09-09T00:00:00.000Z",
+              finalUrl: longUrl,
+              status: 200,
+              title: "admin page",
+              selectedHeaders: { contentType: null, server: null, poweredBy: null },
+              hops: [],
+              error: null,
+              runId: "run-9",
+              artifactId: "artifact-9",
+              artifactDigest:
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+              observedAt: "2026-09-09T00:00:00.000Z",
+            },
+          ],
+        }),
+      },
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/search?q=admin`,
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      groups: Record<string, { id: string; anchor: string; title: string }[]>;
+    };
+    for (const result of [...(body.groups["artifact"] ?? []), ...(body.groups["hostname"] ?? [])]) {
+      expect(result.id.length).toBeLessThanOrEqual(255);
+      expect(result.anchor.length).toBeLessThanOrEqual(500);
+      expect(result.title.length).toBeLessThanOrEqual(300);
+    }
+    await app.close();
+  });
 });

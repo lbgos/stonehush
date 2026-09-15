@@ -62,11 +62,7 @@ export function EngagementResumeView({
   archived: boolean;
 }) {
   const resume = useEngagementResumeQuery(engagementId);
-  const save = useSaveNextStepMutation(engagementId);
-  const [draft, setDraft] = useState<string | undefined>(undefined);
   const data = resume.data;
-  const revision = data?.nextStepRevision ?? 0;
-  const value = draft ?? data?.nextStep ?? "";
 
   return (
     <section aria-label="Resume" className="overflow-hidden rounded-[10px] border border-border bg-card">
@@ -83,56 +79,13 @@ export function EngagementResumeView({
         {resume.isError ? <RecoverableError title="Resume is unavailable." description="The resume request failed." onRetry={() => void resume.refetch()} /> : null}
         {data !== undefined ? (
           <>
-            <div className="grid gap-1">
-              <label htmlFor="engagement-next-step" className="text-[12px] font-medium text-foreground">
-                Next step, optional
-              </label>
-              <div className="flex gap-2">
-                <input
-                  id="engagement-next-step"
-                  type="text"
-                  value={value}
-                  maxLength={280}
-                  disabled={archived || save.isPending}
-                  placeholder="One sentence, e.g. probe port 8080 next."
-                  onChange={(event) => {
-                    setDraft(event.target.value);
-                    if (save.isError) save.reset();
-                  }}
-                  className="h-9 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-2 text-[12px] text-foreground"
-                />
-                <Button
-                  type="button"
-                  disabled={archived || save.isPending || value.trim().length === 0}
-                  onClick={() =>
-                    save.mutate(
-                      { nextStep: value.trim(), expectedRevision: revision },
-                      { onSuccess: () => setDraft(undefined) },
-                    )
-                  }
-                >
-                  Save
-                </Button>
-                {data.nextStep !== null ? (
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    disabled={archived || save.isPending}
-                    onClick={() => {
-                      save.mutate(
-                        { nextStep: null, expectedRevision: revision },
-                        { onSuccess: () => setDraft(undefined) },
-                      );
-                    }}
-                  >
-                    Clear
-                  </Button>
-                ) : null}
-              </div>
-              {save.isError ? (
-                <p className="m-0 text-[12px] leading-5 text-destructive">The next step was not saved. Try again.</p>
-              ) : null}
-            </div>
+            <NextStepEditor
+              key={engagementId}
+              engagementId={engagementId}
+              archived={archived}
+              nextStep={data.nextStep}
+              revision={data.nextStepRevision}
+            />
             <ResumeChangeList resume={data} />
             {data.complete === false ? (
               <p className="m-0 text-[11px] leading-5 text-muted-foreground">Showing the 200 most recent changes.</p>
@@ -141,5 +94,78 @@ export function EngagementResumeView({
         ) : null}
       </div>
     </section>
+  );
+}
+
+/**
+ * Next-step editor. Keyed by engagement so an unsaved draft never leaks
+ * into another engagement when the host switches without remounting.
+ */
+export function NextStepEditor({
+  engagementId,
+  archived,
+  nextStep,
+  revision,
+}: {
+  engagementId: string;
+  archived: boolean;
+  nextStep: string | null;
+  revision: number;
+}) {
+  const save = useSaveNextStepMutation(engagementId);
+  const [draft, setDraft] = useState<string | undefined>(undefined);
+  const value = draft ?? nextStep ?? "";
+
+  return (
+    <div className="grid gap-1">
+      <label htmlFor="engagement-next-step" className="text-[12px] font-medium text-foreground">
+        Next step, optional
+      </label>
+      <div className="flex gap-2">
+        <input
+          id="engagement-next-step"
+          type="text"
+          value={value}
+          maxLength={280}
+          disabled={archived || save.isPending}
+          placeholder="One sentence, e.g. probe port 8080 next."
+          onChange={(event) => {
+            setDraft(event.target.value);
+            if (save.isError) save.reset();
+          }}
+          className="h-9 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-2 text-[12px] text-foreground"
+        />
+        <Button
+          type="button"
+          disabled={archived || save.isPending || value.trim().length === 0}
+          onClick={() =>
+            save.mutate(
+              { nextStep: value.trim(), expectedRevision: revision },
+              { onSuccess: () => setDraft(undefined) },
+            )
+          }
+        >
+          Save
+        </Button>
+        {nextStep !== null ? (
+          <Button
+            type="button"
+            variant="quiet"
+            disabled={archived || save.isPending}
+            onClick={() => {
+              save.mutate(
+                { nextStep: null, expectedRevision: revision },
+                { onSuccess: () => setDraft(undefined) },
+              );
+            }}
+          >
+            Clear
+          </Button>
+        ) : null}
+      </div>
+      {save.isError ? (
+        <p className="m-0 text-[12px] leading-5 text-destructive">The next step was not saved. Try again.</p>
+      ) : null}
+    </div>
   );
 }

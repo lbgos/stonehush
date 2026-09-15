@@ -96,6 +96,12 @@ describe("search excludes secrets", () => {
     expect(findMatchOffset("nothing here", "admin")).toBe(null);
     expect(findMatchOffset("admin", "  ")).toBe(null);
   });
+
+  it("maps offsets back when lowercasing expands characters", () => {
+    // U+0130 lowercases to two UTF-16 units; the raw lowered offset would
+    // land one past the real match start.
+    expect(findMatchOffset("İ admin", "admin")).toEqual({ index: 2, length: 5 });
+  });
 });
 
 describe("ffuf grouping with hide and undo", () => {
@@ -156,8 +162,29 @@ describe("run diff truthfulness", () => {
     expect(diff.removedFromView.join(" ")).not.toMatch(/\b(is|was)\s+closed\b/i);
   });
 
-  it("marks incomplete sides as disproving nothing and refuses cross-tool compare", () => {
+  it("reports a path status change as changed, not new", () => {
     const diff = diffRuns({
+      before: {
+        context: { tool: "ffuf", origin: "http://10.0.0.1", optionsSummary: "default", binding: "b1" },
+        services: [],
+        responses: [],
+        paths: [{ url: "http://10.0.0.1/", status: 403, fuzz: "admin" }],
+        complete: true,
+      },
+      after: {
+        context: { tool: "ffuf", origin: "http://10.0.0.1", optionsSummary: "default", binding: "b1" },
+        services: [],
+        responses: [],
+        paths: [{ url: "http://10.0.0.1/", status: 200, fuzz: "admin" }],
+        complete: true,
+      },
+    });
+    expect(diff.newPaths).toHaveLength(0);
+    expect(diff.changedPaths).toHaveLength(1);
+    expect(diff.changedPaths[0]).toContain("was status 403, now status 200");
+  });
+
+  it("marks incomplete sides as disproving nothing and refuses cross-tool compare", () => {    const diff = diffRuns({
       before: {
         context: { tool: "nmap", origin: "10.0.0.1", optionsSummary: "a", binding: "b1" },
         services: [],

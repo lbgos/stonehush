@@ -25,7 +25,9 @@ export interface Stone6SlotContext {
 export type Stone6SlotMount = (context: Stone6SlotContext, host: HTMLElement) => () => void;
 
 const mounts = new Map<Stone6SlotName, Stone6SlotMount>();
-const activeCleanups = new Map<Stone6SlotName, Set<() => void>>();
+// Array, not a set: two mounts may legitimately return the same cleanup
+// identity, and every registration must run on unmount.
+const activeCleanups = new Map<Stone6SlotName, (() => void)[]>();
 
 export function registerStone6Slot(name: Stone6SlotName, mount: Stone6SlotMount): void {
   mounts.set(name, mount);
@@ -38,10 +40,10 @@ export function mountStone6Slot(name: Stone6SlotName, context: Stone6SlotContext
   const cleanup = mount(context, host);
   let cleanups = activeCleanups.get(name);
   if (cleanups === undefined) {
-    cleanups = new Set();
+    cleanups = [];
     activeCleanups.set(name, cleanups);
   }
-  cleanups.add(cleanup);
+  cleanups.push(cleanup);
   return true;
 }
 
@@ -49,6 +51,7 @@ export function mountStone6Slot(name: Stone6SlotName, context: Stone6SlotContext
 export function unmountStone6Slot(name: Stone6SlotName): void {
   const cleanups = activeCleanups.get(name);
   if (cleanups === undefined) return;
+  activeCleanups.delete(name);
   for (const cleanup of cleanups) {
     try {
       cleanup();
@@ -56,7 +59,6 @@ export function unmountStone6Slot(name: Stone6SlotName): void {
       // One failing cleanup never blocks the rest.
     }
   }
-  cleanups.clear();
 }
 
 export function registeredStone6Slots(): readonly Stone6SlotName[] {

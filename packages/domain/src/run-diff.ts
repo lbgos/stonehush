@@ -97,6 +97,7 @@ export interface RunDiff {
   readonly newResponses: string[];
   readonly changedResponses: string[];
   readonly newPaths: string[];
+  readonly changedPaths: string[];
   readonly caveats: string[];
 }
 
@@ -149,11 +150,17 @@ export function diffRuns(input: RunDiffInput): RunDiff {
     }
   }
 
-  const beforePaths = new Set(input.before.paths.map((path) => `${path.url}|${path.status}|${path.fuzz}`));
+  const beforePaths = new Map(input.before.paths.map((path) => [`${path.url}|${path.fuzz}`, path]));
   const newPaths: string[] = [];
+  const changedPaths: string[] = [];
   for (const path of input.after.paths) {
-    if (beforePaths.has(`${path.url}|${path.status}|${path.fuzz}`) === false) {
+    const prior = beforePaths.get(`${path.url}|${path.fuzz}`);
+    if (prior === undefined) {
       newPaths.push(`New path ${path.fuzz} at ${path.url}: status ${path.status}.`);
+    } else if (prior.status !== path.status) {
+      changedPaths.push(
+        `Changed path ${path.fuzz} at ${path.url}: was status ${prior.status}, now status ${path.status}.`,
+      );
     }
   }
 
@@ -178,6 +185,7 @@ export function diffRuns(input: RunDiffInput): RunDiff {
     newResponses,
     changedResponses,
     newPaths,
+    changedPaths,
     caveats,
   };
 }

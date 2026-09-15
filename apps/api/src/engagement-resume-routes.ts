@@ -96,6 +96,7 @@ export function registerEngagementResumeRoutes(
     if (!stored.ok) return sendRepositoryError(reply, stored.error);
 
     const inputs: ResumeChangeInput[] = [];
+    let truncated = false;
     try {
       const notes = deps.engagements.getEngagementNotes(engagementId);
       if (!notes.ok) return sendRepositoryError(reply, notes.error);
@@ -111,6 +112,7 @@ export function registerEngagementResumeRoutes(
       if (deps.engagements.listFindings !== undefined) {
         const findings = deps.engagements.listFindings(engagementId);
         if (!findings.ok) return sendRepositoryError(reply, findings.error);
+        if (findings.value.length > 50) truncated = true;
         for (const finding of findings.value.slice(0, 50)) {
           inputs.push({
             kind: "finding",
@@ -124,6 +126,7 @@ export function registerEngagementResumeRoutes(
       if (deps.runs !== undefined) {
         const runs = deps.runs.listRunsForEngagement(engagementId, { limit: 50 });
         if (!runs.ok) return sendRepositoryError(reply, runs);
+        if (runs.runs.length > 50) truncated = true;
         for (const run of runs.runs.slice(0, 50)) {
           inputs.push({
             kind: "run",
@@ -139,6 +142,7 @@ export function registerEngagementResumeRoutes(
         if (!services.ok) return sendRepositoryError(reply, services);
         const validatedServices = EngagementServicesResponseSchema.safeParse(services.value);
         if (!validatedServices.success) return sendResumeError(reply, 500, "invalid_persisted_data");
+        if (validatedServices.data.length > 50) truncated = true;
         for (const service of validatedServices.data.slice(0, 50)) {
           inputs.push({
             kind: "service",
@@ -154,6 +158,7 @@ export function registerEngagementResumeRoutes(
       }
       const scopes = deps.engagements.listScopeRevisions(engagementId);
       if (!scopes.ok) return sendRepositoryError(reply, scopes.error);
+      if (scopes.value.length > 20) truncated = true;
       for (const revision of scopes.value.slice(0, 20)) {
         inputs.push({
           kind: "scope",
@@ -176,7 +181,7 @@ export function registerEngagementResumeRoutes(
       nextStepUpdatedAt: stored.value.revision === 0 ? null : stored.value.updatedAt,
       nextStepRevision: stored.value.revision,
       changes: page.map((change) => EngagementResumeChangeSchema.parse(change)),
-      complete: visible.length <= RESUME_LIST_CAP,
+      complete: truncated === false && visible.length <= RESUME_LIST_CAP,
     });
     if (!validated.success) return sendResumeError(reply, 500, "invalid_persisted_data");
     return reply.code(200).type("application/json").send(validated.data);

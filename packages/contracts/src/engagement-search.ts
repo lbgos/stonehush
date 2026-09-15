@@ -31,9 +31,10 @@ export type EngagementSearchResultKind = z.infer<typeof EngagementSearchResultKi
  * Conventions per kind: `note:notes@<offset>` carries the character offset
  * of the match inside the notes text; `scope:<revisionId>:<ruleId>`
  * names the exact matched rule; `finding:<id>`, `service:<addr>:<port>`,
- * `probe:<url>`, and `artifact:<id>` name their entity; ffuf rows anchor as
+ * and `artifact:<id>` name their entity; ffuf rows anchor as
  * `run:<runId>:fuzz:<keyword>` so one run with many rows still opens the
- * exact row.
+ * exact row; probe rows anchor as `probe:<runId>:<artifactId>` (never the
+ * raw URL, which can exceed the anchor bound) so the exact evidence opens.
  */
 export const EngagementSearchResultSchema = z.strictObject({
   kind: EngagementSearchResultKindSchema,
@@ -48,7 +49,15 @@ export type EngagementSearchResult = z.infer<typeof EngagementSearchResultSchema
 
 export const EngagementSearchResponseSchema = z.strictObject({
   engagementId: EngagementSchema.shape.id,
-  query: z.string().min(1).max(ENGAGEMENT_SEARCH_QUERY_MAX_CHARS),
+  // Code-point bound, matching parseEngagementSearchQuery: Zod max() counts
+  // UTF-16 units, so a 120-emoji query would otherwise fail response
+  // validation with a 500 after passing request parsing.
+  query: z
+    .string()
+    .min(1)
+    .refine((value) => Array.from(value).length <= ENGAGEMENT_SEARCH_QUERY_MAX_CHARS, {
+      message: "must contain at most 120 Unicode code points",
+    }),
   groups: z.record(
     EngagementSearchResultKindSchema,
     z.array(EngagementSearchResultSchema).max(ENGAGEMENT_SEARCH_MAX_PER_GROUP),

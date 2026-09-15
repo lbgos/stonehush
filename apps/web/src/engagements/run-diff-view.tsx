@@ -66,6 +66,11 @@ export function RunDiffView({
             {line}
           </p>
         ))}
+        {diff.changedPaths.map((line) => (
+          <p key={line} className="m-0 text-foreground">
+            {line}
+          </p>
+        ))}
         {diff.caveats.map((line) => (
           <p key={line} className="m-0 text-[11px] text-muted-foreground">
             {line}

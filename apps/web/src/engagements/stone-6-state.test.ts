@@ -105,4 +105,14 @@ describe("extension slots", () => {
     unmountStone6Slot("engagement.resume");
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
+
+  it("runs duplicate cleanup identities once per mount", () => {
+    const host = document.createElement("div");
+    const cleanup = vi.fn();
+    registerStone6Slot("engagement.search", () => cleanup);
+    expect(mountStone6Slot("engagement.search", { engagementId: ENGAGEMENT_ID, archived: false }, host)).toBe(true);
+    expect(mountStone6Slot("engagement.search", { engagementId: ENGAGEMENT_ID, archived: false }, host)).toBe(true);
+    unmountStone6Slot("engagement.search");
+    expect(cleanup).toHaveBeenCalledTimes(2);
+  });
 });

@@ -6,6 +6,7 @@ import {
 } from "./engagement-resume.js";
 import {
   parseEngagementSearchQuery,
+  EngagementSearchResponseSchema,
 } from "./engagement-search.js";
 import { describeFfufRateSupport } from "./ffuf-wordlist.js";
 
@@ -41,6 +42,29 @@ describe("engagement-search contracts", () => {
     expect(parseEngagementSearchQuery({ q: "   " }).ok).toBe(false);
     expect(parseEngagementSearchQuery({}).ok).toBe(false);
     expect(parseEngagementSearchQuery({ q: "a", limit: "5" }).ok).toBe(false);
+  });
+
+  it("accepts a 120-emoji query end to end, counting code points", () => {
+    const query = "🛡".repeat(120);
+    const parsed = parseEngagementSearchQuery({ q: query });
+    expect(parsed).toEqual({ ok: true, value: { q: query } });
+    // The response schema must use the same code-point bound: a Zod
+    // UTF-16 max() would reject this query and turn search into a 500.
+    const response = EngagementSearchResponseSchema.safeParse({
+      engagementId: "10000000-0000-4000-8000-000000000001",
+      query,
+      groups: {
+        target: [],
+        hostname: [],
+        note: [],
+        lead: [],
+        finding: [],
+        artifact: [],
+        excerpt: [],
+      },
+      unindexedKinds: [],
+    });
+    expect(response.success).toBe(true);
   });
 });
 

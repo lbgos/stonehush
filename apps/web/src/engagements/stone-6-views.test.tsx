@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { ThemeProvider } from "@stonehush/ui";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createAppQueryClient } from "../query-client.js";
 import { FfufGroupView } from "./ffuf-group-view.js";
 import { FfufWordlistView } from "./ffuf-wordlist-view.js";
-import { ResumeChangeList } from "./resume-view.js";
+import { NextStepEditor, ResumeChangeList } from "./resume-view.js";
 import { RunDiffView } from "./run-diff-view.js";
 import { SearchResultGroups } from "./search-view.js";
 
@@ -48,6 +50,46 @@ describe("ResumeChangeList", () => {
     );
     expect(screen.getByText("snapshot")).toBeDefined();
     expect(screen.getByText("Run run-1 succeeded.")).toBeDefined();
+  });
+});
+
+describe("NextStepEditor", () => {
+  it("drops the unsaved draft when the engagement changes", () => {
+    const queryClient = createAppQueryClient();
+    const view = render(
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <NextStepEditor
+            key="eng-a"
+            engagementId="eng-a"
+            archived={false}
+            nextStep="Probe port 8080 next."
+            revision={1}
+          />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Next step, optional"), {
+      target: { value: "Unsaved draft for eng-a." },
+    });
+    expect(screen.getByDisplayValue("Unsaved draft for eng-a.")).toBeDefined();
+    // Host switches engagement: the keyed editor remounts instead of
+    // carrying the draft into the new engagement.
+    view.rerender(
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <NextStepEditor
+            key="eng-b"
+            engagementId="eng-b"
+            archived={false}
+            nextStep="Enumerate the new scope."
+            revision={0}
+          />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    expect(screen.getByDisplayValue("Enumerate the new scope.")).toBeDefined();
+    queryClient.clear();
   });
 });
 
