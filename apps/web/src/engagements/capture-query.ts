@@ -2,7 +2,7 @@ import {
   StoneCaptureListResponseSchema,
   type StoneCapture,
   type StoneCaptureKind,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const STONE_CAPTURES_QUERY_KEY = ["stone-captures"] as const;

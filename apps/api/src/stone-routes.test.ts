@@ -6,7 +6,7 @@ import {
   EngagementRepository,
   StoneTargetRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import Fastify from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 

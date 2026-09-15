@@ -1,4 +1,4 @@
-import type { StoneCommandRecipe, StoneCopyKind } from "@blackglass/contracts";
+import type { StoneCommandRecipe, StoneCopyKind } from "@stonehush/contracts";
 
 export const COPIED_NOT_RAN_NOTE = "Copied, not run.";
 
@@ -76,11 +76,4 @@ export function buildCopyText(
         ? { ok: false, missing: ["command"] }
         : { ok: true, text: snapshot.command };
   }
-}
-
-export async function copyResolvedText(
-  text: string,
-  write: (value: string) => Promise<void>,
-): Promise<void> {
-  await write(text);
 }

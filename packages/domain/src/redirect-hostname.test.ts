@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   decideRedirectHostnameAssociation,
-  findHostsFileEdits,
   proposeRedirectHostnameAssociation,
   REDIRECT_MAPPING_NEXT_STEP,
   REDIRECT_RUNNER_ONLY_NOTE,
@@ -37,18 +36,6 @@ describe("redirect hostname association", () => {
     });
     expect(decideRedirectHostnameAssociation("bogus", "2026-08-12T12:01:00.000Z").ok).toBe(
       false,
-    );
-  });
-
-  it("detects any silent hosts file edit plan", () => {
-    expect(
-      findHostsFileEdits([
-        { description: "Run nmap against the target" },
-        { description: "Silently edit /etc/hosts to add the hostname" },
-      ]),
-    ).toEqual(["Silently edit /etc/hosts to add the hostname"]);
-    expect(findHostsFileEdits([{ description: "Propose hostname association" }])).toEqual(
-      [],
     );
   });
 });

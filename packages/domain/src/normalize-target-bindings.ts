@@ -101,18 +101,3 @@ export function describeComparability(
   }
   return { comparable: false, reason: "binding_changed" };
 }
-
-export interface AutoMergeProbe {
-  readonly candidates: readonly string[];
-  readonly reason: "ip_reuse_never_merges";
-}
-
-// Machines never auto-merge by reused IP. Target identity is the target row,
-// never the address string, so a reset or reassigned address cannot fuse two
-// machines. This probe always returns zero candidates by rule.
-export function findAutoMergeCandidates(
-  _targetIds: readonly string[],
-  _candidateAddressText: string,
-): AutoMergeProbe {
-  return { candidates: [], reason: "ip_reuse_never_merges" };
-}

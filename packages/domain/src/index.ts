@@ -2,9 +2,7 @@ export { normalizeTarget } from "./normalize-target.js";
 export {
   currentBindingForActions,
   describeComparability,
-  findAutoMergeCandidates,
   planAddressChange,
-  type AutoMergeProbe,
   type BindingComparability,
   type PlanAddressChangeErrorCode,
   type PlanAddressChangeResult,
@@ -15,7 +13,6 @@ export {
   REDIRECT_MAPPING_NEXT_STEP,
   REDIRECT_RUNNER_ONLY_NOTE,
   decideRedirectHostnameAssociation,
-  findHostsFileEdits,
   proposeRedirectHostnameAssociation,
   type DecideRedirectHostnameResult,
   type ProposeRedirectHostnameErrorCode,
@@ -24,15 +21,10 @@ export {
 } from "./redirect-hostname.js";
 export {
   countNmapXmlServices,
-  describeNmapImportComparability,
-  planStoneImport,
   type CountNmapXmlServicesResult,
-  type StoneImportPlan,
 } from "./nmap-xml-import.js";
 export {
   countFfufJsonResults,
-  describeFfufImportComparability,
-  planFfufJsonImport,
   type CountFfufJsonResultsResult,
 } from "./ffuf-json-import.js";
 export {

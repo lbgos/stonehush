@@ -1,8 +1,4 @@
 import { parseFfufArtifactJson } from "./ffuf-json.js";
-import { describeComparability } from "./normalize-target-bindings.js";
-import { planStoneImport, type StoneImportPlan } from "./nmap-xml-import.js";
-
-export type { StoneImportPlan };
 
 export type CountFfufJsonResultsResult =
   | { ok: true; resultCount: number; truncated: boolean }
@@ -18,24 +14,4 @@ export function countFfufJsonResults(bytes: Uint8Array): CountFfufJsonResultsRes
     resultCount: parsed.output.results.length,
     truncated: parsed.output.truncated,
   };
-}
-
-export function planFfufJsonImport(input: {
-  contentDigest: string;
-  existingCaptureId: string | null;
-}): StoneImportPlan {
-  return planStoneImport(input);
-}
-
-export function describeFfufImportComparability(input: {
-  importedUrl: string;
-  currentOrigin: string | null;
-}): { comparable: boolean; reason: "same_binding" | "binding_changed" } {
-  if (input.currentOrigin !== null && input.importedUrl.startsWith(input.currentOrigin)) {
-    return describeComparability(
-      { addressText: input.currentOrigin, bindingKind: "hostname" },
-      { addressText: input.currentOrigin, bindingKind: "hostname" },
-    );
-  }
-  return { comparable: false, reason: "binding_changed" };
 }

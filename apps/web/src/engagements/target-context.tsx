@@ -3,8 +3,8 @@ import {
   formatRecordedSessionLabel,
   type StoneCopyKind,
   type StoneHostnameAssociation,
-} from "@blackglass/contracts";
-import { Button, cn } from "@blackglass/ui";
+} from "@stonehush/contracts";
+import { Button, cn } from "@stonehush/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
@@ -12,7 +12,6 @@ import { buildCopyText, COPIED_NOT_RAN_NOTE, resolveRecipeCopy } from "./target-
 import {
   changeStoneAddressRequest,
   decideStoneHostnameRequest,
-  fetchStoneBindings,
   proposeStoneHostnameRequest,
   stoneBindingsQueryKey,
   stoneTargetsQueryKey,
@@ -378,13 +377,6 @@ export function TargetContextPanel({
       </div>
     </section>
   );
-}
-
-export async function prefetchStoneBindingsForTarget(
-  engagementId: string,
-  targetId: string,
-): Promise<void> {
-  await fetchStoneBindings(engagementId, targetId);
 }
 
 // Extension slot consumed by STONE-2 workspace mounting after it merges.
