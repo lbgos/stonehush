@@ -162,8 +162,7 @@ describe("run diff truthfulness", () => {
     expect(diff.removedFromView.join(" ")).not.toMatch(/\b(is|was)\s+closed\b/i);
   });
 
-  it("reports a path status change as changed, not new", () => {
-    const diff = diffRuns({
+  it("reports a path status change as changed, not new", () => {    const diff = diffRuns({
       before: {
         context: { tool: "ffuf", origin: "http://10.0.0.1", optionsSummary: "default", binding: "b1" },
         services: [],
@@ -182,6 +181,28 @@ describe("run diff truthfulness", () => {
     expect(diff.newPaths).toHaveLength(0);
     expect(diff.changedPaths).toHaveLength(1);
     expect(diff.changedPaths[0]).toContain("was status 403, now status 200");
+  });
+
+  it("names titles when only the response title changes", () => {
+    const diff = diffRuns({
+      before: {
+        context: { tool: "http-probe", origin: "http://10.0.0.1", optionsSummary: "default", binding: "b1" },
+        services: [],
+        responses: [{ url: "http://10.0.0.1/", status: 200, title: "Old title" }],
+        paths: [],
+        complete: true,
+      },
+      after: {
+        context: { tool: "http-probe", origin: "http://10.0.0.1", optionsSummary: "default", binding: "b1" },
+        services: [],
+        responses: [{ url: "http://10.0.0.1/", status: 200, title: "New title" }],
+        paths: [],
+        complete: true,
+      },
+    });
+    expect(diff.changedResponses).toHaveLength(1);
+    expect(diff.changedResponses[0]).toContain("Old title");
+    expect(diff.changedResponses[0]).toContain("New title");
   });
 
   it("marks incomplete sides as disproving nothing and refuses cross-tool compare", () => {    const diff = diffRuns({

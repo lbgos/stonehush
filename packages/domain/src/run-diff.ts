@@ -145,7 +145,7 @@ export function diffRuns(input: RunDiffInput): RunDiff {
       newResponses.push(`New response observed at ${response.url}: status ${response.status ?? "unknown"}.`);
     } else if (prior.status !== response.status || (prior.title ?? null) !== (response.title ?? null)) {
       changedResponses.push(
-        `Changed response at ${response.url}: was status ${prior.status ?? "unknown"}, now status ${response.status ?? "unknown"}.`,
+        `Changed response at ${response.url}: was status ${prior.status ?? "unknown"} (${prior.title ?? "no title"}), now status ${response.status ?? "unknown"} (${response.title ?? "no title"}).`,
       );
     }
   }
