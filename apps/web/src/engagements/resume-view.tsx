@@ -143,12 +143,15 @@ export function NextStepEditor({
         <Button
           type="button"
           disabled={archived || save.isPending || value.trim().length === 0}
-          onClick={() =>
+          onClick={() => {
+            // Keep the submitted text visible until the refetch lands;
+            // falling back to the stale prop would resubmit old text.
+            const submitted = value.trim();
             save.mutate(
-              { nextStep: value.trim(), expectedRevision: effectiveRevision },
-              { onSuccess: (result) => { setDraft(undefined); setConfirmedRevision(result.revision); } },
-            )
-          }
+              { nextStep: submitted, expectedRevision: effectiveRevision },
+              { onSuccess: (result) => { setDraft(submitted); setConfirmedRevision(result.revision); } },
+            );
+          }}
         >
           Save
         </Button>
@@ -160,7 +163,7 @@ export function NextStepEditor({
             onClick={() => {
               save.mutate(
                 { nextStep: null, expectedRevision: effectiveRevision },
-                { onSuccess: (result) => { setDraft(undefined); setConfirmedRevision(result.revision); } },
+                { onSuccess: (result) => { setDraft(""); setConfirmedRevision(result.revision); } },
               );
             }}
           >

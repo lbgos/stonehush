@@ -128,7 +128,11 @@ export function registerEngagementResumeRoutes(
         const runs = deps.runs.listRunsForEngagement(engagementId, { limit: 50 });
         if (!runs.ok) return sendRepositoryError(reply, runs);
         if (runs.runs.length > 50) truncated = true;
-        // Recency for resume is the last update, not creation.
+        // Recency for resume is the last update, not creation. Known
+        // window: the store pages newest-created first, so a run created
+        // outside that window but updated recently is not listed. Widening
+        // that needs an updatedAt cursor in the run store, not a bigger
+        // cap here.
         const recentRuns = [...runs.runs]
           .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
           .slice(0, 50);

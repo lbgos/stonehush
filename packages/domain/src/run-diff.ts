@@ -109,6 +109,26 @@ export interface RunDiff {
 export function diffRuns(input: RunDiffInput): RunDiff {
   const comparability = checkRunDiffComparable(input.before.context, input.after.context);
   const contextNotes = contextDifferences(input.before.context, input.after.context);
+  if (comparability.comparable === false) {
+    // Different tool or origin: per-run observations are still factual on
+    // their own, but presenting them as change statements would mislead,
+    // so the diff carries only identity, context, and the refusal reason.
+    // Same-tool runs with different bindings or options still diff, with
+    // the context notes as the warning.
+    return {
+      comparable: false,
+      comparabilityReason: (comparability as { reason: string }).reason,
+      contextNotes,
+      newServices: [],
+      changedServices: [],
+      removedFromView: [],
+      newResponses: [],
+      changedResponses: [],
+      newPaths: [],
+      changedPaths: [],
+      caveats: [comparability.reason],
+    };
+  }
   const beforeServices = new Map(input.before.services.map((service) => [serviceKey(service), service]));
   const afterServices = new Map(input.after.services.map((service) => [serviceKey(service), service]));
   const newServices: string[] = [];
@@ -170,16 +190,13 @@ export function diffRuns(input: RunDiffInput): RunDiff {
   if (input.before.complete === false || input.after.complete === false) {
     caveats.push("One side is incomplete (cancelled, failed, or truncated). Absence here disproves nothing.");
   }
-  if (comparability.comparable === false) {
-    caveats.push(comparability.reason);
-  }
   if (contextNotes.length > 0) {
     caveats.push("Binding, option, port, or auth context differs; compare with that context in mind.");
   }
 
   return {
-    comparable: comparability.comparable,
-    comparabilityReason: comparability.comparable ? null : (comparability as { reason: string }).reason,
+    comparable: true,
+    comparabilityReason: null,
     contextNotes,
     newServices,
     changedServices,

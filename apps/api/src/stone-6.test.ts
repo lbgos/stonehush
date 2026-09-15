@@ -445,4 +445,63 @@ describe("engagement search routes", () => {
     }
     await app.close();
   });
+
+  it("anchors distinct long fuzz keywords apart", async () => {
+    const prefix = `admin-${"x".repeat(300)}`;
+    const app = Fastify();
+    const deps = searchDeps();
+    registerEngagementSearchRoutes(app, {
+      ...deps,
+      engagements: {
+        ...deps.engagements,
+        getEngagementNotes: (engagementId: string) => ({
+          ok: true as const,
+          value: {
+            engagementId,
+            markdown: "unrelated notes",
+            updatedAt: "2026-09-09T00:00:00.000Z",
+            revision: 1,
+          },
+        }),
+        listScopeRevisions: (_id: string) => ({ ok: true as const, value: [] as never[] }),
+        listFindings: (_id: string) => ({ ok: true as const, value: [] as never[] }),
+      },
+      services: { listForEngagement: (_id: string) => ({ ok: true as const, value: [] as never[] }) },
+      ffuf: {
+        listForEngagement: (_id: string) => ({
+          ok: true as const,
+          value: [`${prefix}-one`, `${prefix}-two`].map((fuzz, index) => ({
+            source: "ffuf" as const,
+            parserVersion: "ffuf-json-v1" as const,
+            url: `http://svc.example/${fuzz}`,
+            status: 200,
+            length: 512,
+            words: 40,
+            lines: 12,
+            redirectlocation: null,
+            fuzz,
+            runId: "run-9",
+            artifactId: `artifact-${String(index)}`,
+            artifactDigest:
+              "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            observedAt: "2026-09-09T00:00:00.000Z",
+          })),
+        }),
+      },
+      probes: { listForEngagement: (_id: string) => ({ ok: true as const, value: [] as never[] }) },
+      artifacts: { listArtifactsForEngagement: (_id: string) => ({ ok: true as const, artifacts: [] as never[] }) },
+    });
+    const response = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/search?q=admin`,
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      groups: Record<string, { id: string; anchor: string }[]>;
+    };
+    const anchors = (body.groups["artifact"] ?? []).map((result) => result.anchor);
+    expect(anchors).toHaveLength(2);
+    expect(new Set(anchors).size).toBe(2);
+    await app.close();
+  });
 });

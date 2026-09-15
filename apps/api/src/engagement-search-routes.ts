@@ -85,14 +85,28 @@ export function noteMatchAnchor(title: string, text: string, query: string): str
 }
 
 /**
+ * FNV-1a 32-bit hash rendered as 8 hex chars. Content discriminator for
+ * anchors: two distinct fuzz keywords sharing a 200-char prefix and total
+ * length still anchor apart.
+ */
+export function fuzzAnchorHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/**
  * Exact ffuf row anchor. The fuzz keyword names the row within its run,
- * capped so the anchor always fits the 500-char contract bound. Rows
- * sharing a 200-char fuzz prefix are disambiguated by total length, so
- * distinct rows never collapse to one anchor.
+ * capped so the anchor always fits the 500-char contract bound. Long
+ * keywords keep a 180-char prefix plus total length and a content hash,
+ * so distinct rows never collapse to one anchor.
  */
 export function ffufRowAnchor(runId: string, fuzz: string): string {
   if (fuzz.length <= 200) return `run:${runId}:fuzz:${fuzz}`;
-  return `run:${runId}:fuzz:${fuzz.slice(0, 200)}...${fuzz.length}`;
+  return `run:${runId}:fuzz:${fuzz.slice(0, 180)}...${fuzz.length}:${fuzzAnchorHash(fuzz)}`;
 }
 
 /**

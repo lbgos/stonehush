@@ -209,14 +209,14 @@ describe("run diff truthfulness", () => {
     expect(diff.changedResponses[0]).toContain("Old title");
     expect(diff.changedResponses[0]).toContain("New title");
   });
-
-  it("marks incomplete sides as disproving nothing and refuses cross-tool compare", () => {    const diff = diffRuns({
+  it("refuses cross-tool compare without presenting observations as changes", () => {
+    const diff = diffRuns({
       before: {
         context: { tool: "nmap", origin: "10.0.0.1", optionsSummary: "a", binding: "b1" },
-        services: [],
+        services: [{ address: "10.0.0.1", port: 80, protocol: "tcp", serviceName: "http" }],
         responses: [],
         paths: [],
-        complete: false,
+        complete: true,
       },
       after: {
         context: { tool: "ffuf", origin: "http://10.0.0.1", optionsSummary: "a", binding: "b1" },
@@ -227,6 +227,29 @@ describe("run diff truthfulness", () => {
       },
     });
     expect(diff.comparable).toBe(false);
+    expect(diff.newServices).toHaveLength(0);
+    expect(diff.removedFromView).toHaveLength(0);
+    expect(diff.comparabilityReason).toContain("Different tools");
+  });
+
+  it("marks incomplete sides as disproving nothing", () => {
+    const diff = diffRuns({
+      before: {
+        context: { tool: "nmap", origin: "10.0.0.1", optionsSummary: "a", binding: "b1" },
+        services: [],
+        responses: [],
+        paths: [],
+        complete: false,
+      },
+      after: {
+        context: { tool: "nmap", origin: "10.0.0.1", optionsSummary: "a", binding: "b1" },
+        services: [],
+        responses: [],
+        paths: [],
+        complete: true,
+      },
+    });
+    expect(diff.comparable).toBe(true);
     expect(diff.caveats.join(" ")).toContain("disproves nothing");
   });
 });
