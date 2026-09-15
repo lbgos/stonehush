@@ -1,5 +1,27 @@
 export { normalizeTarget } from "./normalize-target.js";
 export {
+  anonymousConditionsMatch,
+  buildLeadOutline,
+  citeParkReasonForRevisit,
+  isServiceTestedBySecret,
+  LEAD_CITED_REASON_MAX_CHARS,
+  resolveAttemptLeadLink,
+  suggestLeadRevisit,
+  transitionLeadDisposition,
+  type AttemptLeadLink,
+  type LeadTransition,
+  type LeadTransitionErrorCode,
+  type LeadTransitionResult,
+  type RevisitSuppressReason,
+  type RevisitTriggerInput,
+  type SuggestRevisitResult,
+} from "./leads.js";
+export {
+  SECRET_DISPLAY_MASK,
+  SECRET_STORAGE_COPY,
+  proofHintForValue,
+} from "./secret-redact.js";
+export {
   acceptHeartbeat,
   calculateSelfFenceDeadline,
   evaluateRunEventSequence,

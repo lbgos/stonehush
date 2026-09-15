@@ -208,6 +208,7 @@ describe("engagement tab resolution", () => {
     expect(resolveEngagementTab("runs")).toBe("runs");
     expect(resolveEngagementTab("notes")).toBe("notes");
     expect(resolveEngagementTab("findings")).toBe("findings");
+    expect(resolveEngagementTab("leads")).toBe("leads");
     expect(resolveEngagementTab("report")).toBe("report");
   });
 });
@@ -265,6 +266,33 @@ describe("engagement tabs", () => {
     ).toBe("page");
     expect(screen.queryByRole("heading", { name: "Attack surface" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "New finding" })).toBeNull();
+  });
+
+  it("renders the leads, objectives, and secrets sections from the URL", async () => {
+    stubFetch((url, init) => {
+      if (init?.method !== undefined && init.method !== "GET") {
+        return response({ code: "invalid_request" }, 400);
+      }
+      if (
+        url.endsWith("/leads") ||
+        url.endsWith("/objectives") ||
+        url.endsWith("/secrets")
+      ) {
+        return response([]);
+      }
+      return baseStubResponse(url) ?? response({ code: "invalid_request" }, 400);
+    });
+
+    await renderTabs(`/engagements/${activeEngagement.id}?tab=leads`);
+
+    expect(await screen.findByRole("heading", { name: "New lead" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "New objective" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "New secret" })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Leads" }).getAttribute("aria-current"),
+    ).toBe("page");
+    expect(screen.queryByRole("heading", { name: "Attack surface" })).toBeNull();
+    expect(screen.queryByLabelText("Markdown")).toBeNull();
   });
 
   it("renders the findings panel from the URL", async () => {

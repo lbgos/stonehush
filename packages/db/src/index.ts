@@ -66,6 +66,25 @@ export {
   type RunnerResult,
 } from "./runner.js";
 export { NmapServiceRepository } from "./nmap-service.js";
+export {
+  LeadRepository,
+  type LeadRepositoryError,
+  type LeadRepositoryProviders,
+  type LeadResult,
+} from "./leads.js";
+export {
+  ObjectiveRepository,
+  digestProofValue,
+  type ObjectiveRepositoryError,
+  type ObjectiveRepositoryProviders,
+  type ObjectiveResult,
+} from "./objectives.js";
+export {
+  SecretRepository,
+  type SecretRepositoryError,
+  type SecretRepositoryProviders,
+  type SecretResult,
+} from "./secrets.js";
 export { SettingsRepository } from "./settings.js";
 export type {
   SettingsRepositoryError,
@@ -107,7 +126,10 @@ export {
   ffufResults,
   findings,
   httpProbeResults,
+  leadAttempts,
+  leads,
   nmapServices,
+  objectives,
   operatorCommandIdempotency,
   runEvents,
   runLeases,
@@ -116,5 +138,7 @@ export {
   runnerSessions,
   runs,
   scopeRevisions,
+  secretVerifications,
+  secrets,
   settings,
 } from "./schema.js";
