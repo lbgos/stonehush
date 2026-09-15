@@ -22,6 +22,11 @@ import { AdvisorPanel } from "../advisor/advisor-panel.js";
 import { EngagementDeadlineSection } from "./deadline.js";
 import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
+import {
+  EngagementLeadsSection,
+  EngagementObjectivesSection,
+  EngagementSecretsSection,
+} from "./leads.js";
 import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
 import { RunHistoryPanel } from "./run-history-panel.js";
@@ -41,6 +46,7 @@ export const ENGAGEMENT_TABS = [
   { id: "runs", label: "Runs" },
   { id: "notes", label: "Notes" },
   { id: "findings", label: "Findings" },
+  { id: "leads", label: "Leads" },
   { id: "report", label: "Report" },
 ] as const;
 
@@ -528,6 +534,26 @@ function EngagementDetail({
               }
             : {})}
         />
+      ) : null}
+
+      {activeTab === "leads" ? (
+        <div className="mt-5">
+          <EngagementLeadsSection
+            key={`leads-${displayed.id}`}
+            archived={archived}
+            engagementId={displayed.id}
+          />
+          <EngagementObjectivesSection
+            key={`objectives-${displayed.id}`}
+            archived={archived}
+            engagementId={displayed.id}
+          />
+          <EngagementSecretsSection
+            key={`secrets-${displayed.id}`}
+            archived={archived}
+            engagementId={displayed.id}
+          />
+        </div>
       ) : null}
 
       {activeTab === "report" ? (

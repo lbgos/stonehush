@@ -225,6 +225,17 @@ describe("lead routes", () => {
     await app.close();
   });
 
+  it("closes without a note when no body is sent", async () => {
+    const app = buildStubApp();
+    const closed = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/leads/${LEAD_ID}/close`,
+    });
+    expect(closed.statusCode).toBe(200);
+    expect(closed.json()).toMatchObject({ disposition: "closed" });
+    await app.close();
+  });
+
   it("records attempts with shared evidence and renders the outline", async () => {
     const app = buildStubApp();
     const recorded = await app.inject({

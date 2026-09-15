@@ -138,4 +138,30 @@ describe("secret persistence", () => {
     ).toBe(false);
     expect(secrets.listSecrets(engagementId).ok).toBe(true);
   });
+
+  it("refuses the 65th verification so the secret stays readable", () => {
+    const { secrets, engagementId } = createFixture();
+    const created = secrets.createSecret(engagementId, {
+      label: "SSH password",
+      serviceRef: "192.0.2.10:22/ssh",
+      secretRef: "vault:stone/lab-app-ssh",
+    });
+    if (!created.ok) throw new Error("setup failed");
+    for (let attempt = 1; attempt <= 64; attempt += 1) {
+      const recorded = secrets.recordVerification(engagementId, created.value.id, {
+        result: "verified",
+        method: `check ${attempt}`,
+      });
+      if (!recorded.ok) throw new Error(`verification ${attempt} failed`);
+    }
+    const overflow = secrets.recordVerification(engagementId, created.value.id, {
+      result: "verified",
+      method: "one too many",
+    });
+    expect(overflow.ok).toBe(false);
+    const readable = secrets.getSecret(engagementId, created.value.id);
+    expect(readable.ok).toBe(true);
+    if (!readable.ok) return;
+    expect(readable.value.verifications).toHaveLength(64);
+  });
 });

@@ -4,6 +4,7 @@ import {
   CreateSecretRequestSchema,
   RecordSecretVerificationRequestSchema,
   SECRET_CONTRACT_VERSION,
+  SECRET_VERIFICATIONS_MAX,
   SecretSchema,
   type Secret,
 } from "@stonehush/contracts";
@@ -202,7 +203,11 @@ export class SecretRepository {
 
   // Verification records an outcome for this service only. Nothing here marks
   // any other service tested; service scoping is structural, one row per
-  // service-scoped secret.
+  // service-scoped secret. History is capped at SECRET_VERIFICATIONS_MAX: the
+  // read contract rejects longer histories, so the 65th write is refused
+  // instead of persisting a secret that no read can return. Both writes run
+  // in one transaction so a failed timestamp update never leaves a durable
+  // verification behind an error.
   recordVerification(
     engagementId: string,
     secretId: string,
@@ -215,26 +220,31 @@ export class SecretRepository {
     if (status.value === "archived") return failed({ code: "engagement_archived" });
     const row = this.readSecretRow(engagementId, secretId);
     if (!row.ok) return row;
+    const existing = this.verificationsFor(engagementId, secretId);
+    if (!existing.ok) return existing;
+    if (existing.value.length >= SECRET_VERIFICATIONS_MAX) {
+      return failed({ code: "invalid_repository_input" });
+    }
     const timestamp = this.now().toISOString();
     try {
-      this.db
-        .insert(secretVerifications)
-        .values({
-          id: this.createId(),
-          contractVersion: SECRET_CONTRACT_VERSION,
-          engagementId,
-          secretId,
-          result: parsed.data.result,
-          method: parsed.data.method,
-          note: parsed.data.note ?? null,
-          createdAt: timestamp,
-        })
-        .run();
-      this.db
-        .update(secrets)
-        .set({ updatedAt: timestamp })
-        .where(eq(secrets.id, secretId))
-        .run();
+      this.db.transaction((tx) => {
+        tx.insert(secretVerifications)
+          .values({
+            id: this.createId(),
+            contractVersion: SECRET_CONTRACT_VERSION,
+            engagementId,
+            secretId,
+            result: parsed.data.result,
+            method: parsed.data.method,
+            note: parsed.data.note ?? null,
+            createdAt: timestamp,
+          })
+          .run();
+        tx.update(secrets)
+          .set({ updatedAt: timestamp })
+          .where(eq(secrets.id, secretId))
+          .run();
+      });
     } catch (error) {
       return failed({ code: isStorageBusy(error) ? "storage_busy" : "invalid_persisted_data" });
     }
