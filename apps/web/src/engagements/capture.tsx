@@ -139,7 +139,7 @@ export function CaptureView({
       setMessage(
         result.deduplicated
           ? `References existing capture ${result.capture.id}. No duplicate facts created.`
-          : `Captured as pasted. User-supplied details stay separate from runner-recorded facts.`,
+          : `Captured as ${kind === "screenshot" ? "screenshot" : "file"}. User-supplied details stay separate from runner-recorded facts.`,
       );
       await captures.refetch();
     } catch {
@@ -165,8 +165,6 @@ export function CaptureView({
                 kind: importArtifact === "nmap-xml" ? "nmap_xml" : "ffuf_json",
                 targetLabel,
               }),
-        command: command.trim().length > 0 ? command.trim() : undefined,
-        observation: observation.trim().length > 0 ? observation.trim() : undefined,
         contentText: importContent,
       });
       setMessage(
