@@ -3,6 +3,7 @@ import { z } from "zod";
 import { EngagementSchema } from "./engagement.js";
 
 export const SECRET_CONTRACT_VERSION = 1 as const;
+export const SECRET_VERIFICATIONS_MAX = 64 as const;
 
 function hasCodePointLength(value: string, minimum: number, maximum: number): boolean {
   const length = Array.from(value).length;
@@ -72,7 +73,7 @@ export const SecretSchema = z.strictObject({
       message: "must contain between 1 and 64 Unicode code points",
     })
     .nullable(),
-  verifications: z.array(SecretVerificationSchema).max(64),
+  verifications: z.array(SecretVerificationSchema).max(SECRET_VERIFICATIONS_MAX),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

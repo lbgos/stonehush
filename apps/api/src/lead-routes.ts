@@ -169,7 +169,7 @@ export function registerLeadRoutes(
       async (request, reply) => {
         const params = LeadIdParamsSchema.safeParse(request.params);
         if (!params.success) return sendMutationError(reply, 400, "invalid_request");
-        const body = schema.safeParse(request.body);
+        const body = schema.safeParse(request.body ?? {});
         if (!body.success) return sendMutationError(reply, 400, "invalid_request");
         let result: ReturnType<LeadRoutesRepository["parkLead"]>;
         try {

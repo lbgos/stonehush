@@ -129,10 +129,13 @@ function suppressed(reason: RevisitSuppressReason): SuggestRevisitResult {
   return { ok: false, error: { code: "revisit_suppressed", reason } };
 }
 
-// Exactly one quiet revisit suggestion per parked lead. New access, hostname,
-// or service changes produce at most one suggestion carrying a reason; the
-// lead disposition is never changed here. Identical anonymous checks against
-// preserved tested conditions are suppressed, never re-suggested.
+// At most one outstanding quiet revisit suggestion per parked lead. New
+// access, hostname, or service changes produce at most one suggestion
+// carrying a reason; the lead disposition is never changed here. A dismissed
+// suggestion may be replaced by a later event carrying new information, so
+// dismissal stays a review action instead of a permanent mute. Identical
+// anonymous checks against preserved tested conditions are suppressed, never
+// re-suggested.
 export function suggestLeadRevisit(
   lead: Pick<Lead, "disposition" | "testedConditions" | "revisitSuggestion">,
   input: RevisitTriggerInput,

@@ -258,7 +258,12 @@ function LeadsBody({
       </div>
 
       {selected !== null ? (
-        <LeadDetail archived={archived} engagementId={engagementId} lead={selected} />
+        <LeadDetail
+          key={selected.id}
+          archived={archived}
+          engagementId={engagementId}
+          lead={selected}
+        />
       ) : null}
 
       <div className="border border-border">
@@ -480,7 +485,14 @@ function LeadDetail({
             <Skeleton className="h-10 w-full" />
           </LoadingRegion>
         ) : null}
-        {records.length === 0 && !attempts.isFetching ? (
+        {records.length === 0 && attempts.isError ? (
+          <RecoverableError
+            title="Attempts unavailable"
+            description="The attempt history could not be loaded from the local control plane."
+            onRetry={() => void attempts.refetch()}
+          />
+        ) : null}
+        {records.length === 0 && !attempts.isFetching && !attempts.isError ? (
           <p className="m-0 text-[12px] text-muted-foreground">No attempts recorded.</p>
         ) : (
           <ul className="m-0 grid list-none gap-2 p-0">
@@ -502,7 +514,14 @@ function LeadDetail({
         )}
       </div>
 
-      {outline.data !== undefined && outline.data.length > 0 ? (
+      {outline.isError ? (
+        <RecoverableError
+          title="Outline unavailable"
+          description="The chain outline could not be loaded from the local control plane."
+          onRetry={() => void outline.refetch()}
+        />
+      ) : null}
+      {!outline.isError && outline.data !== undefined && outline.data.length > 0 ? (
         <div>
           <h4 className="m-0 mb-2 text-[12px] font-semibold">Chain outline</h4>
           <pre className="m-0 overflow-x-auto border border-border px-2.5 py-2 font-mono text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
