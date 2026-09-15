@@ -28,7 +28,12 @@ describe("engagement-resume contracts", () => {
     expect(parseEngagementResumeQuery({})).toEqual({ ok: true, value: {} });
     const parsed = parseEngagementResumeQuery({ since: "2026-09-01T00:00:00.000Z" });
     expect(parsed.ok).toBe(true);
+    expect(parseEngagementResumeQuery({ since: "2026-09-01T00:00:00+02:00" }).ok).toBe(true);
     expect(parseEngagementResumeQuery({ since: "not-a-date" }).ok).toBe(false);
+    // Date-only and local-time values parse under Date.parse but are not
+    // unambiguous instants, so the strict parser rejects them.
+    expect(parseEngagementResumeQuery({ since: "2026-09-01" }).ok).toBe(false);
+    expect(parseEngagementResumeQuery({ since: "2026-09-01T00:00:00" }).ok).toBe(false);
     expect(parseEngagementResumeQuery({ since: "2026-09-01T00:00:00.000Z", extra: "1" }).ok).toBe(false);
   });
 });

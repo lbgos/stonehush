@@ -144,8 +144,12 @@ export function registerEngagementSearchRoutes(
         if (scopes.error.code === "storage_busy") return sendSearchError(reply, 503, "storage_busy");
         return sendSearchError(reply, 500, "invalid_persisted_data");
       }
-      for (const revision of scopes.value) {
-        for (const rule of revision.rules) {
+      // Newest revisions first, bounded: the corpus is scanned synchronously
+      // per request, so an unbounded revision history would block the event
+      // loop while response groups stay capped at 10 per kind.
+      const recentScopes = scopes.value.slice(-20);
+      for (const revision of recentScopes) {
+        for (const rule of revision.rules.slice(0, 100)) {
           const label = scopeRuleLabel(rule);
           const ruleId = boundedSearchId("scope", `${revision.id}:${rule.id}`);
           corpus.push({

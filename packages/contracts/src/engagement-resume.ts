@@ -119,6 +119,20 @@ export function parseEngagementResumeQuery(
   if (typeof raw !== "string" || raw.length === 0 || raw.length > 64) {
     return { ok: false };
   }
-  if (Number.isNaN(Date.parse(raw))) return { ok: false };
+  if (!isStrictIsoDatetime(raw)) return { ok: false };
   return { ok: true, value: { since: raw } };
+}
+
+/**
+ * ISO 8601 datetime with an explicit timezone, mirroring z.iso.datetime:
+ * date-only and local-time values are rejected so the resume threshold is
+ * always one unambiguous instant, never an implementation-defined parse.
+ */
+function isStrictIsoDatetime(value: string): boolean {
+  if (
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})$/.test(value) === false
+  ) {
+    return false;
+  }
+  return Number.isNaN(Date.parse(value)) === false;
 }

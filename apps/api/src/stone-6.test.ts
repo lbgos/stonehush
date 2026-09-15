@@ -175,6 +175,18 @@ describe("engagement resume routes", () => {
     await app.close();
   });
 
+  it("rejects non-ISO since values", async () => {
+    const app = Fastify();
+    registerEngagementResumeRoutes(app, resumeDeps());
+    expect(
+      (await app.inject({ method: "GET", url: `/api/v1/engagements/${ENGAGEMENT_ID}/resume?since=2026-09-01` })).statusCode,
+    ).toBe(400);
+    expect(
+      (await app.inject({ method: "GET", url: `/api/v1/engagements/${ENGAGEMENT_ID}/resume?since=2026-09-01T00:00:00` })).statusCode,
+    ).toBe(400);
+    await app.close();
+  });
+
   it("filters the change list by last visit without fabricating entries", async () => {
     const app = Fastify();
     registerEngagementResumeRoutes(app, resumeDeps());
