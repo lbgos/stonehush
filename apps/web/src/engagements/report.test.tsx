@@ -347,6 +347,34 @@ describe("engagement report", () => {
     clickSpy.mockRestore();
   });
 
+  it("honors the sharing toggle in the outline preview", async () => {
+    const secretBody = "password=synthetic-outline-001";
+    const bundle: ReportBundle = {
+      ...bundleFixture(),
+      findings: [
+        {
+          ...bundleFixture().findings[0]!,
+          body: `impact ${secretBody}`,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(response(bundle))),
+    );
+    renderSection();
+    expect(await screen.findByText(/1 findings/)).toBeTruthy();
+
+    const outlinePreview = () =>
+      document.querySelectorAll("section[aria-label='Report'] pre")[1]?.textContent ?? "";
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => expect(outlinePreview()).toContain("Default credentials"));
+    expect(outlinePreview()).not.toContain(secretBody);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show original" }));
+    await waitFor(() => expect(outlinePreview()).toContain(secretBody));
+  });
+
   it("resets the mask toggle when switching engagements", async () => {
     const engagementB = "10000000-0000-4000-8000-000000000002";
     const bundleA: ReportBundle = {

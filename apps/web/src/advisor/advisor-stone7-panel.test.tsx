@@ -194,6 +194,20 @@ describe("advisor stone-7 panel", () => {
     expect(heading.closest("div")?.textContent).toContain("Sources: artifact artifact-1");
   });
 
+  it("rejects finding prefill titles outside 1 to 120 characters", async () => {
+    await renderStonePanel([succeededTurn()]);
+    const panel = screen.getByRole("dialog");
+    const pinButtons = await within(panel).findAllByRole("button", { name: "Pin to lead" });
+    fireEvent.click(pinButtons[0] as HTMLElement);
+    fireEvent.click(await within(panel).findByRole("button", { name: "Prefill finding" }));
+    const titleBox = within(panel).getByLabelText("Title (correctable)") as HTMLInputElement;
+    fireEvent.change(titleBox, { target: { value: `${"x".repeat(121)}` } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Create finding" }));
+    expect(
+      await within(panel).findByText("Title is required (1 to 120 characters)."),
+    ).toBeDefined();
+  });
+
   it("renders supported checks as prefilled actions, never prose buttons", async () => {
     await renderStonePanel([succeededTurn()]);
     const panel = screen.getByRole("dialog");

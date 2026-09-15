@@ -298,6 +298,29 @@ describe("sharing preview", () => {
     expect(preview.excluded.join("\n")).not.toContain("asset links excluded");
   });
 
+  it("leaves original text alone when secret masking is off", () => {
+    const token = "token: sk-abcdef123456";
+    const bundle: ReportBundle = {
+      ...bundleFixture(),
+      findings: [findingFixture({ body: `Login succeeded. ${token}` })],
+    };
+    const outline = addOutlineItem(createOutline(), {
+      kind: "finding",
+      refId: FINDING_ID,
+      caption: "Default credentials",
+    });
+    const masked = buildSharingPreview({ bundle, outline });
+    const original = buildSharingPreview({
+      bundle,
+      outline,
+      options: { maskSecrets: false },
+    });
+    expect(masked.maskedFields).toBeGreaterThan(0);
+    expect(original.maskedFields).toBe(0);
+    expect(original.markdown).toContain(token);
+    expect(masked.markdown).not.toContain(token);
+  });
+
   it("builds a portable bundle distinct from the client report", () => {
     const bundle = bundleFixture();
     const outline = addOutlineItem(createOutline(), {

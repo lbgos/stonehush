@@ -197,6 +197,22 @@ describe("pin with citations", () => {
     expect(draft.findingIds).toEqual([]);
   });
 
+  it("keeps service and probe citations in pinned drafts", () => {
+    const cited = {
+      text: "The login form is on 10.0.0.5:80.",
+      citations: [
+        { raw: "10.0.0.5:80", valid: true, kind: "service" as const },
+        { raw: "http://10.0.0.5/", valid: true, kind: "probe" as const },
+      ],
+    };
+    const note = pinParagraphToNote(cited, "What shows?");
+    expect(note.body).toContain("service 10.0.0.5:80");
+    expect(note.body).toContain("probe http://10.0.0.5/");
+    const lead = pinParagraphToLead(cited, "What shows?");
+    expect(lead.serviceIds).toEqual(["10.0.0.5:80"]);
+    expect(lead.probeIds).toEqual(["http://10.0.0.5/"]);
+  });
+
   it("prefills supported checks and refuses prose", () => {
     const runnable = toPrefilledAction("nmap -sV 10.0.0.5");
     expect(runnable.ok).toBe(true);

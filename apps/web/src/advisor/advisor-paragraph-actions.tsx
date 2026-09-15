@@ -189,6 +189,8 @@ function LeadDraftCard({
     "",
     `Evidence artifacts: ${draft.artifactIds.join(", ") || "none"}`,
     `Evidence findings: ${draft.findingIds.join(", ") || "none"}`,
+    `Evidence services: ${draft.serviceIds.join(", ") || "none"}`,
+    `Evidence probes: ${draft.probeIds.join(", ") || "none"}`,
   ].join("\n");
   return (
     <div className="mt-1 w-full rounded-md border border-border px-2 py-1.5">
@@ -235,10 +237,14 @@ function FindingPrefillCard({
   const [scannerObservation, setScannerObservation] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
-  function buildInput(): CreateFindingInput {
+  function buildInput(): CreateFindingInput | undefined {
+    const trimmedTitle = title.trim();
+    if (trimmedTitle.length === 0 || Array.from(trimmedTitle).length > 120) {
+      return undefined;
+    }
     const lead: LeadRef = {
       id: "advisor-pin",
-      title,
+      title: trimmedTitle,
       narrative,
       confidence: null,
       source: scannerObservation ? "scanner" : "operator",
@@ -255,11 +261,12 @@ function FindingPrefillCard({
 
   function handleCreate() {
     setError(undefined);
-    if (title.trim().length === 0) {
-      setError("Title is required.");
+    const input = buildInput();
+    if (input === undefined) {
+      setError("Title is required (1 to 120 characters).");
       return;
     }
-    create.mutate(buildInput(), {
+    create.mutate(input, {
       onError: () => setError("The finding could not be created."),
     });
   }
