@@ -202,13 +202,14 @@ export function CaptureView({
           <span>Title</span>
           <input
             id="stone-capture-title"
+            disabled={busy}
             className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground md:min-h-8"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
         </label>
         <div>
-          <Button type="button" variant="quiet" onClick={onProposeTitle}>
+          <Button type="button" variant="quiet" disabled={busy} onClick={onProposeTitle}>
             Propose title
           </Button>
         </div>
@@ -216,6 +217,7 @@ export function CaptureView({
           <span>Command, optional</span>
           <input
             id="stone-capture-command"
+            disabled={busy}
             className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 font-mono text-[13px] text-foreground md:min-h-8"
             value={command}
             onChange={(event) => setCommand(event.target.value)}
@@ -225,6 +227,7 @@ export function CaptureView({
           <span>Observation, one line, optional</span>
           <input
             id="stone-capture-observation"
+            disabled={busy}
             className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground md:min-h-8"
             value={observation}
             onChange={(event) => setObservation(event.target.value)}
@@ -234,6 +237,7 @@ export function CaptureView({
           <span>Terminal output</span>
           <textarea
             id="stone-capture-content"
+            disabled={busy}
             className="min-h-24 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground"
             value={content}
             onChange={(event) => setContent(event.target.value)}
@@ -269,6 +273,7 @@ export function CaptureView({
           <span>Artifact</span>
           <select
             id="stone-import-artifact"
+            disabled={busy}
             className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground md:min-h-8"
             value={importArtifact}
             onChange={(event) =>
@@ -283,6 +288,7 @@ export function CaptureView({
           <span>Title, optional</span>
           <input
             id="stone-import-title"
+            disabled={busy}
             className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground md:min-h-8"
             value={importTitle}
             onChange={(event) => setImportTitle(event.target.value)}
@@ -292,6 +298,7 @@ export function CaptureView({
           <span>File content</span>
           <textarea
             id="stone-import-content"
+            disabled={busy}
             className="min-h-24 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground"
             value={importContent}
             onChange={(event) => setImportContent(event.target.value)}
