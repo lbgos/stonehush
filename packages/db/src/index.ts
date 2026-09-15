@@ -75,6 +75,11 @@ export type {
 } from "./settings.js";
 export { HttpProbeRepository } from "./http-probe.js";
 export { FfufRepository } from "./ffuf.js";
+export { EngagementResumeRepository } from "./engagement-resume.js";
+export type {
+  EngagementResumeRepositoryError,
+  EngagementResumeResult,
+} from "./engagement-resume.js";
 export { RunOutputRepository } from "./run-output.js";
 export {
   ADVISOR_TURN_EXPIRY_CLEANUP_LIMIT,

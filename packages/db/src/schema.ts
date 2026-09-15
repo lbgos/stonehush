@@ -124,6 +124,26 @@ export const engagementNotes = sqliteTable(
   ],
 );
 
+export const engagementNextSteps = sqliteTable(
+  "engagement_next_steps",
+  {
+    engagementId: text("engagement_id")
+      .primaryKey()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    nextStep: text("next_step"),
+    updatedAt: text("updated_at").notNull(),
+    revision: integer("revision").notNull(),
+  },
+  (table) => [
+    check(
+      "engagement_next_step_length",
+      sql`${table.nextStep} is null or length(${table.nextStep}) between 1 and 280`,
+    ),
+    check("engagement_next_step_updated_at", sql`length(${table.updatedAt}) >= 20`),
+    check("engagement_next_step_revision", sql`${table.revision} >= 1`),
+  ],
+);
+
 export const operatorCommandIdempotency = sqliteTable(
   "operator_command_idempotency",
   {
