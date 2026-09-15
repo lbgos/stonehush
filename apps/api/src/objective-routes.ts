@@ -8,8 +8,8 @@ import {
   ObjectiveQueryErrorSchema,
   ObjectiveResponseSchema,
   SubmitObjectiveRequestSchema,
-} from "@blackglass/contracts";
-import type { ObjectiveRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { ObjectiveRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type ObjectiveRoutesRepository = Pick<

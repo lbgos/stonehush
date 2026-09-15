@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { describe, expect, it } from "vitest";
-import type { Objective, Secret } from "@blackglass/contracts";
+import type { Objective, Secret } from "@stonehush/contracts";
 
 import { registerObjectiveRoutes } from "./objective-routes.js";
 import { registerSecretRoutes } from "./secret-routes.js";

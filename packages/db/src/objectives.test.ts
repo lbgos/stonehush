@@ -18,7 +18,7 @@ const fixtures: Fixture[] = [];
 const PROOF = "flag{synthetic-proof-0001}";
 
 function createFixture(): Fixture & { engagementId: string } {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-stone-objectives-test-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-objectives-test-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   let next = 1;

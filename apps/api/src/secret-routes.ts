@@ -7,8 +7,8 @@ import {
   SecretMutationErrorSchema,
   SecretQueryErrorSchema,
   SecretResponseSchema,
-} from "@blackglass/contracts";
-import type { SecretRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { SecretRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type SecretRoutesRepository = Pick<

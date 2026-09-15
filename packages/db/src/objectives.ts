@@ -6,8 +6,8 @@ import {
   OBJECTIVE_CONTRACT_VERSION,
   ObjectiveSchema,
   type Objective,
-} from "@blackglass/contracts";
-import { proofHintForValue } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { proofHintForValue } from "@stonehush/domain";
 import { asc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 

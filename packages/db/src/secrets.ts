@@ -6,7 +6,7 @@ import {
   SECRET_CONTRACT_VERSION,
   SecretSchema,
   type Secret,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { and, asc, eq } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 

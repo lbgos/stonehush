@@ -12,14 +12,14 @@ import {
   SuggestLeadRevisitRequestSchema,
   type Lead,
   type LeadAttempt,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   buildLeadOutline,
   citeParkReasonForRevisit,
   suggestLeadRevisit,
   transitionLeadDisposition,
   type RevisitSuppressReason,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 import { asc, eq, max } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 
