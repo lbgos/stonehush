@@ -6,15 +6,15 @@ import type {
   Objective,
   ObjectiveKind,
   Secret,
-} from "@blackglass/contracts";
-import { SECRET_STORAGE_COPY } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { SECRET_DISPLAY_MASK, SECRET_STORAGE_COPY } from "@stonehush/domain";
 import {
   Button,
   LoadingRegion,
   RecoverableError,
   Skeleton,
   StaleDataState,
-} from "@blackglass/ui";
+} from "@stonehush/ui";
 
 import {
   LeadsQueryError,
@@ -724,7 +724,7 @@ function ObjectivesBody({
                       {objective.proofHint !== null ? (
                         <>
                           <span aria-hidden="true">·</span>
-                          <span className="font-mono">[masked] {objective.proofHint}</span>
+                          <span className="font-mono">{SECRET_DISPLAY_MASK} {objective.proofHint}</span>
                         </>
                       ) : null}
                     </p>
@@ -970,7 +970,7 @@ function SecretsBody({
                       <p className="m-0 mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
                         <span className="font-mono">{secret.serviceRef}</span>
                         <span aria-hidden="true">·</span>
-                        <span className="font-mono">[masked]</span>
+                        <span className="font-mono">{SECRET_DISPLAY_MASK}</span>
                         <span aria-hidden="true">·</span>
                         <span>{secret.verifications.length} verifications</span>
                       </p>
@@ -1081,6 +1081,7 @@ function SecretsBody({
                 value={username}
                 disabled={archived || create.isPending}
                 placeholder="operator"
+                maxLength={253}
                 spellCheck={false}
                 className="w-full border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onChange={(event) => setUsername(event.target.value)}
@@ -1095,6 +1096,7 @@ function SecretsBody({
                 value={serviceRef}
                 disabled={archived || create.isPending}
                 placeholder="192.0.2.10:22/ssh"
+                maxLength={253}
                 spellCheck={false}
                 className="w-full border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onChange={(event) => setServiceRef(event.target.value)}
@@ -1107,6 +1109,7 @@ function SecretsBody({
                 value={secretRef}
                 disabled={archived || create.isPending}
                 placeholder="vault:stone/lab-app-ssh"
+                maxLength={253}
                 spellCheck={false}
                 className="w-full border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onChange={(event) => setSecretRef(event.target.value)}

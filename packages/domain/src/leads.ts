@@ -9,7 +9,7 @@ import type {
   Lead,
   LeadAttempt,
   RevisitTrigger,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 export type LeadTransitionErrorCode = "invalid_lead_transition";
 

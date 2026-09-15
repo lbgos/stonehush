@@ -15,8 +15,8 @@ import {
   LeadResponseSchema,
   ParkLeadRequestSchema,
   SuggestLeadRevisitRequestSchema,
-} from "@blackglass/contracts";
-import type { LeadRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { LeadRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type LeadRoutesRepository = Pick<

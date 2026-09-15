@@ -4,12 +4,12 @@ import path from "node:path";
 
 import Fastify from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Lead, LeadAttempt } from "@blackglass/contracts";
+import type { Lead, LeadAttempt } from "@stonehush/contracts";
 import {
   EngagementRepository,
   LeadRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 
 import { buildApp } from "./app.js";
 import { registerLeadRoutes } from "./lead-routes.js";
@@ -281,7 +281,7 @@ afterEach(async () => {
 
 describe("lead routes with repositories", () => {
   it("records a revisit suggestion for 500-char reasons instead of failing", async () => {
-    const dataDirectory = await mkdtemp(path.join(tmpdir(), "blackglass-lead-overflow-test-"));
+    const dataDirectory = await mkdtemp(path.join(tmpdir(), "stonehush-lead-overflow-test-"));
     temporaryDirectories.push(dataDirectory);
     await chmod(dataDirectory, 0o700);
     const database = openEngagementDatabase({ dataDirectory });

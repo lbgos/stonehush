@@ -17,7 +17,7 @@ interface Fixture {
 const fixtures: Fixture[] = [];
 
 function createFixture(): Fixture & { engagementId: string } {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-stone-leads-test-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-leads-test-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   let next = 1;

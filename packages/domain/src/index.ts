@@ -18,15 +18,8 @@ export {
 } from "./leads.js";
 export {
   SECRET_DISPLAY_MASK,
-  SECRET_EXCLUDED_SURFACES,
-  SECRET_REDACTION_TOKEN,
   SECRET_STORAGE_COPY,
-  isSecretExcludedFrom,
-  maskSecretValue,
   proofHintForValue,
-  redactKnownSecretsFromText,
-  type KnownSecretRedaction,
-  type SecretExcludedSurface,
 } from "./secret-redact.js";
 export {
   acceptHeartbeat,

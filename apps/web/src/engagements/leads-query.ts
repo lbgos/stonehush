@@ -24,7 +24,7 @@ import {
   type Objective,
   type ObjectiveKind,
   type Secret,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const LEADS_QUERY_ERROR_MESSAGE = "The leads request failed.";
@@ -196,23 +196,71 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
+async function fetchList<T>(
+  url: string,
+  parse: (value: unknown) => T | undefined,
+  fail: () => Error,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, signal ? { signal } : undefined);
+  } catch {
+    throw fail();
+  }
+  if (response.status !== 200) throw fail();
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw fail();
+  }
+  const parsed = parse(payload);
+  if (parsed === undefined) throw fail();
+  return parsed;
+}
+
+async function postMutation<T>(
+  url: string,
+  payload: unknown,
+  parse: (value: unknown) => T | undefined,
+  fail: (code: string) => Error,
+  parseError: (body: unknown) => Error,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw fail("request_failed");
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw fail("request_failed");
+  }
+  if (response.status !== 200 && response.status !== 201) {
+    throw parseError(body);
+  }
+  const parsed = parse(body);
+  if (parsed === undefined) throw fail("invalid_persisted_data");
+  return parsed;
+}
+
 export async function fetchLeads(
   engagementId: string,
   signal?: AbortSignal,
 ): Promise<Lead[]> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/v1/engagements/${engagementId}/leads`,
-      signal ? { signal } : undefined,
-    );
-  } catch {
-    throw new LeadsQueryError();
-  }
-  if (response.status !== 200) throw new LeadsQueryError();
-  const result = LeadListResponseSchema.safeParse(await readJson(response));
-  if (!result.success) throw new LeadsQueryError();
-  return result.data;
+  return fetchList(
+    `/api/v1/engagements/${engagementId}/leads`,
+    (value) => LeadListResponseSchema.safeParse(value).data,
+    () => new LeadsQueryError(),
+    signal,
+  );
 }
 
 export interface CreateLeadInput {
@@ -228,28 +276,13 @@ async function postLeadMutation<T>(
   payload: unknown,
   parse: (value: unknown) => T | undefined,
 ): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    throw new LeadMutationClientError("request_failed");
-  }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new LeadMutationClientError("request_failed");
-  }
-  if (response.status !== 200 && response.status !== 201) {
-    throw parseLeadMutationError(body);
-  }
-  const parsed = parse(body);
-  if (parsed === undefined) throw new LeadMutationClientError("invalid_persisted_data");
-  return parsed;
+  return postMutation(
+    url,
+    payload,
+    parse,
+    (code) => new LeadMutationClientError(code),
+    parseLeadMutationError,
+  );
 }
 
 export async function createLeadRequest(
@@ -275,7 +308,12 @@ export async function parkLeadRequest(
   leadId: string,
   input: { reason: string; testedConditions?: string | undefined },
 ): Promise<Lead> {
-  const body = ParkLeadRequestSchema.parse(input);
+  const body = ParkLeadRequestSchema.parse({
+    reason: input.reason,
+    ...(input.testedConditions === undefined
+      ? {}
+      : { testedConditions: input.testedConditions }),
+  });
   return postLeadMutation(
     `/api/v1/engagements/${engagementId}/leads/${leadId}/park`,
     body,
@@ -306,7 +344,12 @@ export async function suggestLeadRevisitRequest(
     conditions?: string | undefined;
   },
 ): Promise<Lead> {
-  const body = SuggestLeadRevisitRequestSchema.parse(input);
+  const body = SuggestLeadRevisitRequestSchema.parse({
+    trigger: input.trigger,
+    reason: input.reason,
+    anonymous: input.anonymous,
+    ...(input.conditions === undefined ? {} : { conditions: input.conditions }),
+  });
   return postLeadMutation(
     `/api/v1/engagements/${engagementId}/leads/${leadId}/revisit`,
     body,
@@ -501,25 +544,12 @@ export async function fetchObjectives(
   engagementId: string,
   signal?: AbortSignal,
 ): Promise<Objective[]> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/v1/engagements/${engagementId}/objectives`,
-      signal ? { signal } : undefined,
-    );
-  } catch {
-    throw new ObjectivesQueryError();
-  }
-  if (response.status !== 200) throw new ObjectivesQueryError();
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new ObjectivesQueryError();
-  }
-  const result = ObjectiveListResponseSchema.safeParse(payload);
-  if (!result.success) throw new ObjectivesQueryError();
-  return result.data;
+  return fetchList(
+    `/api/v1/engagements/${engagementId}/objectives`,
+    (value) => ObjectiveListResponseSchema.safeParse(value).data,
+    () => new ObjectivesQueryError(),
+    signal,
+  );
 }
 
 async function postObjectiveMutation<T>(
@@ -527,28 +557,13 @@ async function postObjectiveMutation<T>(
   payload: unknown,
   parse: (value: unknown) => T | undefined,
 ): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    throw new ObjectiveMutationClientError("request_failed");
-  }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new ObjectiveMutationClientError("request_failed");
-  }
-  if (response.status !== 200 && response.status !== 201) {
-    throw parseObjectiveMutationError(body);
-  }
-  const parsed = parse(body);
-  if (parsed === undefined) throw new ObjectiveMutationClientError("invalid_persisted_data");
-  return parsed;
+  return postMutation(
+    url,
+    payload,
+    parse,
+    (code) => new ObjectiveMutationClientError(code),
+    parseObjectiveMutationError,
+  );
 }
 
 export function useObjectivesQuery(engagementId: string) {
@@ -633,25 +648,12 @@ export async function fetchSecrets(
   engagementId: string,
   signal?: AbortSignal,
 ): Promise<Secret[]> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/v1/engagements/${engagementId}/secrets`,
-      signal ? { signal } : undefined,
-    );
-  } catch {
-    throw new SecretsQueryError();
-  }
-  if (response.status !== 200) throw new SecretsQueryError();
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new SecretsQueryError();
-  }
-  const result = SecretListResponseSchema.safeParse(payload);
-  if (!result.success) throw new SecretsQueryError();
-  return result.data;
+  return fetchList(
+    `/api/v1/engagements/${engagementId}/secrets`,
+    (value) => SecretListResponseSchema.safeParse(value).data,
+    () => new SecretsQueryError(),
+    signal,
+  );
 }
 
 async function postSecretMutation<T>(
@@ -659,28 +661,13 @@ async function postSecretMutation<T>(
   payload: unknown,
   parse: (value: unknown) => T | undefined,
 ): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  } catch {
-    throw new SecretMutationClientError("request_failed");
-  }
-  let body: unknown;
-  try {
-    body = await response.json();
-  } catch {
-    throw new SecretMutationClientError("request_failed");
-  }
-  if (response.status !== 200 && response.status !== 201) {
-    throw parseSecretMutationError(body);
-  }
-  const parsed = parse(body);
-  if (parsed === undefined) throw new SecretMutationClientError("invalid_persisted_data");
-  return parsed;
+  return postMutation(
+    url,
+    payload,
+    parse,
+    (code) => new SecretMutationClientError(code),
+    parseSecretMutationError,
+  );
 }
 
 export function useSecretsQuery(engagementId: string) {
