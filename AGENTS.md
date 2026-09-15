@@ -76,7 +76,7 @@ Keep noisy exploration, raw logs, and repetitive review output out of the primar
 
 ## 6. Product invariants
 
-Blackglass is a fast operator tool for CTFs, labs, and assessments.
+Stonehush is a fast operator tool for CTFs, labs, and assessments.
 
 - Scope organizes targets, filters, evidence, and reports. Every representable action stays runnable.
 - An out-of-scope, redirected, newly resolved, or noisy action may show one concise confirmation, but `Continue` always remains available.
@@ -110,7 +110,7 @@ packages/contracts  shared Zod/API/event contracts
 packages/domain     pure rules and state transitions
 packages/db         Drizzle schema, repositories, migrations
 packages/plugin-sdk manifest and NDJSON protocol contracts
-packages/ui         Blackglass-owned UI primitives
+packages/ui         Stonehush-owned UI primitives
 plugins/*           first-party tool adapters
 ```
 

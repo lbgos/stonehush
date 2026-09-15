@@ -6,8 +6,8 @@
  * kind so the UI can label it instead of silently dropping it.
  */
 
-import { ENGAGEMENT_SEARCH_MAX_PER_GROUP } from "@blackglass/contracts";
-import type { EngagementSearchResult, EngagementSearchResultKind } from "@blackglass/contracts";
+import { ENGAGEMENT_SEARCH_MAX_PER_GROUP } from "@stonehush/contracts";
+import type { EngagementSearchResult, EngagementSearchResultKind } from "@stonehush/contracts";
 
 export interface SearchCorpusEntry {
   readonly kind: EngagementSearchResultKind;

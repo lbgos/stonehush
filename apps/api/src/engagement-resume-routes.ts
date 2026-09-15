@@ -4,16 +4,17 @@ import {
   EngagementResumeChangeSchema,
   EngagementResumeErrorSchema,
   EngagementResumeResponseSchema,
+  EngagementServicesResponseSchema,
   UpdateEngagementNextStepRequestSchema,
   parseEngagementResumeQuery,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementRepository,
   EngagementResumeRepository,
   NmapServiceRepository,
   RunOutputRepository,
-} from "@blackglass/db";
-import { buildResumeChanges, changesSinceLastVisit } from "@blackglass/domain";
+} from "@stonehush/db";
+import { buildResumeChanges, changesSinceLastVisit } from "@stonehush/domain";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 export interface EngagementResumeRouteDeps {
@@ -136,7 +137,9 @@ export function registerEngagementResumeRoutes(
       if (deps.services !== undefined) {
         const services = deps.services.listForEngagement(engagementId);
         if (!services.ok) return sendRepositoryError(reply, services);
-        for (const service of services.value.slice(0, 50)) {
+        const validatedServices = EngagementServicesResponseSchema.safeParse(services.value);
+        if (!validatedServices.success) return sendResumeError(reply, 500, "invalid_persisted_data");
+        for (const service of validatedServices.data.slice(0, 50)) {
           inputs.push({
             kind: "service",
             // Artifact id keeps the change id unique when several runs

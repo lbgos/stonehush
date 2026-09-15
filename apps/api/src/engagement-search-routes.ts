@@ -1,19 +1,22 @@
 import {
+  EngagementFfufResultsResponseSchema,
+  EngagementHttpProbesResponseSchema,
   EngagementIdParamsSchema,
   EngagementSearchErrorSchema,
   EngagementSearchResponseSchema,
+  EngagementServicesResponseSchema,
   parseEngagementSearchQuery,
   type EngagementSearchResultKind,
   type SavedScopeRule,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementRepository,
   FfufRepository,
   HttpProbeRepository,
   NmapServiceRepository,
   RunOutputRepository,
-} from "@blackglass/db";
-import { searchCorpus, findMatchOffset, type SearchCorpusEntry } from "@blackglass/domain";
+} from "@stonehush/db";
+import { searchCorpus, findMatchOffset, type SearchCorpusEntry } from "@stonehush/domain";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 export interface EngagementSearchRouteDeps {
@@ -33,11 +36,20 @@ function sendSearchError(reply: FastifyReply, status: number, code: string) {
 function scopeRuleLabel(rule: SavedScopeRule): string {
   switch (rule.kind) {
     case "ip":
+      return rule.target.zone === null ? rule.target.address : `${rule.target.address}%${rule.target.zone}`;
     case "cidr":
+      return `${rule.target.network}/${String(rule.target.prefixLength)}`;
     case "domain":
-      return rule.target;
-    case "url-origin":
-      return `${rule.origin.scheme}://${rule.origin.host}:${rule.origin.effectivePort}`;
+      return rule.target.hostname;
+    case "url-origin": {
+      const host =
+        "hostname" in rule.origin.host
+          ? rule.origin.host.hostname
+          : rule.origin.host.address.includes(":")
+            ? `[${rule.origin.host.address}]`
+            : rule.origin.host.address;
+      return `${rule.origin.scheme}://${host}:${String(rule.origin.effectivePort)}`;
+    }
   }
 }
 
@@ -123,7 +135,9 @@ export function registerEngagementSearchRoutes(
           if (services.code === "storage_busy") return sendSearchError(reply, 503, "storage_busy");
           return sendSearchError(reply, 500, "invalid_persisted_data");
         }
-        for (const service of services.value.slice(0, 200)) {
+        const validatedServices = EngagementServicesResponseSchema.safeParse(services.value);
+        if (!validatedServices.success) return sendSearchError(reply, 500, "invalid_persisted_data");
+        for (const service of validatedServices.data.slice(0, 200)) {
           corpus.push({
             kind: "target",
             id: `service:${service.address}:${service.port}`,
@@ -179,7 +193,9 @@ export function registerEngagementSearchRoutes(
           if (ffuf.code === "storage_busy") return sendSearchError(reply, 503, "storage_busy");
           return sendSearchError(reply, 500, "invalid_persisted_data");
         }
-        for (const row of ffuf.value.slice(0, 200)) {
+        const validatedFfuf = EngagementFfufResultsResponseSchema.safeParse(ffuf.value);
+        if (!validatedFfuf.success) return sendSearchError(reply, 500, "invalid_persisted_data");
+        for (const row of validatedFfuf.data.slice(0, 200)) {
           corpus.push({
             kind: "artifact",
             id: `ffuf:${row.url}`,
@@ -196,7 +212,9 @@ export function registerEngagementSearchRoutes(
           if (probes.code === "storage_busy") return sendSearchError(reply, 503, "storage_busy");
           return sendSearchError(reply, 500, "invalid_persisted_data");
         }
-        for (const probe of probes.value.slice(0, 200)) {
+        const validatedProbes = EngagementHttpProbesResponseSchema.safeParse(probes.value);
+        if (!validatedProbes.success) return sendSearchError(reply, 500, "invalid_persisted_data");
+        for (const probe of validatedProbes.data.slice(0, 200)) {
           corpus.push({
             kind: "hostname",
             id: `probe:${probe.url}`,

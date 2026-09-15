@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { SettingsRepository, openEngagementDatabase } from "@blackglass/db";
+import { SettingsRepository, openEngagementDatabase } from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -21,7 +21,7 @@ afterEach(async () => {
 
 async function createSettingsBackedApp() {
   const dataDirectory = await mkdtemp(
-    path.join(tmpdir(), "blackglass-settings-route-test-"),
+    path.join(tmpdir(), "stonehush-settings-route-test-"),
   );
   temporaryDirectories.push(dataDirectory);
   await chmod(dataDirectory, 0o700);
@@ -150,7 +150,7 @@ describe("advisor settings routes", () => {
       payload: {
         endpointBaseUrl: "http://127.0.0.1:11434/v1",
         modelId: "qwen3:8b",
-        apiKeyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+        apiKeyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
         requestBudget: 25,
       },
     });
@@ -158,7 +158,7 @@ describe("advisor settings routes", () => {
     expect(updated.json()).toEqual({
       endpointBaseUrl: "http://127.0.0.1:11434/v1",
       modelId: "qwen3:8b",
-      apiKeyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+      apiKeyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
       requestBudget: 25,
       rawResponseVisibility: true,
       publicEndpointOptIn: false,

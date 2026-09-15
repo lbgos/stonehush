@@ -1,4 +1,4 @@
-import { TargetNormalizationResultSchema } from "@blackglass/contracts";
+import { TargetNormalizationResultSchema } from "@stonehush/contracts";
 import { describe, expect, it } from "vitest";
 
 import fixtureData from "../../../docs/architecture/fixtures/d1/normalization.json" with {
@@ -338,20 +338,20 @@ describe("normalizeTarget safety and determinism", () => {
       LANG: runtimeProcess.env.LANG,
       LC_ALL: runtimeProcess.env.LC_ALL,
       TZ: runtimeProcess.env.TZ,
-      BLACKGLASS_TEST_NOISE: runtimeProcess.env.BLACKGLASS_TEST_NOISE,
+      STONEHUSH_TEST_NOISE: runtimeProcess.env.STONEHUSH_TEST_NOISE,
     };
 
     try {
       runtimeProcess.env.LANG = "tr_TR.UTF-8";
       runtimeProcess.env.LC_ALL = "C";
       runtimeProcess.env.TZ = "Pacific/Kiritimati";
-      runtimeProcess.env.BLACKGLASS_TEST_NOISE = "untrusted";
+      runtimeProcess.env.STONEHUSH_TEST_NOISE = "untrusted";
       expect(normalizeTarget(input)).toEqual(expected);
 
       runtimeProcess.env.LANG = "de_DE.UTF-8";
       runtimeProcess.env.LC_ALL = "en_US.UTF-8";
       runtimeProcess.env.TZ = "America/Los_Angeles";
-      runtimeProcess.env.BLACKGLASS_TEST_NOISE = "different";
+      runtimeProcess.env.STONEHUSH_TEST_NOISE = "different";
       expect(normalizeTarget(input)).toEqual(expected);
     } finally {
       for (const [name, value] of Object.entries(previous)) {

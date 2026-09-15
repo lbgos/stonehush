@@ -1,9 +1,9 @@
 {
-  "name": "@blackglass/runner",
+  "name": "@stonehush/runner",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Blackglass native host runner - nmap execution slice for M4",
+  "description": "Stonehush native host runner - nmap execution slice for M4",
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "start": "node dist/index.js",
@@ -11,8 +11,8 @@
     "typecheck": "tsc --project tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@blackglass/contracts": "workspace:*",
-    "@blackglass/domain": "workspace:*"
+    "@stonehush/contracts": "workspace:*",
+    "@stonehush/domain": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.13.3",

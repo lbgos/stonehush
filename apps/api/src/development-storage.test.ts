@@ -23,7 +23,7 @@ import {
 const temporaryRoots: string[] = [];
 
 async function temporaryRoot(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-storage-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-storage-test-"));
   temporaryRoots.push(root);
   return root;
 }
@@ -37,7 +37,7 @@ describe("bootstrapDevelopmentStorage", () => {
   it("creates missing storage with mode 0700 and removes its mode 0600 probe", async () => {
     const root = await temporaryRoot();
     const dataDirectory = path.join(root, "nested", "development");
-    const probePath = path.join(dataDirectory, ".blackglass-write-probe-fixed");
+    const probePath = path.join(dataDirectory, ".stonehush-write-probe-fixed");
     let observedProbeMode: number | undefined;
     let observedProbeFlags: number | undefined;
 
@@ -63,7 +63,7 @@ describe("bootstrapDevelopmentStorage", () => {
   it("does not replace or delete an existing probe path", async () => {
     const root = await temporaryRoot();
     const dataDirectory = path.join(root, "development");
-    const probePath = path.join(dataDirectory, ".blackglass-write-probe-collision");
+    const probePath = path.join(dataDirectory, ".stonehush-write-probe-collision");
     await mkdir(dataDirectory, { mode: 0o700 });
     await writeFile(probePath, "existing", { mode: 0o600 });
 

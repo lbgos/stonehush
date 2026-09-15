@@ -3,6 +3,11 @@ export { Button, buttonVariants, type ButtonProps } from "./button.js";
 export { cn } from "./cn.js";
 export { ConsoleTabs, type ConsolePanel } from "./console-tabs.js";
 export { EmptyState, type EmptyStateProps } from "./empty-state.js";
+export {
+  RowContextMenu,
+  type RowContextMenuItem,
+  type RowContextMenuProps,
+} from "./context-menu.js";
 export { FullScreenSheet, type FullScreenSheetProps } from "./full-screen-sheet.js";
 export {
   CONSOLE_HEIGHT_STORAGE_KEY,
@@ -25,6 +30,7 @@ export {
   type LayoutStorageSource,
 } from "./layout.js";
 export { Status, type StatusProps } from "./status.js";
+export { Switch, type SwitchProps } from "./switch.js";
 export {
   SidebarCardRow,
   SidebarCompactRow,

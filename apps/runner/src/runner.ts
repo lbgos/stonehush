@@ -13,8 +13,8 @@ import {
   commandJsonV1RunnerCompleteDigest,
   type ActionSnapshot,
   type FfufActionOptions,
-} from "@blackglass/contracts";
-import { buildFfufArgv, buildNmapArgv, ffufOptionsForSnapshot, hasFfufMarker } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { buildFfufArgv, buildNmapArgv, ffufOptionsForSnapshot, hasFfufMarker } from "@stonehush/domain";
 
 import { resolveRunnerConfig, type RunnerConfig } from "./config.js";
 import { EvidencePublicationError, publishEvidenceArtifacts, publishFfufArtifacts, publishHttpProbeArtifacts } from "./evidence-client.js";
@@ -41,7 +41,7 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function authHeader(runnerId: string, secret: string): string {
-  return `Blackglass-Runner ${runnerId} ${secret}`;
+  return `Stonehush-Runner ${runnerId} ${secret}`;
 }
 
 type NmapSliceOptions = {
@@ -239,7 +239,7 @@ export async function appendStarted(
     operation: "append_started",
     path: { leaseId: lease.leaseId },
     query: {},
-    body: rawBody as unknown as import("@blackglass/contracts").JsonValue,
+    body: rawBody as unknown as import("@stonehush/contracts").JsonValue,
     digestProjection: commandJsonV1RunnerAppendStartedDigest,
   });
   const key = entry.key;
@@ -296,7 +296,7 @@ export async function completeRun(
     operation: "complete",
     path: { leaseId: lease.leaseId },
     query: {},
-    body: rawBody as unknown as import("@blackglass/contracts").JsonValue,
+    body: rawBody as unknown as import("@stonehush/contracts").JsonValue,
     digestProjection: commandJsonV1RunnerCompleteDigest,
   });
   const key = entry.key;
@@ -342,7 +342,7 @@ export async function runOnce(
   throwIfAborted(signal);
   const config = resolveRunnerConfig(overrides);
   if (config.runnerId === "" || config.secret === "") {
-    throw new Error("runner credentials required (BLACKGLASS_RUNNER_ID/SECRET)");
+    throw new Error("runner credentials required (STONEHUSH_RUNNER_ID/SECRET)");
   }
 
   throwIfAborted(signal);
@@ -847,6 +847,9 @@ export function createRunnerLoop(configOverrides: Partial<RunnerConfig> = {}): {
   let inFlight: Promise<boolean> | null = null;
   let loopPromise: Promise<void> | null = null;
 
+  // Loop idle wait stays referenced so a standalone CLI with no other
+  // handles keeps polling instead of exiting. stop() clears/resolves it
+  // for prompt exit. Per-run heartbeat/fence timers remain unref'd.
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((res) => {
       timerResolve = res;
@@ -855,7 +858,6 @@ export function createRunnerLoop(configOverrides: Partial<RunnerConfig> = {}): {
         timerResolve = null;
         res();
       }, ms);
-      timer.unref?.();
     });
 
   const loop = async (): Promise<void> => {

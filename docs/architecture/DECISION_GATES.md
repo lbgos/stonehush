@@ -1,4 +1,4 @@
-# Blackglass Decision Gates
+# Stonehush Decision Gates
 
 Status: active
 
@@ -211,7 +211,7 @@ Decide and test:
 - streaming format and provider compatibility errors;
 - abstention and evidence-citation contract.
 
-The tested compatibility profile defines what Blackglass means by "OpenAI-compatible."
+The tested compatibility profile defines what Stonehush means by "OpenAI-compatible."
 
 ## D7: Packaging, supply chain, and public release
 

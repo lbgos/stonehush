@@ -3,8 +3,8 @@ import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-const API_PORT = Number(process.env.BLACKGLASS_API_PORT ?? "3001");
-const WEB_PORT = Number(process.env.BLACKGLASS_WEB_PORT ?? "5173");
+const API_PORT = Number(process.env.STONEHUSH_API_PORT ?? "3001");
+const WEB_PORT = Number(process.env.STONEHUSH_WEB_PORT ?? "5173");
 
 export default defineConfig(({ command }) => ({
   plugins: [tanstackRouter({ target: "react" }), react(), tailwindcss()],

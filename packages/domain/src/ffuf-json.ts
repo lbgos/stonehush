@@ -2,7 +2,7 @@ import {
   FFUF_MAX_RESULTS,
   FfufDiscoveryOutputSchema,
   type FfufDiscoveryOutput,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 /**
  * Control-plane projection of a preserved raw ffuf -of json artifact.

@@ -7,7 +7,7 @@ import {
   type EngagementMutationError,
   type FindingMutationError,
   type UpdateEngagementNotesError,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 export const ENGAGEMENTS_QUERY_ERROR_MESSAGE = "The engagement list request failed.";
 export const ENGAGEMENT_DETAIL_QUERY_ERROR_MESSAGE = "The engagement request failed.";
@@ -37,6 +37,7 @@ export const FINDING_MUTATION_ERROR_COPY = {
   finding_not_found: "That finding is no longer available.",
   engagement_archived: "This engagement is archived.",
   invalid_finding_transition: "That finding action is not valid now.",
+  revision_conflict: "This finding changed elsewhere. Your edits are kept.",
   invalid_persisted_data: "The server returned data this client cannot use.",
   storage_busy: "Storage is busy. Try again.",
   request_failed: FINDING_MUTATION_ERROR_MESSAGE,
@@ -243,12 +244,34 @@ export function engagementNotesMutationMessage(error: unknown): string {
 
 export class FindingMutationClientError extends Error {
   readonly code: FindingMutationErrorCode;
+  readonly currentRevision?: number;
+  readonly resourceId?: string;
 
-  constructor(code: FindingMutationErrorCode) {
+  constructor(
+    code: FindingMutationErrorCode,
+    details?: { currentRevision: number; resourceId: string },
+  ) {
     super(FINDING_MUTATION_ERROR_COPY[code]);
     this.name = "FindingMutationClientError";
     this.code = code;
+    if (details) {
+      this.currentRevision = details.currentRevision;
+      this.resourceId = details.resourceId;
+    }
   }
+}
+
+export function isFindingRevisionConflict(
+  error: unknown,
+): error is FindingMutationClientError & {
+  code: "revision_conflict";
+  currentRevision: number;
+} {
+  return (
+    error instanceof FindingMutationClientError &&
+    error.code === "revision_conflict" &&
+    typeof error.currentRevision === "number"
+  );
 }
 
 export function parseFindingMutationError(payload: unknown): FindingMutationClientError {
@@ -260,6 +283,12 @@ export function parseFindingMutationError(payload: unknown): FindingMutationClie
 export function findingErrorFromContract(
   error: FindingMutationError,
 ): FindingMutationClientError {
+  if (error.code === "revision_conflict") {
+    return new FindingMutationClientError("revision_conflict", {
+      currentRevision: error.currentRevision,
+      resourceId: error.resourceId,
+    });
+  }
   return new FindingMutationClientError(error.code);
 }
 

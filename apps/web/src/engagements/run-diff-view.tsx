@@ -1,4 +1,4 @@
-import { describePriorAttempt, diffRuns, type PriorAttemptInput, type RunDiffInput } from "@blackglass/domain";
+import { describePriorAttempt, diffRuns, type PriorAttemptInput, type RunDiffInput } from "@stonehush/domain";
 import { useMemo } from "react";
 
 /**

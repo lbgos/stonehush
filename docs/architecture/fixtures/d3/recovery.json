@@ -7,7 +7,7 @@
       "id": "d3.recovery.orphan-staging-not-published",
       "description": "Restart leaves an orphan staging file unpublished and does not invent an evidence row.",
       "given": {
-        "stagingPath": "/var/lib/blackglass/evidence/staging/upload-fixture-5",
+        "stagingPath": "/var/lib/stonehush/evidence/staging/upload-fixture-5",
         "grantState": "expired",
         "evidenceRow": false,
         "controlPlaneRestarted": true
@@ -41,7 +41,7 @@
       "id": "d3.recovery.crash-after-rename-before-row",
       "description": "A published file without a row is extra evidence and is not imported.",
       "given": {
-        "publishedPath": "/var/lib/blackglass/evidence/published/artifact-fixture-7",
+        "publishedPath": "/var/lib/stonehush/evidence/published/artifact-fixture-7",
         "fileDurable": true,
         "rowPresent": false
       },

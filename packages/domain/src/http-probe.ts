@@ -4,7 +4,7 @@ import {
   HttpProbeRawSchema,
   type ActionSnapshot,
   type HttpProbeRaw,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 /**
  * Pure helpers for the minimal HTTP probe variant.

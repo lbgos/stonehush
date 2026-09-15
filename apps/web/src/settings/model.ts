@@ -38,7 +38,7 @@ export const SETTINGS_INDEX: readonly SettingsIndexEntry[] = [
   { id: "timestamp-format", section: "general", title: "Timestamp format", description: "24-hour UTC clock. Used in tables, console, and history." },
   { id: "auto-archive", section: "general", title: "Auto-archive reviewed work", description: "Reviewed-action archiving is not implemented." },
   { id: "archive-days", section: "general", title: "Days before archive", description: "No automatic archiving runs, so no threshold applies." },
-  { id: "landing-view", section: "general", title: "Default landing view", description: "Where Blackglass opens after launch. Dashboard stays the operational default." },
+  { id: "landing-view", section: "general", title: "Default landing view", description: "Where Stonehush opens after launch. Dashboard stays the operational default." },
   { id: "restore-defaults", section: "general", title: "Restore defaults", description: "Reset every setting on this page to the shipped local defaults." },
   { id: "theme", section: "appearance", title: "Theme", description: "Smoked glass on true black. Swatches are previews only." },
   { id: "glass-opacity", section: "appearance", title: "Glass opacity", description: "How solid transient menus and dialogs appear." },

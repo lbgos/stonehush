@@ -7,10 +7,10 @@ import { OperatorCommandRepository } from "./operator-command.js";
 import { EngagementRepository } from "./repository.js";
 
 const workerConfiguration = {
-  dataDirectory: process.env.BLACKGLASS_CONCURRENCY_DATA_DIRECTORY,
-  readyPath: process.env.BLACKGLASS_CONCURRENCY_READY_PATH,
-  goPath: process.env.BLACKGLASS_CONCURRENCY_GO_PATH,
-  resultPath: process.env.BLACKGLASS_CONCURRENCY_RESULT_PATH,
+  dataDirectory: process.env.STONEHUSH_CONCURRENCY_DATA_DIRECTORY,
+  readyPath: process.env.STONEHUSH_CONCURRENCY_READY_PATH,
+  goPath: process.env.STONEHUSH_CONCURRENCY_GO_PATH,
+  resultPath: process.env.STONEHUSH_CONCURRENCY_RESULT_PATH,
 };
 
 const isWorker = Object.values(workerConfiguration).every((value) => value !== undefined);

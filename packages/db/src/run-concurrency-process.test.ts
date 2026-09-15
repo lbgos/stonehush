@@ -6,13 +6,13 @@ import { openEngagementDatabase } from "./database.js";
 import { RunRepository } from "./run.js";
 
 const workerConfiguration = {
-  dataDirectory: process.env.BLACKGLASS_RUN_CONCURRENCY_DATA_DIRECTORY,
-  runId: process.env.BLACKGLASS_RUN_CONCURRENCY_RUN_ID,
-  runnerId: process.env.BLACKGLASS_RUN_CONCURRENCY_RUNNER_ID,
-  sessionId: process.env.BLACKGLASS_RUN_CONCURRENCY_SESSION_ID,
-  readyPath: process.env.BLACKGLASS_RUN_CONCURRENCY_READY_PATH,
-  goPath: process.env.BLACKGLASS_RUN_CONCURRENCY_GO_PATH,
-  resultPath: process.env.BLACKGLASS_RUN_CONCURRENCY_RESULT_PATH,
+  dataDirectory: process.env.STONEHUSH_RUN_CONCURRENCY_DATA_DIRECTORY,
+  runId: process.env.STONEHUSH_RUN_CONCURRENCY_RUN_ID,
+  runnerId: process.env.STONEHUSH_RUN_CONCURRENCY_RUNNER_ID,
+  sessionId: process.env.STONEHUSH_RUN_CONCURRENCY_SESSION_ID,
+  readyPath: process.env.STONEHUSH_RUN_CONCURRENCY_READY_PATH,
+  goPath: process.env.STONEHUSH_RUN_CONCURRENCY_GO_PATH,
+  resultPath: process.env.STONEHUSH_RUN_CONCURRENCY_RESULT_PATH,
 };
 
 const isWorker = Object.values(workerConfiguration).every((value) => value !== undefined);

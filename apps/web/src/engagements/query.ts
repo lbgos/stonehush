@@ -9,7 +9,7 @@ import {
   type FfufProjected,
   type HttpProbeProjected,
   type NmapProjectedService,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 import {

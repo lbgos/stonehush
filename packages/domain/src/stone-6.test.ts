@@ -5,6 +5,7 @@ import {
   buildResumeChanges,
   changesSinceLastVisit,
   describePriorAttempt,
+  toggleStarred,
 } from "./engagement-resume.js";
 import { redactSecretsForSnippet, searchCorpus, findMatchOffset } from "./engagement-search.js";
 import {
@@ -47,6 +48,11 @@ describe("starred focus never hides active jobs", () => {
     ];
     expect(applyStarredFocus(items, true).map((item) => item.id)).toEqual(["a", "b"]);
     expect(applyStarredFocus(items, false)).toHaveLength(3);
+  });
+
+  it("toggles stars without touching other ids", () => {
+    expect(toggleStarred([], "a")).toEqual(["a"]);
+    expect(toggleStarred(["a", "b"], "a")).toEqual(["b"]);
   });
 });
 

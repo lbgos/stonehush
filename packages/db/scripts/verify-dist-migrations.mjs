@@ -5,7 +5,7 @@ import path from "node:path";
 import { openEngagementDatabase } from "../dist/database.js";
 
 const dataDirectory = mkdtempSync(
-  path.join(tmpdir(), "blackglass-db-dist-migration-"),
+  path.join(tmpdir(), "stonehush-db-dist-migration-"),
 );
 chmodSync(dataDirectory, 0o700);
 

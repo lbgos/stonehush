@@ -1,8 +1,8 @@
 export const DESKTOP_BREAKPOINT = 768;
 
-export const SIDEBAR_WIDTH_STORAGE_KEY = "blackglass.layout.sidebar.width";
-export const SIDEBAR_OPEN_STORAGE_KEY = "blackglass.layout.sidebar.open";
-export const CONSOLE_HEIGHT_STORAGE_KEY = "blackglass.layout.console.height";
+export const SIDEBAR_WIDTH_STORAGE_KEY = "stonehush.layout.sidebar.width";
+export const SIDEBAR_OPEN_STORAGE_KEY = "stonehush.layout.sidebar.open";
+export const CONSOLE_HEIGHT_STORAGE_KEY = "stonehush.layout.console.height";
 
 export const DEFAULT_SIDEBAR_WIDTH = 256;
 export const MIN_SIDEBAR_WIDTH = 208;

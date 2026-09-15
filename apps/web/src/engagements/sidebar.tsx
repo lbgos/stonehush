@@ -1,11 +1,12 @@
 import {
   LoadingRegion,
+  RowContextMenu,
   SidebarCardRow,
   SidebarCompactRow,
   SidebarRowAction,
   SidebarShelf,
   Skeleton,
-} from "@blackglass/ui";
+} from "@stonehush/ui";
 import { useNavigate, useRouterState } from "@tanstack/react-router";
 import type { MouseEvent } from "react";
 
@@ -20,6 +21,7 @@ import {
   useReopenEngagementMutation,
 } from "./mutations.js";
 import { partitionEngagements, useEngagementsQuery } from "./query.js";
+import { copyTextToClipboard } from "./report-query.js";
 import { engagementMatchesFilter, useEngagementWorkspace } from "./workspace-context.js";
 
 export function EngagementSidebarList({ onNavigate }: { onNavigate: () => void }) {
@@ -167,6 +169,7 @@ function EngagementRow({
   engagement: ReturnType<typeof partitionEngagements>["active"][number];
   onNavigate: () => void;
 }) {
+  const navigate = useNavigate();
   const archive = useArchiveEngagementMutation();
   const reopen = useReopenEngagementMutation();
   const href = `/engagements/${engagement.id}`;
@@ -174,51 +177,84 @@ function EngagementRow({
   const error = archive.error ?? reopen.error;
   const conflict = isRevisionConflict(error);
   const Row = compact ? SidebarCompactRow : SidebarCardRow;
+  const toggleLabel = engagement.status === "active" ? `Archive ${engagement.name}` : `Reopen ${engagement.name}`;
+  const toggleStatus = () => {
+    if (pending) return;
+    if (engagement.status === "active") {
+      archive.mutate({
+        engagementId: engagement.id,
+        expectedRevision: engagement.revision,
+      });
+    } else {
+      reopen.mutate({
+        engagementId: engagement.id,
+        expectedRevision: engagement.revision,
+      });
+    }
+  };
+  const openEngagement = () => {
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: engagement.id },
+    });
+    onNavigate();
+  };
 
   return (
     <div>
-      <Row
-        action={
-          engagement.status === "active" ? (
-            <SidebarRowAction
-              disabled={pending}
-              label={`Archive ${engagement.name}`}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                archive.mutate({
-                  engagementId: engagement.id,
-                  expectedRevision: engagement.revision,
-                });
-              }}
-            >
-              Archive
-            </SidebarRowAction>
-          ) : (
-            <SidebarRowAction
-              disabled={pending}
-              label={`Reopen ${engagement.name}`}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                reopen.mutate({
-                  engagementId: engagement.id,
-                  expectedRevision: engagement.revision,
-                });
-              }}
-            >
-              Reopen
-            </SidebarRowAction>
-          )
-        }
-        context={engagementContext(engagement)}
-        current={current}
-        href={href}
-        itemId={engagement.id}
-        metadata={engagementMetadata(engagement)}
-        onNavigate={onNavigate}
-        title={engagement.name}
-      />
+      <RowContextMenu
+        label={`${engagement.name} actions`}
+        items={[
+          { label: "Open engagement", onSelect: openEngagement },
+          {
+            label: "Copy engagement name",
+            onSelect: () => void copyTextToClipboard(engagement.name),
+          },
+          {
+            label: "Copy engagement ID",
+            onSelect: () => void copyTextToClipboard(engagement.id),
+          },
+          { separator: true },
+          { label: toggleLabel, onSelect: toggleStatus, disabled: pending },
+        ]}
+      >
+        <Row
+          action={
+            engagement.status === "active" ? (
+              <SidebarRowAction
+                disabled={pending}
+                label={`Archive ${engagement.name}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleStatus();
+                }}
+              >
+                Archive
+              </SidebarRowAction>
+            ) : (
+              <SidebarRowAction
+                disabled={pending}
+                label={`Reopen ${engagement.name}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  toggleStatus();
+                }}
+              >
+                Reopen
+              </SidebarRowAction>
+            )
+          }
+          context={engagementContext(engagement)}
+          current={current}
+          href={href}
+          itemId={engagement.id}
+          metadata={engagementMetadata(engagement)}
+          onNavigate={onNavigate}
+          title={engagement.name}
+        />
+      </RowContextMenu>
       {error && (
         <p className="m-0 px-3 py-1 text-[11px] text-destructive" role="alert">
           {conflict

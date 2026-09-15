@@ -1,4 +1,4 @@
-import { AdvisorStatusSchema, type AdvisorStatus } from "@blackglass/contracts";
+import { AdvisorStatusSchema, type AdvisorStatus } from "@stonehush/contracts";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const ADVISOR_STATUS_QUERY_KEY = ["advisor", "status"] as const;

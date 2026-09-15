@@ -8,7 +8,7 @@ import {
   IdempotencyKeySchema,
   canonicalizeJson,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { and, eq } from "drizzle-orm";
 
 import type { EngagementRepository, EngagementWriteTransaction } from "./repository.js";

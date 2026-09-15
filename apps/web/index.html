@@ -3,15 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/brand/stonehush-icon.svg" />
+    <meta name="theme-color" content="#000000" />
     <script>
       (() => {
         let preference = "system";
         let family = "smoked";
         const families = ["smoked", "void", "instrument", "grove", "ember", "iris"];
         try {
-          const stored = localStorage.getItem("blackglass.theme");
+          const stored = localStorage.getItem("stonehush.theme");
           if (stored === "light" || stored === "dark" || stored === "system") preference = stored;
-          const storedFamily = localStorage.getItem("blackglass.themeFamily");
+          const storedFamily = localStorage.getItem("stonehush.themeFamily");
           if (storedFamily && families.includes(storedFamily)) family = storedFamily;
         } catch {}
         const resolved =
@@ -45,23 +47,23 @@
         };
         const clamp = (value, minimum, maximum) => Math.min(Math.max(value, minimum), maximum);
         const sidebarWidth = clamp(
-          number("blackglass.layout.sidebar.width", 256),
+          number("stonehush.layout.sidebar.width", 256),
           208,
           Math.max(208, innerWidth - 640),
         );
         const consoleHeight = clamp(
-          number("blackglass.layout.console.height", 320),
+          number("stonehush.layout.console.height", 320),
           220,
           Math.max(220, innerHeight * 0.6),
         );
         document.documentElement.dataset.sidebarOpen = String(
-          boolean("blackglass.layout.sidebar.open", true),
+          boolean("stonehush.layout.sidebar.open", true),
         );
         document.documentElement.style.setProperty("--shell-sidebar-width", `${sidebarWidth}px`);
         document.documentElement.style.setProperty("--shell-console-height", `${consoleHeight}px`);
       })();
     </script>
-    <title>Blackglass</title>
+    <title>Stonehush</title>
   </head>
   <body>
     <div id="root"></div>

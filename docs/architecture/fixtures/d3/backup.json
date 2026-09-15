@@ -7,7 +7,7 @@
       "id": "d3.backup.clean-consistent",
       "description": "A complete backup copies a consistent SQLite snapshot and every published artifact digest.",
       "given": {
-        "protocol": "blackglass-backup-v1",
+        "protocol": "stonehush-backup-v1",
         "destinationEmpty": true,
         "publishedArtifacts": [
           {

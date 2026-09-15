@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { ADVISOR_SETTINGS_DEFAULTS } from "@blackglass/contracts";
-import { ThemeProvider } from "@blackglass/ui";
+import { ADVISOR_SETTINGS_DEFAULTS } from "@stonehush/contracts";
+import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -16,7 +16,7 @@ import { AdvisorSettingsQueryError, fetchAdvisorSettings } from "./advisor-setti
 const stored = {
   endpointBaseUrl: "http://127.0.0.1:11434/v1",
   modelId: "qwen3:8b",
-  apiKeyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+  apiKeyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
   requestBudget: 25,
   rawResponseVisibility: false,
   publicEndpointOptIn: true,
@@ -29,7 +29,7 @@ const okStatus = {
   endpointHost: "127.0.0.1",
   publicEndpoint: false,
   optIn: true,
-  keyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+  keyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
   keyPresent: true,
   latencyMs: 12,
   reason: "ok",
@@ -146,7 +146,7 @@ describe("AdvisorSection", () => {
     expect(save.disabled).toBe(false);
     expect((screen.getByLabelText("Model id") as HTMLInputElement).value).toBe("qwen3:8b");
     expect((screen.getByLabelText("API key variable") as HTMLInputElement).value).toBe(
-      "BLACKGLASS_ADVISOR_API_KEY",
+      "STONEHUSH_ADVISOR_API_KEY",
     );
     expect(
       screen.getByRole("switch", { name: "Public endpoint opt-in" }).getAttribute("aria-checked"),
@@ -220,7 +220,7 @@ describe("AdvisorSection", () => {
     expect(body).toEqual({
       endpointBaseUrl: "http://127.0.0.1:11434/v1",
       modelId: "qwen3:8b",
-      apiKeyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+      apiKeyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
       publicEndpointOptIn: true,
     });
     await waitFor(() => expect(statusCalls()).toBeGreaterThanOrEqual(2));

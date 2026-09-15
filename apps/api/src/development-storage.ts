@@ -101,7 +101,7 @@ async function validateDevelopmentStorage(
   if (uid !== undefined && stats.uid !== uid) throw new DevelopmentStorageError("owner");
   if ((stats.mode & 0o077) !== 0) throw new DevelopmentStorageError("permissions");
 
-  const probePath = path.join(dataDirectory, `.blackglass-write-probe-${probeName()}`);
+  const probePath = path.join(dataDirectory, `.stonehush-write-probe-${probeName()}`);
   let handle: FileHandle | undefined;
   let created = false;
   try {

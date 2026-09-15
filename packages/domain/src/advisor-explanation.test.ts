@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADVISOR_EXPLANATION_PROFILE,
   AdvisorExplanationSchema,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import {
   ADVISOR_EXPLANATION_PROMPT_VERSION,

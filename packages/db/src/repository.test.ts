@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { SavedScopeRule } from "@blackglass/contracts";
+import type { SavedScopeRule } from "@stonehush/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DATABASE_FILENAME, openEngagementDatabase, DATABASE_SCHEMA_VERSION } from "./database.js";
@@ -37,7 +37,7 @@ interface Fixture {
 const fixtures: Fixture[] = [];
 
 function createFixture(): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-db-test-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-db-test-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   let idIndex = 0;

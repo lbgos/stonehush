@@ -474,10 +474,18 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  /* Single base size for all interface text. Every surface uses the 13px
+     base, 12px secondary, or 11px/10px micro tiers on top of this, so
+     elements without an explicit text utility still render at base size
+     instead of the 16px browser default. */
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -764,8 +772,8 @@ html[data-reduced-motion="true"] *::after {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #d6d9d3;
-  border: 2px solid #fff;
+  background: var(--background);
+  border: 2px solid var(--primary);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }
@@ -774,8 +782,8 @@ html[data-reduced-motion="true"] *::after {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #d6d9d3;
-  border: 2px solid #fff;
+  background: var(--background);
+  border: 2px solid var(--primary);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
   cursor: pointer;
 }

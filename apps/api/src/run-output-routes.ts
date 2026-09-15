@@ -5,8 +5,8 @@ import {
   RunOutputParamsSchema,
   RunOutputResponseSchema,
   type RunOutputResponse,
-} from "@blackglass/contracts";
-import type { RunOutputRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { RunOutputRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import type { EvidenceStore } from "./evidence/evidence-store.js";

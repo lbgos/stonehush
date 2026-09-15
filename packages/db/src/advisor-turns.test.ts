@@ -11,7 +11,7 @@ import type { ReserveAdvisorTurnInput } from "./advisor-turns.js";
 import { openEngagementDatabase } from "./database.js";
 import { EngagementRepository } from "./repository.js";
 import { advisorTurns } from "./schema.js";
-import type { AdvisorSuppliedEvidenceId } from "@blackglass/contracts";
+import type { AdvisorSuppliedEvidenceId } from "@stonehush/contracts";
 
 interface Fixture {
   directory: string;
@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 function createFixture(nowIso = "2026-08-12T12:00:00.000Z"): Fixture {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-advisor-turns-test-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-advisor-turns-test-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   const engagements = new EngagementRepository(database.db);

@@ -1,7 +1,7 @@
 import {
   RunOutputResponseSchema,
   type RunOutputResponse,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, skipToken, useQuery } from "@tanstack/react-query";
 
 export const RUN_OUTPUT_QUERY_ERROR_MESSAGE = "The raw output request failed.";

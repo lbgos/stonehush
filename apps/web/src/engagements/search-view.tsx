@@ -1,5 +1,5 @@
-import type { EngagementSearchResponse } from "@blackglass/contracts";
-import { LoadingRegion, RecoverableError, Skeleton } from "@blackglass/ui";
+import type { EngagementSearchResponse } from "@stonehush/contracts";
+import { LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
 import { useState } from "react";
 
 import { useEngagementSearchQuery } from "./search-query.js";

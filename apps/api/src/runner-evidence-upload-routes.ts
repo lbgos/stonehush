@@ -3,7 +3,7 @@ import {
   CompleteEvidenceUploadRequestSchema,
   EVIDENCE_DECLARED_SIZE_MAX,
   OpaqueUploadIdSchema,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import type { EvidencePublicationService } from "./evidence/evidence-publication.js";

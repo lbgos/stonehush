@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { EngagementRepository, openEngagementDatabase } from "@blackglass/db";
+import { EngagementRepository, openEngagementDatabase } from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
@@ -21,7 +21,7 @@ afterEach(async () => {
 
 async function createRepositoryBackedApp() {
   const dataDirectory = await mkdtemp(
-    path.join(tmpdir(), "blackglass-engagement-route-test-"),
+    path.join(tmpdir(), "stonehush-engagement-route-test-"),
   );
   temporaryDirectories.push(dataDirectory);
   await chmod(dataDirectory, 0o700);
@@ -258,7 +258,7 @@ describe("engagement query routes", () => {
   });
 
   it("does not reflect unexpected repository exceptions", async () => {
-    const marker = "SQL failure at /private/blackglass.sqlite3";
+    const marker = "SQL failure at /private/stonehush.sqlite3";
     const app = buildApp({
       engagementRepository: {
         getEngagement() {

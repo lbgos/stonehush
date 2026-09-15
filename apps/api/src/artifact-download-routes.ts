@@ -4,8 +4,8 @@ import {
   ArtifactContentParamsSchema,
   ArtifactDownloadErrorSchema,
   type ArtifactDownloadError,
-} from "@blackglass/contracts";
-import type { EvidenceGrantRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { EvidenceGrantRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 import type { EvidenceStore } from "./evidence/evidence-store.js";

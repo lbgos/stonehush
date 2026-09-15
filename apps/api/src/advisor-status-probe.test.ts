@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { ConnectionTestResultSchema } from "@blackglass/contracts";
+import { ConnectionTestResultSchema } from "@stonehush/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -156,7 +156,7 @@ describe("probeAdvisorEndpoint", () => {
 
     const fetchImpl = vi.fn(async () => new Response(null, { status: 200 }));
     await expect(
-      probeAdvisorEndpoint("http://blackglass-no-such-host.invalid/v1", {
+      probeAdvisorEndpoint("http://stonehush-no-such-host.invalid/v1", {
         network: { fetchImpl },
         timeoutMs: 2_000,
       }),

@@ -256,6 +256,32 @@ describe("engagement mutations", () => {
     );
     client.clear();
   });
+
+  it("reuses the create key for reordered equivalent targets", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockImplementation(() => Promise.resolve(response(engagement, 201)));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createAppQueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(() => useCreateEngagementMutation(), { wrapper });
+    const input = { name: "Target lab", kind: "lab" as const, autoContinueWarnings: false };
+
+    result.current.mutate({ ...input, targets: ["198.51.100.10", "192.0.2.10"] });
+    await waitFor(() => expect(result.current.isError).toBe(true));
+    result.current.mutate({ ...input, targets: ["192.0.2.10", "198.51.100.10"] });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const keys = fetchMock.mock.calls.map((call) => {
+      const init = call[1] as RequestInit;
+      return (init.headers as Record<string, string>)["Idempotency-Key"];
+    });
+    expect(keys).toHaveLength(2);
+    expect(keys[0]).toBe(keys[1]);
+    client.clear();
+  });
 });
 
 describe("scope revision mutations", () => {

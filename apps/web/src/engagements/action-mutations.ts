@@ -3,10 +3,11 @@ import {
   AddScopeAndRunActionRequestSchema,
   CancelActionRequestSchema,
   ContinueActionRequestSchema,
+  ContinueLateWarningActionRequestSchema,
   CreateActionRequestSchema,
   type PersistedAction,
   type SavedScopeRule,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef } from "react";
 
@@ -18,6 +19,7 @@ import {
 import { createIntentKeyHolder, requestFingerprint } from "./idempotency.js";
 import { sendActionMutation } from "./mutations.js";
 import { ENGAGEMENTS_QUERY_KEY, engagementDetailQueryKey } from "./query.js";
+import { runHistoryQueryKey } from "./run-history-query.js";
 
 const ERROR_STATUSES = new Set([400, 404, 409, 500, 503]);
 
@@ -54,6 +56,29 @@ export async function continueActionRequest(
   const body = ContinueActionRequestSchema.parse(input);
   return sendActionMutation(
     `/api/v1/engagements/${engagementId}/actions/${actionId}/continue`,
+    {
+      body,
+      idempotencyKey,
+      ...(signal ? { signal } : {}),
+    },
+  );
+}
+
+export async function continueLateWarningActionRequest(
+  engagementId: string,
+  actionId: string,
+  input: {
+    expectedRevision: number;
+    snapshotVersion: number;
+    snapshotBinding: string;
+    pendingEventId: number;
+  },
+  idempotencyKey: string,
+  signal?: AbortSignal,
+): Promise<PersistedAction> {
+  const body = ContinueLateWarningActionRequestSchema.parse(input);
+  return sendActionMutation(
+    `/api/v1/engagements/${engagementId}/actions/${actionId}/continue-late-warning`,
     {
       body,
       idempotencyKey,
@@ -178,6 +203,9 @@ export function useCreateActionMutation() {
           ...body,
         }),
       );
+      // The readiness summary and run panel read run history, so a newly
+      // planned action must refresh them instead of leaving "no runs yet".
+      void queryClient.invalidateQueries({ queryKey: runHistoryQueryKey(input.engagementId) });
     },
     onError: async (error, input) => {
       if (isRevisionConflict(error)) {
@@ -224,6 +252,57 @@ export function useContinueActionMutation() {
           expectedRevision: input.expectedRevision,
           snapshotVersion: input.snapshotVersion,
           snapshotBinding: input.snapshotBinding,
+        }),
+      );
+    },
+    onError: async (error, input) => {
+      if (isRevisionConflict(error)) {
+        await refreshAfterConflict(queryClient, input.engagementId);
+      }
+    },
+  });
+}
+
+export function useContinueLateWarningActionMutation() {
+  const queryClient = useQueryClient();
+  const keys = useRef(createIntentKeyHolder());
+
+  return useMutation({
+    mutationFn: (input: {
+      engagementId: string;
+      actionId: string;
+      expectedRevision: number;
+      snapshotVersion: number;
+      snapshotBinding: string;
+      pendingEventId: number;
+    }) => {
+      const body = ContinueLateWarningActionRequestSchema.parse({
+        expectedRevision: input.expectedRevision,
+        snapshotVersion: input.snapshotVersion,
+        snapshotBinding: input.snapshotBinding,
+        pendingEventId: input.pendingEventId,
+      });
+      const intent = requestFingerprint({
+        engagementId: input.engagementId,
+        actionId: input.actionId,
+        ...body,
+      });
+      return continueLateWarningActionRequest(
+        input.engagementId,
+        input.actionId,
+        body,
+        keys.current.keyFor(intent),
+      );
+    },
+    onSuccess: (_action, input) => {
+      keys.current.reset(
+        requestFingerprint({
+          engagementId: input.engagementId,
+          actionId: input.actionId,
+          expectedRevision: input.expectedRevision,
+          snapshotVersion: input.snapshotVersion,
+          snapshotBinding: input.snapshotBinding,
+          pendingEventId: input.pendingEventId,
         }),
       );
     },

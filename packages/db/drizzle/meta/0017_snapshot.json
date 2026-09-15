@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a2bdde15-1a51-47ac-83aa-2f58651c386c",
+  "id": "4dc9f913-f91d-4af2-9fc3-d38ecaf1cfec",
   "prevId": "2dac2e06-e8db-4b13-a17e-eca3698cb47e",
   "tables": {
     "action_covered_destinations": {
@@ -818,8 +818,8 @@
         }
       },
       "foreignKeys": {
-        "advisor_turn_belongs_to_engagement": {
-          "name": "advisor_turn_belongs_to_engagement",
+        "advisor_turns_engagement_id_engagements_id_fk": {
+          "name": "advisor_turns_engagement_id_engagements_id_fk",
           "tableFrom": "advisor_turns",
           "tableTo": "engagements",
           "columnsFrom": [
@@ -1872,6 +1872,14 @@
           "notNull": true,
           "autoincrement": false
         },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
         "created_at": {
           "name": "created_at",
           "type": "text",
@@ -1939,6 +1947,10 @@
         "finding_evidence_json": {
           "name": "finding_evidence_json",
           "value": "json_valid(\"findings\".\"evidence_artifact_ids_json\") and length(cast(\"findings\".\"evidence_artifact_ids_json\" as blob)) <= 8192"
+        },
+        "finding_revision": {
+          "name": "finding_revision",
+          "value": "\"findings\".\"revision\" >= 1"
         },
         "finding_created_at": {
           "name": "finding_created_at",
@@ -3427,71 +3439,6 @@
         "settings_updated_at": {
           "name": "settings_updated_at",
           "value": "length(\"settings\".\"updated_at\") >= 20"
-        }
-      }
-    },
-    "engagement_next_steps": {
-      "name": "engagement_next_steps",
-      "columns": {
-        "engagement_id": {
-          "name": "engagement_id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "next_step": {
-          "name": "next_step",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "engagement_next_steps_engagement_id_engagements_id_fk": {
-          "name": "engagement_next_steps_engagement_id_engagements_id_fk",
-          "tableFrom": "engagement_next_steps",
-          "tableTo": "engagements",
-          "columnsFrom": [
-            "engagement_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "engagement_next_step_length": {
-          "name": "engagement_next_step_length",
-          "value": "`next_step` is null or length(`next_step`) between 1 and 280"
-        },
-        "engagement_next_step_updated_at": {
-          "name": "engagement_next_step_updated_at",
-          "value": "length(\"engagement_next_steps\".\"updated_at\") >= 20"
-        },
-        "engagement_next_step_revision": {
-          "name": "engagement_next_step_revision",
-          "value": "\"engagement_next_steps\".\"revision\" >= 1"
         }
       }
     }

@@ -4,8 +4,8 @@ import type {
   SavedScopeRule,
   ScopePortRange,
   ScopePortRangeInput,
-} from "@blackglass/contracts";
-import { normalizeScopePortRanges, normalizeTarget } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { normalizeScopePortRanges, normalizeTarget } from "@stonehush/domain";
 
 import { createBrowserUuid } from "../lib/browser-uuid.js";
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { PersistedActionSchema, type PersistedAction } from "@blackglass/contracts";
+import { PersistedActionSchema, type PersistedAction } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";

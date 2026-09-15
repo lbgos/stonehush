@@ -2,7 +2,7 @@ import {
   GetSettingsResponseSchema,
   type RunnerSettings,
   type UpdateSettingsRequest,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const RUNNER_SETTINGS_QUERY_KEY = ["settings", "runner"] as const;

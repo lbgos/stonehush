@@ -185,7 +185,7 @@ test("extracts only local Markdown targets", () => {
 });
 
 test("reports missing local links", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   await writeFile(path.join(root, "README.md"), "[missing](./missing.md)\n", "utf8");
 
   assert.deepEqual(await checkDocumentation(root), [
@@ -194,7 +194,7 @@ test("reports missing local links", async () => {
 });
 
 test("accepts links to existing files", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   await mkdir(path.join(root, "docs"));
   await writeFile(path.join(root, "README.md"), "[guide](./docs/guide.md)\n", "utf8");
   await writeFile(path.join(root, "docs/guide.md"), "# Guide\n", "utf8");
@@ -203,7 +203,7 @@ test("accepts links to existing files", async () => {
 });
 
 test("reports review metadata", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   await writeFile(path.join(root, "README.md"), "Reference studied: example\n", "utf8");
 
   const errors = await checkDocumentation(root);
@@ -212,7 +212,7 @@ test("reports review metadata", async () => {
 });
 
 test("accepts a complete reserved D1 fixture suite through the documentation check", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   await writeFixtureSuite(root);
 
   assert.deepEqual(await checkD1Fixtures(root), []);
@@ -220,7 +220,7 @@ test("accepts a complete reserved D1 fixture suite through the documentation che
 });
 
 test("requires the D1 fixture suite when the accepted ADR marker exists", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const architectureDirectory = path.join(root, "docs", "architecture");
   await mkdir(architectureDirectory, { recursive: true });
   await writeFile(
@@ -235,7 +235,7 @@ test("requires the D1 fixture suite when the accepted ADR marker exists", async 
 });
 
 test("reports fixture version, shape, and duplicate case IDs", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await writeFixtureSuite(root);
   const scopePath = path.join(fixtureDirectory, "scope-comparison.json");
   const scopeFixture = JSON.parse(await readFile(scopePath, "utf8"));
@@ -251,7 +251,7 @@ test("reports fixture version, shape, and duplicate case IDs", async () => {
 });
 
 test("requires exact malformed target vectors and error codes", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await writeFixtureSuite(root);
   const normalizationPath = path.join(fixtureDirectory, "normalization.json");
   const validFixture = JSON.parse(await readFile(normalizationPath, "utf8"));
@@ -302,7 +302,7 @@ test("requires exact malformed target vectors and error codes", async () => {
 });
 
 test("requires the exact positive zone-leading-25 target vector", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await writeFixtureSuite(root);
   const normalizationPath = path.join(fixtureDirectory, "normalization.json");
   const validFixture = JSON.parse(await readFile(normalizationPath, "utf8"));
@@ -352,7 +352,7 @@ test("requires the exact positive zone-leading-25 target vector", async () => {
 });
 
 test("pins every action-snapshot-json-v1 critical input and exact outcome", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await writeFixtureSuite(root);
   const fixturePath = path.join(fixtureDirectory, "snapshot-canonicalization.json");
   const validFixture = JSON.parse(await readFile(fixturePath, "utf8"));
@@ -398,7 +398,7 @@ test("pins every action-snapshot-json-v1 critical input and exact outcome", asyn
 });
 
 test("reports malformed JSON and a missing required fixture", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = path.join(root, "docs", "architecture", "fixtures", "d1");
   await mkdir(fixtureDirectory, { recursive: true });
   await writeFile(path.join(fixtureDirectory, "normalization.json"), "{\n", "utf8");
@@ -409,7 +409,7 @@ test("reports malformed JSON and a missing required fixture", async () => {
 });
 
 test("reports secret-bearing fields and non-reserved target content", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await writeFixtureSuite(root);
   const warningPath = path.join(fixtureDirectory, "warning-flow.json");
   const warningFixture = JSON.parse(await readFile(warningPath, "utf8"));
@@ -437,7 +437,7 @@ test("reports secret-bearing fields and non-reserved target content", async () =
 });
 
 test("allows only the synthetic lab convention in target-bearing fields", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await writeFixtureSuite(root);
   const normalizationPath = path.join(fixtureDirectory, "normalization.json");
   const normalizationFixture = JSON.parse(await readFile(normalizationPath, "utf8"));
@@ -464,7 +464,7 @@ test("allows only the synthetic lab convention in target-bearing fields", async 
 });
 
 test("reports encoded mapped IPv6 and Unicode live targets", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await writeFixtureSuite(root);
   const normalizationPath = path.join(fixtureDirectory, "normalization.json");
   const normalizationFixture = JSON.parse(await readFile(normalizationPath, "utf8"));
@@ -549,7 +549,7 @@ test("encodes exact D1 accepted and just-over boundary vectors", async () => {
 });
 
 test("accepts the complete pinned d2-v1 fixture suite", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   await copyD2FixtureSuite(root);
 
   assert.deepEqual(await checkD2Fixtures(root), []);
@@ -557,7 +557,7 @@ test("accepts the complete pinned d2-v1 fixture suite", async () => {
 });
 
 test("requires the D2 fixture suite when the accepted ADR marker exists", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const architectureDirectory = path.join(root, "docs", "architecture");
   await mkdir(architectureDirectory, { recursive: true });
   await writeFile(
@@ -572,7 +572,7 @@ test("requires the D2 fixture suite when the accepted ADR marker exists", async 
 });
 
 test("reports D2 version, profile, kind, shape, duplicate IDs, and unexpected cases", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD2FixtureSuite(root);
   const statePath = path.join(fixtureDirectory, "state-machine.json");
   const stateFixture = JSON.parse(await readFile(statePath, "utf8"));
@@ -598,7 +598,7 @@ test("reports D2 version, profile, kind, shape, duplicate IDs, and unexpected ca
 });
 
 test("pins every D2 case critical input field", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD2FixtureSuite(root);
 
   for (const fileName of d2FixtureKinds.keys()) {
@@ -622,7 +622,7 @@ test("pins every D2 case critical input field", async () => {
 });
 
 test("pins every D2 case exact outcome", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD2FixtureSuite(root);
 
   for (const fileName of d2FixtureKinds.keys()) {
@@ -647,7 +647,7 @@ test("pins every D2 case exact outcome", async () => {
 });
 
 test("reports malformed, missing, misplaced, and unexpected D2 fixtures", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD2FixtureSuite(root);
   await writeFile(path.join(fixtureDirectory, "state-machine.json"), "{\n", "utf8");
   await writeFile(
@@ -667,7 +667,7 @@ test("reports malformed, missing, misplaced, and unexpected D2 fixtures", async 
 });
 
 test("accepts the complete pinned d3-v1 fixture suite", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   await copyD3FixtureSuite(root);
 
   assert.deepEqual(await checkD3Fixtures(root), []);
@@ -675,7 +675,7 @@ test("accepts the complete pinned d3-v1 fixture suite", async () => {
 });
 
 test("requires the D3 fixture suite when the accepted ADR marker exists", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const architectureDirectory = path.join(root, "docs", "architecture");
   await mkdir(architectureDirectory, { recursive: true });
   await writeFile(
@@ -690,7 +690,7 @@ test("requires the D3 fixture suite when the accepted ADR marker exists", async 
 });
 
 test("reports D3 version, profile, kind, shape, duplicate IDs, and unexpected cases", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD3FixtureSuite(root);
   const publicationPath = path.join(fixtureDirectory, "publication.json");
   const publicationFixture = JSON.parse(await readFile(publicationPath, "utf8"));
@@ -724,7 +724,7 @@ test("reports D3 version, profile, kind, shape, duplicate IDs, and unexpected ca
 });
 
 test("pins every D3 case critical input field", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD3FixtureSuite(root);
 
   for (const fileName of d3FixtureKinds.keys()) {
@@ -748,7 +748,7 @@ test("pins every D3 case critical input field", async () => {
 });
 
 test("pins every D3 case exact outcome", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD3FixtureSuite(root);
 
   for (const fileName of d3FixtureKinds.keys()) {
@@ -773,7 +773,7 @@ test("pins every D3 case exact outcome", async () => {
 });
 
 test("reports malformed, missing, misplaced, and unexpected D3 fixtures", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-docs-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-docs-"));
   const fixtureDirectory = await copyD3FixtureSuite(root);
   await writeFile(path.join(fixtureDirectory, "publication.json"), "{\n", "utf8");
   await writeFile(

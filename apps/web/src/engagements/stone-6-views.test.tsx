@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { ThemeProvider } from "@blackglass/ui";
+import { ThemeProvider } from "@stonehush/ui";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FfufGroupView } from "./ffuf-group-view.js";
 import { FfufWordlistView } from "./ffuf-wordlist-view.js";
@@ -11,6 +11,19 @@ import { RunDiffView } from "./run-diff-view.js";
 import { SearchResultGroups } from "./search-view.js";
 
 afterEach(cleanup);
+
+beforeEach(() => {
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    value: vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+    })),
+  });
+});
 
 function renderWithTheme(element: React.ReactElement) {
   return render(<ThemeProvider>{element}</ThemeProvider>);

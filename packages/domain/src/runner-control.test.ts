@@ -1,4 +1,4 @@
-import type { RunState } from "@blackglass/contracts";
+import type { RunState } from "@stonehush/contracts";
 import { describe, expect, it } from "vitest";
 
 import leaseFixtureData from "../../../docs/architecture/fixtures/d2/lease-events.json" with {

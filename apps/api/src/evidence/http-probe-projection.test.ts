@@ -4,8 +4,8 @@ import { chmod, mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { EngagementRepository, HttpProbeRepository, openEngagementDatabase } from "@blackglass/db";
-import { loadEvidenceNative } from "@blackglass/evidence-native";
+import { EngagementRepository, HttpProbeRepository, openEngagementDatabase } from "@stonehush/db";
+import { loadEvidenceNative } from "@stonehush/evidence-native";
 import { EvidenceStore } from "./evidence-store.js";
 import { HttpProbeProjectionService } from "./http-probe-projection.js";
 

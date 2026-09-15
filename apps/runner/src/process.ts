@@ -3,7 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 
-import { EVIDENCE_QUOTA_DEFAULTS } from "@blackglass/contracts";
+import { EVIDENCE_QUOTA_DEFAULTS } from "@stonehush/contracts";
 
 import { BoundedCollector, DEFAULT_COMBINED_RETAINED_OUTPUT } from "./bounded-output.js";
 import { buildFakeActionArgv, controlledEnv, type FakeActionRequest } from "./fake-action.js";

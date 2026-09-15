@@ -1,8 +1,8 @@
-import { Status } from "@blackglass/ui";
+import { Status } from "@stonehush/ui";
 import { Link } from "@tanstack/react-router";
 
 import { useAdvisorStatusQuery } from "./advisor-status-query.js";
-import type { AdvisorStatus } from "@blackglass/contracts";
+import type { AdvisorStatus } from "@stonehush/contracts";
 
 function SettingsLink() {
   return (

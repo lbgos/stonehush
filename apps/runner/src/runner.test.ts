@@ -1,8 +1,12 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { chmod, link, mkdir, rm, readdir, symlink, truncate, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { chmod, link, mkdir, mkdtemp, rm, readdir, symlink, truncate, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeAll, afterAll, describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
 import { BoundedCollector, FRAME_LIMIT } from "./bounded-output.js";
@@ -15,7 +19,7 @@ import {
   loadOutboxEntry,
   removeOutboxAtomically,
 } from "./outbox.js";
-import { type ActionSnapshot, AcquireRunnerLeaseResponseSchema, commandJsonV1RunnerAppendStartedDigest, EVIDENCE_QUOTA_DEFAULTS } from "@blackglass/contracts";
+import { type ActionSnapshot, AcquireRunnerLeaseResponseSchema, commandJsonV1RunnerAppendStartedDigest, EVIDENCE_QUOTA_DEFAULTS } from "@stonehush/contracts";
 import { createRunnerLoop, prepareFfufExecution, prepareNmapExecution, runOnce, RunnerShutdownError } from "./runner.js";
 
 function fixtureActionSnapshot(actionId = "act-1"): ActionSnapshot {
@@ -72,19 +76,19 @@ beforeAll(async () => {
   await writeFile(p, s, { mode: 0o700 });
   await chmod(p, 0o700);
   fakeNmapPath = p;
-  process.env.BLACKGLASS_NMAP_EXECUTABLE = p;
+  process.env.STONEHUSH_NMAP_EXECUTABLE = p;
 });
 
 afterAll(async () => {
   if (fakeNmapPath !== null) {
     await rm(fakeNmapPath, { force: true }).catch(() => {});
   }
-  delete process.env.BLACKGLASS_NMAP_EXECUTABLE;
+  delete process.env.STONEHUSH_NMAP_EXECUTABLE;
 });
 
 describe("fake-action argv invariants", () => {
   it("shell metacharacters remain one literal argv value and never execute", async () => {
-    const tmp = path.join(tmpdir(), `blackglass-fake-argv-${Date.now()}`);
+    const tmp = path.join(tmpdir(), `stonehush-fake-argv-${Date.now()}`);
     await mkdir(tmp, { recursive: true });
     const sideEffect = path.join(tmp, "fixture-owned");
     const spec = buildFakeActionArgv(process.execPath, {
@@ -123,7 +127,7 @@ describe("fake-action argv invariants", () => {
   });
 
   it("spawn uses explicit argv array with shell:false", async () => {
-    const runRoot = path.join(tmpdir(), `blackglass-spawn-${Date.now()}`);
+    const runRoot = path.join(tmpdir(), `stonehush-spawn-${Date.now()}`);
     await mkdir(runRoot, { recursive: true });
     const spec = buildFakeActionArgv(process.execPath, {
       runId: "run-spawn-1",
@@ -155,13 +159,13 @@ describe("controlled environment", () => {
   });
 
   it("constructs predictable minimal environment", () => {
-    const env = controlledEnv("/var/lib/blackglass-runner/runs/run-fixture-18");
+    const env = controlledEnv("/var/lib/stonehush-runner/runs/run-fixture-18");
     expect(env).toEqual({
       LANG: "C.UTF-8",
       LC_ALL: "C.UTF-8",
       TZ: "UTC",
       PATH: "/usr/bin:/bin",
-      TMPDIR: "/var/lib/blackglass-runner/runs/run-fixture-18/tmp",
+      TMPDIR: "/var/lib/stonehush-runner/runs/run-fixture-18/tmp",
     });
     expect((env as Record<string, string>).LD_PRELOAD).toBeUndefined();
   });
@@ -169,14 +173,14 @@ describe("controlled environment", () => {
 
 describe("working directory defenses", () => {
   it("rejects traversal via caller-controlled path", async () => {
-    const root = path.join(tmpdir(), `blackglass-wd-${Date.now()}`);
+    const root = path.join(tmpdir(), `stonehush-wd-${Date.now()}`);
     await mkdir(root, { recursive: true });
     await expect(createRunDirectory(root, "../outside", "1")).rejects.toThrow(/working_directory_escape|traversal/);
     await rm(root, { recursive: true, force: true });
   });
 
   it("creates isolated 0700 directory under managed root", async () => {
-    const root = path.join(tmpdir(), `blackglass-wd-ok-${Date.now()}`);
+    const root = path.join(tmpdir(), `stonehush-wd-ok-${Date.now()}`);
     const { runDir, tmpDir } = await createRunDirectory(root, "run-fixture-99", "1");
     expect(runDir.startsWith(root)).toBe(true);
     expect(tmpDir).toBe(path.join(runDir, "tmp"));
@@ -185,8 +189,8 @@ describe("working directory defenses", () => {
   });
 
   it("rejects symlinked runRoot", async () => {
-    const real = path.join(tmpdir(), `blackglass-real-${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    const link = path.join(tmpdir(), `blackglass-link-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const real = path.join(tmpdir(), `stonehush-real-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const link = path.join(tmpdir(), `stonehush-link-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     await mkdir(real, { recursive: true });
     await symlink(real, link);
     await expect(createRunDirectory(link, "run-1", "1")).rejects.toThrow(/working_directory_escape|runRoot/);
@@ -227,7 +231,7 @@ describe("bounded output", () => {
   });
 
   it("child cannot deadlock on backpressure: excess drained", async () => {
-    const runRoot = path.join(tmpdir(), `blackglass-bp-${Date.now()}`);
+    const runRoot = path.join(tmpdir(), `stonehush-bp-${Date.now()}`);
     await mkdir(runRoot, { recursive: true });
     const res = await runSupervised({
       runId: "run-bp-1",
@@ -369,7 +373,7 @@ describe("redaction before buffering", () => {
 
 describe("cancellation and cleanup", () => {
   it("SIGTERM->SIGKILL escalation with truthful partial evidence", async () => {
-    const runRoot = path.join(tmpdir(), `blackglass-cancel-${Date.now()}`);
+    const runRoot = path.join(tmpdir(), `stonehush-cancel-${Date.now()}`);
     await mkdir(runRoot, { recursive: true });
     const handle = runSupervised({
       runId: "run-cancel-1",
@@ -386,7 +390,7 @@ describe("cancellation and cleanup", () => {
   }, 10000);
 
   it("latches cancellation requested before spawn", async () => {
-    const runRoot = path.join(tmpdir(), `blackglass-cancel-latch-${Date.now()}`);
+    const runRoot = path.join(tmpdir(), `stonehush-cancel-latch-${Date.now()}`);
     await mkdir(runRoot, { recursive: true });
     const handle = runSupervised({
       runId: "run-latch-1",
@@ -575,7 +579,7 @@ describe("self-fence monotonic", () => {
 
 describe("outbox crash consistency", () => {
   it("persists key/digest with fsync and reuses on retry, removes only after definitive response", async () => {
-    const dataDir = path.join(tmpdir(), `blackglass-outbox-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    const dataDir = path.join(tmpdir(), `stonehush-outbox-${Date.now()}-${Math.random().toString(16).slice(2)}`);
     const route = "/api/v1/runner/leases/lease-1/events";
     const operation = "append_started";
     const pathVal = { leaseId: "lease-1" };
@@ -586,9 +590,9 @@ describe("outbox crash consistency", () => {
       actorId: "runner-1",
       route,
       operation,
-      path: pathVal as unknown as import("@blackglass/contracts").JsonValue,
-      query: query as unknown as import("@blackglass/contracts").JsonValue,
-      body: body as unknown as import("@blackglass/contracts").JsonValue,
+      path: pathVal as unknown as import("@stonehush/contracts").JsonValue,
+      query: query as unknown as import("@stonehush/contracts").JsonValue,
+      body: body as unknown as import("@stonehush/contracts").JsonValue,
       digestProjection: commandJsonV1RunnerAppendStartedDigest,
     });
     expect(first.reused).toBe(false);
@@ -601,9 +605,9 @@ describe("outbox crash consistency", () => {
       actorId: "runner-1",
       route,
       operation,
-      path: pathVal as unknown as import("@blackglass/contracts").JsonValue,
-      query: query as unknown as import("@blackglass/contracts").JsonValue,
-      body: body as unknown as import("@blackglass/contracts").JsonValue,
+      path: pathVal as unknown as import("@stonehush/contracts").JsonValue,
+      query: query as unknown as import("@stonehush/contracts").JsonValue,
+      body: body as unknown as import("@stonehush/contracts").JsonValue,
       digestProjection: commandJsonV1RunnerAppendStartedDigest,
     });
     expect(second.reused).toBe(true);
@@ -617,16 +621,16 @@ describe("outbox crash consistency", () => {
   });
 
   it("retains outbox on network failure and validates safe filename", async () => {
-    const dataDir = path.join(tmpdir(), `blackglass-outbox2-${Date.now()}`);
+    const dataDir = path.join(tmpdir(), `stonehush-outbox2-${Date.now()}`);
     const entry = await getOrCreateOutboxEntry({
       dataDir,
       actorId: "runner-2",
       route: "/api/v1/runner/leases/lease-2/complete",
       operation: "complete",
-      path: { leaseId: "lease-2" } as unknown as import("@blackglass/contracts").JsonValue,
-      query: {} as unknown as import("@blackglass/contracts").JsonValue,
-      body: { runId: "run-2", sessionId: "sess-2", fence: "1", sequence: 2, terminalKind: "succeeded", reason: null } as unknown as import("@blackglass/contracts").JsonValue,
-      digestProjection: (await import("@blackglass/contracts")).commandJsonV1RunnerCompleteDigest,
+      path: { leaseId: "lease-2" } as unknown as import("@stonehush/contracts").JsonValue,
+      query: {} as unknown as import("@stonehush/contracts").JsonValue,
+      body: { runId: "run-2", sessionId: "sess-2", fence: "1", sequence: 2, terminalKind: "succeeded", reason: null } as unknown as import("@stonehush/contracts").JsonValue,
+      digestProjection: (await import("@stonehush/contracts")).commandJsonV1RunnerCompleteDigest,
     });
     // Simulate network failure: do not remove, file should remain
     const still = await loadOutboxEntry(dataDir, entry.entry.key);
@@ -640,15 +644,15 @@ describe("outbox crash consistency", () => {
   });
 
   it("file mode 0600 and no secret in entry", async () => {
-    const dataDir = path.join(tmpdir(), `blackglass-outbox3-${Date.now()}`);
+    const dataDir = path.join(tmpdir(), `stonehush-outbox3-${Date.now()}`);
     const { entry, file } = await getOrCreateOutboxEntry({
       dataDir,
       actorId: "runner-3",
       route: "/api/v1/runner/leases/lease-3/events",
       operation: "append_started",
-      path: { leaseId: "lease-3" } as unknown as import("@blackglass/contracts").JsonValue,
-      query: {} as unknown as import("@blackglass/contracts").JsonValue,
-      body: { runId: "run-3", sessionId: "sess-3", fence: "1", sequence: 1, payload: {} } as unknown as import("@blackglass/contracts").JsonValue,
+      path: { leaseId: "lease-3" } as unknown as import("@stonehush/contracts").JsonValue,
+      query: {} as unknown as import("@stonehush/contracts").JsonValue,
+      body: { runId: "run-3", sessionId: "sess-3", fence: "1", sequence: 1, payload: {} } as unknown as import("@stonehush/contracts").JsonValue,
       digestProjection: commandJsonV1RunnerAppendStartedDigest,
     });
     const stat = await import("node:fs/promises").then((m) => m.stat(file));
@@ -792,6 +796,105 @@ describe("runner loop shutdown", () => {
     const runs = await readdir(path.join(dataDir, "runs")).catch(() => []);
     expect(runs.length).toBe(0);
   });
+
+  it("CLI stays alive across idle polls and exits promptly on SIGTERM", async () => {
+    const apiRequire = createRequire(new URL("../../api/package.json", import.meta.url));
+    const tsxPkgPath = apiRequire.resolve("tsx/package.json");
+    const tsxPkg: { bin?: string | Record<string, string> } = JSON.parse(readFileSync(tsxPkgPath, "utf8"));
+    const binRel = typeof tsxPkg.bin === "string" ? tsxPkg.bin : tsxPkg.bin?.tsx;
+    if (!binRel) throw new Error("tsx executable not found; run pnpm install");
+    const tsxCli = path.join(path.dirname(tsxPkgPath), binRel);
+    const cliEntry = fileURLToPath(new URL("./index.ts", import.meta.url));
+
+    const cliDataDir = await mkdtemp(path.join(tmpdir(), "cli-idle-"));
+    const leaseTimes: number[] = [];
+    const server = createServer((req, res) => {
+      req.resume();
+      if (req.method === "POST" && req.url === "/api/v1/runner/handshake") {
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({ acceptedProtocol: "runner-control-v1", sessionId: "sess-cli-1", runnerId: "runner-cli-1", leaseAllowed: true, sessionPinned: true, registryPinned: false }),
+        );
+      } else if (req.method === "POST" && req.url === "/api/v1/runner/lease") {
+        leaseTimes.push(Date.now());
+        res.writeHead(409, { "content-type": "application/json" }).end(JSON.stringify({ code: "no_work" }));
+      } else {
+        res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ code: "not_found" }));
+      }
+    });
+    let child: ReturnType<typeof spawn> | undefined;
+    let closed = false;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve());
+      });
+      const bound = server.address();
+      if (bound === null || typeof bound === "string") throw new Error("loopback bind failed");
+
+      child = spawn(process.execPath, [tsxCli, "--conditions=development", cliEntry], {
+        env: {
+          ...process.env,
+          STONEHUSH_API_BASE_URL: `http://127.0.0.1:${bound.port}`,
+          STONEHUSH_RUNNER_DATA_DIR: cliDataDir,
+          STONEHUSH_RUNNER_ID: "runner-cli-1",
+          STONEHUSH_RUNNER_SECRET: "a".repeat(43),
+        },
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderrTail = "";
+      const stderr = child.stderr;
+      if (stderr) {
+        stderr.setEncoding("utf8");
+        stderr.on("data", (chunk: string) => {
+          stderrTail = (stderrTail + chunk).slice(-4000);
+        });
+      }
+      let spawnError: Error | null = null;
+      child.once("error", (err) => {
+        spawnError = err;
+      });
+      child.once("close", () => {
+        closed = true;
+      });
+      const describeChild = () =>
+        `exitCode=${String(child?.exitCode)} signalCode=${String(child?.signalCode)} spawnError=${spawnError?.message ?? "none"} stderr=${stderrTail}`;
+
+      const pollDeadline = Date.now() + 7000;
+      while (leaseTimes.length < 3 && child.exitCode === null && child.signalCode === null && Date.now() < pollDeadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(child.exitCode, `runner CLI exited while idle instead of polling (${describeChild()})`).toBeNull();
+      expect(child.signalCode, `runner CLI killed while idle instead of polling (${describeChild()})`).toBeNull();
+      expect(leaseTimes.length).toBeGreaterThanOrEqual(3);
+      let previous: number | undefined;
+      for (const at of leaseTimes) {
+        if (previous !== undefined) expect(at - previous).toBeGreaterThanOrEqual(750);
+        previous = at;
+      }
+      child.kill("SIGTERM");
+      const stopDeadline = Date.now() + 2500;
+      while (child.exitCode === null && child.signalCode === null && Date.now() < stopDeadline) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(child.signalCode, `runner CLI did not exit cleanly after SIGTERM (${describeChild()})`).toBeNull();
+      expect(child.exitCode, `runner CLI did not exit after SIGTERM (${describeChild()})`).toBe(0);
+      const frozen = leaseTimes.length;
+      await new Promise((r) => setTimeout(r, 1100));
+      expect(leaseTimes.length).toBe(frozen);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+      const runningChild = child;
+      if (runningChild && !closed) await new Promise((r) => runningChild.once("close", r));
+      await new Promise((r) => server.close(r));
+      await rm(cliDataDir, { recursive: true, force: true });
+    }
+  }, 12000);
 
   it("leased pre-spawn cancellation does not spawn child", async () => {
     const leaseResponse = {
@@ -1076,7 +1179,7 @@ describe("runner lease snapshot parsing (M4 seam)", () => {
   });
 
   it("runner acquireLease rejects untrusted mismatched response via schema (no execution)", async () => {
-    const tmp = path.join(tmpdir(), `blackglass-runner-mismatch-${Date.now()}`);
+    const tmp = path.join(tmpdir(), `stonehush-runner-mismatch-${Date.now()}`);
     await mkdir(tmp, { recursive: true });
     const originalFetch = globalThis.fetch;
     const run = {

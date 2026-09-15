@@ -1,5 +1,5 @@
-import type { Engagement } from "@blackglass/contracts";
-import { ADVISOR_FINDING_IDS_MAX } from "@blackglass/contracts";
+import type { Engagement } from "@stonehush/contracts";
+import { ADVISOR_FINDING_IDS_MAX } from "@stonehush/contracts";
 import {
   Button,
   EmptyState,
@@ -7,7 +7,7 @@ import {
   RecoverableError,
   Skeleton,
   StaleDataState,
-} from "@blackglass/ui";
+} from "@stonehush/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
@@ -28,6 +28,7 @@ import { RunHistoryPanel } from "./run-history-panel.js";
 import { SavedScopeEditor } from "./scope-editor.js";
 import { EngagementHttpProbesSection } from "./http-probe-surface.js";
 import { EngagementServicesSection } from "./service-surface.js";
+import { ExecutionTray } from "./workspace-tabs.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
 
 // Engagement detail tabs. Tab and selected-run state live in the route search
@@ -54,11 +55,17 @@ export function resolveEngagementTab(raw: unknown): EngagementTabId {
 
 export function EngagementWorkspace({
   engagementId,
+  pendingActionId,
+  selectedItemKey,
   selectedRunId,
+  selectedTargetId,
   tab,
 }: {
   engagementId?: string | undefined;
+  pendingActionId?: string | undefined;
+  selectedItemKey?: string | undefined;
   selectedRunId?: string | undefined;
+  selectedTargetId?: string | undefined;
   tab?: string | undefined;
 }) {
   const engagements = useEngagementsQuery();
@@ -127,7 +134,14 @@ export function EngagementWorkspace({
 
   const body =
     selected !== undefined ? (
-      <EngagementDetail engagement={selected} tab={tab} selectedRunId={selectedRunId} />
+      <EngagementDetail
+        engagement={selected}
+        pendingActionId={pendingActionId}
+        selectedItemKey={selectedItemKey}
+        selectedTargetId={selectedTargetId}
+        tab={tab}
+        selectedRunId={selectedRunId}
+      />
     ) : records.length === 0 ? (
       <div>
         <h1 className="mb-5 text-[26px] leading-none font-semibold tracking-[-0.04em]">Engagements</h1>
@@ -224,11 +238,17 @@ function selectDisplayedEngagement(listed: Engagement, detailed: Engagement | un
 
 function EngagementDetail({
   engagement,
+  pendingActionId,
+  selectedItemKey,
   selectedRunId,
+  selectedTargetId,
   tab,
 }: {
   engagement: Engagement;
+  pendingActionId?: string | undefined;
+  selectedItemKey?: string | undefined;
   selectedRunId?: string | undefined;
+  selectedTargetId?: string | undefined;
   tab?: string | undefined;
 }) {
   const detail = useEngagementDetailQuery(engagement.id);
@@ -237,6 +257,10 @@ function EngagementDetail({
   const runId = selectedRunId !== undefined && selectedRunId.length > 0 ? selectedRunId : undefined;
   const navigate = useNavigate();
   const archived = displayed.status === "archived";
+  // A paused first scan rides along in every workspace navigation so normal
+  // tab, run, and selection moves never strand its warning. It clears only
+  // when the route drops it, which the planner then reflects.
+  const actionSearch = pendingActionId === undefined ? {} : { action: pendingActionId };
   const {
     advisorDraft,
     closeAdvisor,
@@ -268,7 +292,81 @@ function EngagementDetail({
       to: "/engagements/$engagementId",
       params: { engagementId: displayed.id },
       search:
-        nextRunId.length > 0 ? { tab: activeTab, run: nextRunId } : { tab: activeTab },
+        nextRunId.length > 0
+          ? {
+              tab: activeTab,
+              run: nextRunId,
+              ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+              ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+              ...actionSearch,
+            }
+          : {
+              tab: activeTab,
+              ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+              ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+              ...actionSearch,
+            },
+    });
+  };
+
+  // Surface investigation context lives in the route search so browser Back
+  // steps through target and row selections instead of leaving the
+  // engagement. Selection navigations keep the scroll position; overlays
+  // restore row focus and scroll on close themselves.
+  const selectTarget = (target: string) => {
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: displayed.id },
+      resetScroll: false,
+      search: {
+        tab: "surface",
+        ...(runId === undefined ? {} : { run: runId }),
+        target,
+        ...actionSearch,
+      },
+    });
+  };
+
+  const selectSurfaceItem = (key: string | undefined) => {
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: displayed.id },
+      resetScroll: false,
+      search: {
+        tab: activeTab,
+        ...(runId === undefined ? {} : { run: runId }),
+        ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+        ...(key === undefined ? {} : { sel: key }),
+        ...actionSearch,
+      },
+    });
+  };
+
+  const openRunFromTray = (nextRunId: string) => {
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: displayed.id },
+      search: {
+        tab: "runs",
+        run: nextRunId,
+        ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+        ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+        ...actionSearch,
+      },
+    });
+  };
+
+  const openNotesFromSurface = () => {
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: displayed.id },
+      search: {
+        tab: "notes",
+        ...(runId === undefined ? {} : { run: runId }),
+        ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+        ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+        ...actionSearch,
+      },
     });
   };
 
@@ -328,9 +426,13 @@ function EngagementDetail({
               key={entry.id}
               to="/engagements/$engagementId"
               params={{ engagementId: displayed.id }}
-              search={
-                runId === undefined ? { tab: entry.id } : { tab: entry.id, run: runId }
-              }
+              search={{
+                tab: entry.id,
+                ...(runId === undefined ? {} : { run: runId }),
+                ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+                ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+                ...actionSearch,
+              }}
               aria-current={active ? "page" : undefined}
               className={`inline-flex min-h-11 items-center rounded-t-[10px] px-3 text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 active ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
@@ -352,20 +454,43 @@ function EngagementDetail({
         <div className="mt-5">
           <EngagementDeadlineSection archived={archived} engagementId={displayed.id} />
 
+          <ExecutionTray engagementId={displayed.id} onOpenRun={openRunFromTray} />
+
           <div className="mt-5">
-            <EngagementServicesSection engagementId={displayed.id} />
+            <EngagementServicesSection
+              archived={archived}
+              engagementId={displayed.id}
+              onOpenNotes={openNotesFromSurface}
+              onSelectKey={selectSurfaceItem}
+              onSelectTarget={selectTarget}
+              selectedKey={selectedItemKey}
+              selectedTarget={selectedTargetId}
+            />
           </div>
 
           <div className="mt-5">
-            <EngagementHttpProbesSection engagementId={displayed.id} />
+            <EngagementHttpProbesSection
+              engagementId={displayed.id}
+              onSelectKey={selectSurfaceItem}
+              selectedKey={selectedItemKey}
+            />
           </div>
 
           <div className="mt-5">
-            <EngagementFfufSection archived={archived} engagementId={displayed.id} />
+            <EngagementFfufSection
+              archived={archived}
+              engagementId={displayed.id}
+              onSelectKey={selectSurfaceItem}
+              selectedKey={selectedItemKey}
+            />
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
-            <ActionPlanner archived={archived} engagementId={displayed.id} />
+            <ActionPlanner
+              archived={archived}
+              engagementId={displayed.id}
+              pendingActionId={pendingActionId}
+            />
             <SavedScopeEditor archived={archived} engagementId={displayed.id} />
           </div>
         </div>

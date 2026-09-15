@@ -3,7 +3,7 @@ import {
   NMAP_MAX_SERVICES as MAX_SERVICES,
   NMAP_MAX_XML_BYTES as MAX_BYTES,
   type NmapServiceObservation,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { normalizeTarget } from "./normalize-target.js";
 
 const MAX_ATTRIBUTE_VALUE_LENGTH = 256;

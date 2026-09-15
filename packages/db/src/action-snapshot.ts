@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {
   ActionSnapshotDigestSchema,
   canonicalizeActionSnapshot,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 export type ActionSnapshotBindingResult =
   | { ok: true; binding: string; canonicalJson: string }

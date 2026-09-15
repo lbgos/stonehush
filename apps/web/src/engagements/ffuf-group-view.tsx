@@ -7,8 +7,8 @@ import {
   visibleFfufGroups,
   type FfufGroupableResult,
   type FfufHideState,
-} from "@blackglass/domain";
-import { Button } from "@blackglass/ui";
+} from "@stonehush/domain";
+import { Button } from "@stonehush/ui";
 import { useMemo, useState } from "react";
 
 /**

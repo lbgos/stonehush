@@ -10,9 +10,9 @@ import {
   EvidenceGrantRepository,
   SettingsRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
-import { ADVISOR_EXPLANATION_PROFILE } from "@blackglass/contracts";
-import { loadEvidenceNative } from "@blackglass/evidence-native";
+} from "@stonehush/db";
+import { ADVISOR_EXPLANATION_PROFILE } from "@stonehush/contracts";
+import { loadEvidenceNative } from "@stonehush/evidence-native";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -24,7 +24,7 @@ import { buildApp } from "../app.js";
 import { EvidenceStore } from "../evidence/evidence-store.js";
 import { buildStorageBackedApp } from "../runtime.js";
 
-const KEY_ENV_VAR = "BLACKGLASS_ADVISOR_TURNS_TEST_KEY";
+const KEY_ENV_VAR = "STONEHUSH_ADVISOR_TURNS_TEST_KEY";
 const KEY_VALUE = "lab-advisor-key-value";
 
 const temporaryDirectories: string[] = [];
@@ -166,7 +166,7 @@ async function createHarness(options?: {
   respond?: (body: Buffer) => AdvisorTransportRawResponse;
   env?: NodeJS.ProcessEnv;
 }): Promise<Harness> {
-  const directory = await mkdtemp(path.join(tmpdir(), "blackglass-advisor-turns-test-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "stonehush-advisor-turns-test-"));
   temporaryDirectories.push(directory);
   await chmod(directory, 0o700);
   const native = loadEvidenceNative();
@@ -820,7 +820,7 @@ describe("advisor turn routes", () => {
   });
 
   it("mounts turn routes through the storage-backed runtime factory", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "blackglass-advisor-turns-runtime-"));
+    const directory = await mkdtemp(path.join(tmpdir(), "stonehush-advisor-turns-runtime-"));
     temporaryDirectories.push(directory);
     await chmod(directory, 0o700);
     const app = await buildStorageBackedApp(directory);

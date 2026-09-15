@@ -5,7 +5,7 @@ import {
   EngagementNextStepSchema,
   UpdateEngagementNextStepRequestSchema,
   type EngagementNextStepRecord,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import * as schema from "./schema.js";
 import { engagementNextSteps, engagements } from "./schema.js";

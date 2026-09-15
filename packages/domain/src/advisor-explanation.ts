@@ -1,4 +1,4 @@
-import type { AdvisorEvidenceBlock } from "@blackglass/contracts";
+import type { AdvisorEvidenceBlock } from "@stonehush/contracts";
 
 import {
   ADVISOR_ANSWER_MAX_BYTES,
@@ -6,7 +6,7 @@ import {
   ADVISOR_CITATIONS_MAX,
   ADVISOR_EXPLANATION_PROFILE,
   ADVISOR_UNCERTAINTY_MAX_BYTES,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import {
   ADVISOR_CONTEXT_MAX_BYTES,

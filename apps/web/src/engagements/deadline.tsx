@@ -1,7 +1,7 @@
 import {
   UpdateEngagementDeadlineRequestSchema,
   type Engagement,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   Button,
   LoadingRegion,
@@ -9,7 +9,7 @@ import {
   Skeleton,
   StaleDataState,
   cn,
-} from "@blackglass/ui";
+} from "@stonehush/ui";
 import { useEffect, useState } from "react";
 
 import { engagementMutationMessage } from "./errors.js";

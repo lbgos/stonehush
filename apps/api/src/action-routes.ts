@@ -4,12 +4,12 @@ import {
   ActionResponseSchema,
   ActionRetryContextResponseSchema,
   type ActionQueryError,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   ActionRepositoryError,
   EngagementRepository,
   RepositoryResult,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type ActionQueries = Pick<

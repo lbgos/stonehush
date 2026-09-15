@@ -5,11 +5,11 @@ import {
   RunnerMutationQuerySchema,
   commandJsonV1RunnerArtifactGrantDigest,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EvidenceGrantRepository,
   OperatorCommandRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 
 import {

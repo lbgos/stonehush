@@ -8,7 +8,7 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 
 import * as schema from "./schema.js";
 
-export const DATABASE_FILENAME = "blackglass.sqlite3";
+export const DATABASE_FILENAME = "stonehush.sqlite3";
 
 // The logical schema version recorded in backup manifests. It is derived
 // from the migration journal so a new append-only migration bumps it without

@@ -9,7 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  */
 
 export const WORKSPACE_STATE_VERSION = 1 as const;
-export const WORKSPACE_STATE_KEY_PREFIX = "blackglass.workspace-state.v1." as const;
+export const WORKSPACE_STATE_KEY_PREFIX = "stonehush.workspace-state.v1." as const;
 
 export interface EngagementWorkspaceState {
   readonly version: typeof WORKSPACE_STATE_VERSION;

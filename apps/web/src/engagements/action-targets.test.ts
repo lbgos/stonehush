@@ -1,4 +1,4 @@
-import { PersistedActionSchema, type PersistedAction, type SavedScopeRule } from "@blackglass/contracts";
+import { PersistedActionSchema, type PersistedAction, type SavedScopeRule } from "@stonehush/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

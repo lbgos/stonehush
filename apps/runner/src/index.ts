@@ -9,7 +9,7 @@ if (!validated.ok) {
   process.exit(2);
 }
 
-console.log(`blackglass-runner starting session ${config.sessionId} api=${config.apiBaseUrl} runner=${config.runnerId}`);
+console.log(`stonehush-runner starting session ${config.sessionId} api=${config.apiBaseUrl} runner=${config.runnerId}`);
 
 const loop = createRunnerLoop(config);
 loop.start();

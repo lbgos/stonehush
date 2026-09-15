@@ -1,4 +1,4 @@
-import { cn } from "@blackglass/ui";
+import { Switch, cn } from "@stonehush/ui";
 import { createFileRoute } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 
@@ -15,25 +15,14 @@ const D5_NOTE =
 
 function GatedSwitch({ entry }: { entry: PluginCatalogEntry }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={entry.enabled}
-      aria-disabled="true"
-      aria-label={`${entry.enabled ? "Disable" : "Enable"} ${entry.name}`}
-      className={cn(
-        "flex h-[18px] w-8 shrink-0 cursor-default items-center rounded-full px-[2px] opacity-55",
-        entry.enabled ? "bg-primary" : "bg-foreground/15",
-      )}
-      title={D5_NOTE}
-    >
-      <span
-        className={cn(
-          "size-3.5 shrink-0 rounded-full bg-white transition-transform duration-100",
-          entry.enabled ? "translate-x-[14px]" : "translate-x-0",
-        )}
+    <span title={D5_NOTE} aria-disabled="true" className="inline-flex cursor-default">
+      <Switch
+        checked={entry.enabled}
+        label={`${entry.enabled ? "Disable" : "Enable"} ${entry.name}`}
+        disabled
+        className="cursor-default disabled:cursor-default"
       />
-    </button>
+    </span>
   );
 }
 
@@ -54,7 +43,7 @@ function PluginCard({ entry }: { entry: PluginCatalogEntry }) {
   return (
     <article className="density-row grid grid-cols-[minmax(0,1fr)_auto] items-start gap-2.5 rounded-[10px] border border-border bg-card p-3.5 text-left">
       <div>
-        <h3 className="m-0 text-sm font-semibold">{entry.name}</h3>
+        <h3 className="m-0 text-[13px] font-semibold">{entry.name}</h3>
         <p className="mt-1 mb-0 text-xs leading-[1.45] text-muted-foreground">{entry.description}</p>
         <div className="mt-2.5 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
           <span className="font-semibold text-primary">{entry.tier}</span>

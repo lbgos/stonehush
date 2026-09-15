@@ -1,5 +1,5 @@
-import { EngagementHttpProbesParamsSchema, EngagementHttpProbesResponseSchema } from "@blackglass/contracts";
-import type { HttpProbeRepository } from "@blackglass/db";
+import { EngagementHttpProbesParamsSchema, EngagementHttpProbesResponseSchema } from "@stonehush/contracts";
+import type { HttpProbeRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 function sendError(reply: FastifyReply, status: number, code: string) {

@@ -62,8 +62,8 @@ async function waitFor(description, operation, processState, timeout = DEADLINE_
 
 function startDev(environment = {}) {
   const dataDirectory =
-    environment.BLACKGLASS_DATA_DIR ??
-    path.join(tmpdir(), `blackglass-dev-smoke-${randomUUID()}`);
+    environment.STONEHUSH_DATA_DIR ??
+    path.join(tmpdir(), `stonehush-dev-smoke-${randomUUID()}`);
   if (path.isAbsolute(dataDirectory) && !dataDirectory.includes("\0")) {
     temporaryDataDirectories.add(dataDirectory);
   }
@@ -72,9 +72,9 @@ function startDev(environment = {}) {
     detached: true,
     env: {
       ...process.env,
-      BLACKGLASS_API_PORT: undefined,
-      BLACKGLASS_DATA_DIR: dataDirectory,
-      BLACKGLASS_WEB_PORT: undefined,
+      STONEHUSH_API_PORT: undefined,
+      STONEHUSH_DATA_DIR: dataDirectory,
+      STONEHUSH_WEB_PORT: undefined,
       ...environment,
     },
     shell: false,
@@ -280,8 +280,8 @@ test("pnpm dev honors distinct port overrides and stops on SIGTERM", async (t) =
   let webPort = await allocatePort();
   while (webPort === apiPort) webPort = await allocatePort();
   const dev = startDev({
-    BLACKGLASS_API_PORT: String(apiPort),
-    BLACKGLASS_WEB_PORT: String(webPort),
+    STONEHUSH_API_PORT: String(apiPort),
+    STONEHUSH_WEB_PORT: String(webPort),
   });
   t.after(() => {
     if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
@@ -307,19 +307,19 @@ test("pnpm dev honors distinct port overrides and stops on SIGTERM", async (t) =
 
 test("pnpm dev rejects invalid configuration before opening a listener", async () => {
   const webPort = await allocatePort();
-  const dev = startDev({ BLACKGLASS_API_PORT: "", BLACKGLASS_WEB_PORT: String(webPort) });
+  const dev = startDev({ STONEHUSH_API_PORT: "", STONEHUSH_WEB_PORT: String(webPort) });
 
   const result = await waitForExit(dev, "invalid configuration to fail");
   assert.notEqual(result.code, 0);
-  assert.match(dev.state.stderr, /BLACKGLASS_API_PORT must be a decimal integer/);
+  assert.match(dev.state.stderr, /STONEHUSH_API_PORT must be a decimal integer/);
   await waitForClosed(webPort);
 });
 
 test("pnpm dev rejects equal ports before opening a listener", async () => {
   const port = await allocatePort();
   const dev = startDev({
-    BLACKGLASS_API_PORT: String(port),
-    BLACKGLASS_WEB_PORT: String(port),
+    STONEHUSH_API_PORT: String(port),
+    STONEHUSH_WEB_PORT: String(port),
   });
 
   const result = await waitForExit(dev, "equal ports to fail");
@@ -332,13 +332,13 @@ test("unsafe development storage prevents both listeners with a path-free error"
   const apiPort = await allocatePort();
   let webPort = await allocatePort();
   while (webPort === apiPort) webPort = await allocatePort();
-  const dataDirectory = path.join(tmpdir(), `blackglass-secret-storage-${randomUUID()}`);
+  const dataDirectory = path.join(tmpdir(), `stonehush-secret-storage-${randomUUID()}`);
   await mkdir(dataDirectory, { mode: 0o700 });
   await chmod(dataDirectory, 0o750);
   const dev = startDev({
-    BLACKGLASS_API_PORT: String(apiPort),
-    BLACKGLASS_DATA_DIR: dataDirectory,
-    BLACKGLASS_WEB_PORT: String(webPort),
+    STONEHUSH_API_PORT: String(apiPort),
+    STONEHUSH_DATA_DIR: dataDirectory,
+    STONEHUSH_WEB_PORT: String(webPort),
   });
   t.after(() => {
     if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
@@ -366,8 +366,8 @@ test("API bind failure prevents the web listener and propagates failure", async 
   assert.ok(address && typeof address === "object");
   const webPort = await allocatePort();
   const dev = startDev({
-    BLACKGLASS_API_PORT: String(address.port),
-    BLACKGLASS_WEB_PORT: String(webPort),
+    STONEHUSH_API_PORT: String(address.port),
+    STONEHUSH_WEB_PORT: String(webPort),
   });
   t.after(() => {
     if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");
@@ -386,8 +386,8 @@ test("pnpm dev with native build registers evidence and advisor routes", async (
   let webPort = await allocatePort();
   while (webPort === apiPort) webPort = await allocatePort();
   const dev = startDev({
-    BLACKGLASS_API_PORT: String(apiPort),
-    BLACKGLASS_WEB_PORT: String(webPort),
+    STONEHUSH_API_PORT: String(apiPort),
+    STONEHUSH_WEB_PORT: String(webPort),
   });
   t.after(() => {
     if (!dev.state.exited) signalGroup(dev.child, "SIGKILL");

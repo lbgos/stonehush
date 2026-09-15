@@ -2,7 +2,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import type { Socket } from "node:net";
 import { describe, expect, it, vi } from "vitest";
 
-import { HTTP_PROBE_MAX_BODY_BYTES } from "@blackglass/contracts";
+import { HTTP_PROBE_MAX_BODY_BYTES } from "@stonehush/contracts";
 import { probeOneUrl } from "./http-probe.js";
 
 const MAX = HTTP_PROBE_MAX_BODY_BYTES;

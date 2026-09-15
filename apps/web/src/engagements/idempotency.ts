@@ -1,4 +1,4 @@
-import { IdempotencyKeySchema } from "@blackglass/contracts";
+import { IdempotencyKeySchema } from "@stonehush/contracts";
 
 import { createBrowserUuid } from "../lib/browser-uuid.js";
 

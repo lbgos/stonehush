@@ -6,7 +6,7 @@ import {
   DATABASE_FILENAME,
   openEngagementDatabase,
   type EngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildStorageBackedApp } from "./runtime.js";
@@ -22,7 +22,7 @@ afterEach(async () => {
 });
 
 async function temporaryDataDirectory(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-runtime-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-runtime-test-"));
   temporaryRoots.push(root);
   const dataDirectory = path.join(root, "data");
   return dataDirectory;

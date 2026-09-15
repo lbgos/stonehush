@@ -1,5 +1,5 @@
-import type { RunOutputResponse } from "@blackglass/contracts";
-import { Button, LoadingRegion, RecoverableError, Skeleton } from "@blackglass/ui";
+import type { RunOutputResponse } from "@stonehush/contracts";
+import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
 import { useRouterState } from "@tanstack/react-router";
 
 import {

@@ -1,5 +1,5 @@
-import { HTTP_PROBE_MAX_RAW_BYTES, isHttpProbeArtifactSlot } from "@blackglass/contracts";
-import type { HttpProbeRepository } from "@blackglass/db";
+import { HTTP_PROBE_MAX_RAW_BYTES, isHttpProbeArtifactSlot } from "@stonehush/contracts";
+import type { HttpProbeRepository } from "@stonehush/db";
 import type { EvidenceStore } from "./evidence-store.js";
 
 type ProjectionResult =

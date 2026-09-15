@@ -1,4 +1,4 @@
-import { PersistedRunSchema, type PersistedRun } from "@blackglass/contracts";
+import { PersistedRunSchema, type PersistedRun } from "@stonehush/contracts";
 import { and, desc, eq, inArray, lt, or } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 

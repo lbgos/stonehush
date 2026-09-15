@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import type { ActionSnapshot, RunnerLease } from "@blackglass/contracts";
+import type { ActionSnapshot, RunnerLease } from "@stonehush/contracts";
 import {
   EngagementRepository,
   EvidenceGrantRepository,
@@ -25,8 +25,8 @@ import {
   bindActionSnapshot,
   openEngagementDatabase,
   openReadOnlyEngagementDatabase,
-} from "@blackglass/db";
-import { loadEvidenceNative } from "@blackglass/evidence-native";
+} from "@stonehush/db";
+import { loadEvidenceNative } from "@stonehush/evidence-native";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { runEvidenceDoctor, type DoctorOutcome } from "./doctor.js";
@@ -294,7 +294,7 @@ describe("runEvidenceDoctor", () => {
       // sidecars; it must never change any existing byte on disk.
       if (after.has(name)) expect(after.get(name)).toBe(hex);
     }
-    for (const name of ["./blackglass.sqlite3-wal", "./blackglass.sqlite3-shm"]) {
+    for (const name of ["./stonehush.sqlite3-wal", "./stonehush.sqlite3-shm"]) {
       const sidecar = after.get(name);
       if (sidecar !== undefined) expect(sidecar).toBe("");
     }

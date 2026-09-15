@@ -225,7 +225,7 @@ describe("adversarial – table-driven", () => {
   it.each([
     "published/artifact-fixture-9",
     "published/../../outside",
-    "/var/lib/blackglass/evidence/published/artifact-fixture-8",
+    "/var/lib/stonehush/evidence/published/artifact-fixture-8",
     "published/",
     "staging/upload-fixture-3",
   ])("rejects bad relativePath %j", (p) => {

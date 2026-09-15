@@ -3,8 +3,8 @@ import {
   ADVISOR_FINDING_IDS_MAX,
   ADVISOR_QUESTION_MAX_BYTES,
   type AdvisorTurn,
-} from "@blackglass/contracts";
-import { Button } from "@blackglass/ui";
+} from "@stonehush/contracts";
+import { Button } from "@stonehush/ui";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
@@ -447,7 +447,7 @@ export function AdvisorPanel({
           <p className="m-0 text-[12px]">
             <Link
               to="/settings"
-              className="font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              className="text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             >
               Open Advisor settings
             </Link>
@@ -568,7 +568,7 @@ function FindingPicker({
                 checked={selected}
                 disabled={(disabled && !selected) || archived}
                 onChange={() => onToggle(finding.id)}
-                className="mt-1 shrink-0 accent-primary"
+                className="mt-1 size-4 shrink-0 cursor-pointer accent-primary"
               />
               <span className="min-w-0">
                 <span className="block truncate font-medium" title={finding.title}>

@@ -72,7 +72,7 @@ afterEach(async () => {
 });
 
 async function createStorageBackedApp() {
-  const root = await mkdtemp(path.join(tmpdir(), "blackglass-status-test-"));
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-status-test-"));
   temporaryRoots.push(root);
   const dataDirectory = path.join(root, "development");
   await bootstrapDevelopmentStorage(dataDirectory);

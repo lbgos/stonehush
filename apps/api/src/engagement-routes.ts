@@ -5,12 +5,12 @@ import {
   EngagementQueryErrorSchema,
   ScopeRevisionListResponseSchema,
   type EngagementQueryError,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementRepository,
   RepositoryError,
   RepositoryResult,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type EngagementQueries = Pick<

@@ -6,7 +6,7 @@ import { Writable } from "node:stream";
 import {
   formatRunnerAuthorization,
   type ActionSnapshot,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   bindActionSnapshot,
   EngagementRepository,
@@ -14,7 +14,7 @@ import {
   openEngagementDatabase,
   RunRepository,
   RunnerRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import fixtureData from "../../../docs/architecture/fixtures/d2/runner-identity.json" with {
@@ -113,7 +113,7 @@ function boundSnapshot(actionId: string): ActionSnapshot {
 }
 
 async function createHarness(options: { captureLogs?: boolean } = {}) {
-  const directory = await mkdtemp(path.join(tmpdir(), "blackglass-runner-api-"));
+  const directory = await mkdtemp(path.join(tmpdir(), "stonehush-runner-api-"));
   directories.push(directory);
   await chmod(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
@@ -611,7 +611,7 @@ describe("runner enrollment and lease routes", () => {
     expect(first.body).toContain(secret);
     expect(replay.body).not.toContain(secret);
     expect(harness.logLines.join("\n")).not.toContain(secret);
-    expect(harness.logLines.join("\n")).not.toContain("Blackglass-Runner");
+    expect(harness.logLines.join("\n")).not.toContain("Stonehush-Runner");
     const failed = await harness.app.inject({
       method: "POST",
       url: `/api/v1/runners/${first.json().runner.id}/revoke`,

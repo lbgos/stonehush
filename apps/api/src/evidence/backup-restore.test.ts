@@ -10,7 +10,7 @@ import {
   formatRunnerAuthorization,
   type ActionSnapshot,
   type RunnerLease,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   DATABASE_SCHEMA_VERSION,
   bindActionSnapshot,
@@ -20,8 +20,8 @@ import {
   openEngagementDatabase,
   RunRepository,
   RunnerRepository,
-} from "@blackglass/db";
-import { loadEvidenceNative } from "@blackglass/evidence-native";
+} from "@stonehush/db";
+import { loadEvidenceNative } from "@stonehush/evidence-native";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
@@ -297,7 +297,7 @@ async function readManifest(backupDirectory: string) {
   return parsed.data;
 }
 
-describe("blackglass-backup-v1", () => {
+describe("stonehush-backup-v1", () => {
   it("refuses a nonempty backup destination before writing anything", async () => {
     const live = await createLiveTree();
     const destination = await makeEmptyDestination("backup-dest-");
@@ -317,20 +317,20 @@ describe("blackglass-backup-v1", () => {
   it("refuses a restore into a nonempty data directory and preserves existing content", async () => {
     const live = await createLiveTree();
     const destination = await makeEmptyDestination("restore-dest-");
-    await writeFile(path.join(destination, "blackglass.sqlite3"), "existing");
+    await writeFile(path.join(destination, "stonehush.sqlite3"), "existing");
     const outcome = await runRestore({
       backupDirectory: live.directory,
       dataDirectory: destination,
     });
     expect(outcome.status === "error" && outcome.code === "restore_destination_not_empty").toBe(true);
-    await expect(readFile(path.join(destination, "blackglass.sqlite3"))).resolves.toEqual(
+    await expect(readFile(path.join(destination, "stonehush.sqlite3"))).resolves.toEqual(
       Buffer.from("existing"),
     );
-    expect(await readdir(destination)).toEqual(["blackglass.sqlite3"]);
+    expect(await readdir(destination)).toEqual(["stonehush.sqlite3"]);
   });
 });
 
-describe("blackglass-backup-v1 roundtrip", () => {
+describe("stonehush-backup-v1 roundtrip", () => {
   it("backs up a consistent snapshot and restores it into an empty data directory", async () => {
     const live = await createLiveTree();
     const enrolled = await enroll(live.app);
@@ -346,7 +346,7 @@ describe("blackglass-backup-v1 roundtrip", () => {
     });
     expect(backup).toEqual({
       status: "complete",
-      protocol: "blackglass-backup-v1",
+      protocol: "stonehush-backup-v1",
       artifactCount: 1,
     });
 
@@ -360,7 +360,7 @@ describe("blackglass-backup-v1 roundtrip", () => {
       { artifactId, sizeBytes: bytes.length, digest: sha256(bytes) },
     ]);
     const copiedSqlite = await readFile(
-      path.join(destination, "sqlite/blackglass.sqlite3"),
+      path.join(destination, "sqlite/stonehush.sqlite3"),
     );
     expect(manifest.sqliteDigest).toBe(sha256(copiedSqlite));
 
@@ -376,7 +376,7 @@ describe("blackglass-backup-v1 roundtrip", () => {
     }
     for (const file of [
       path.join(destination, BACKUP_MANIFEST_FILENAME),
-      path.join(destination, "sqlite/blackglass.sqlite3"),
+      path.join(destination, "sqlite/stonehush.sqlite3"),
       path.join(destination, "evidence/published", artifactId),
     ]) {
       const stats = await stat(file);
@@ -404,7 +404,7 @@ describe("blackglass-backup-v1 roundtrip", () => {
     });
     expect(restoreOutcome).toEqual({
       status: "complete",
-      protocol: "blackglass-backup-v1",
+      protocol: "stonehush-backup-v1",
       restoredArtifacts: 1,
     });
     await expect(
@@ -602,7 +602,7 @@ describe("blackglass-backup-v1 roundtrip", () => {
     // SQLite digest so the outer digest check still passes and the failure
     // must come from the internal rows-vs-manifest verification, proving
     // the restore checks internal SQLite consistency before any write.
-    const snapshotPath = path.join(destination, "sqlite/blackglass.sqlite3");
+    const snapshotPath = path.join(destination, "sqlite/stonehush.sqlite3");
     const handle = openEngagementDatabase({ dataDirectory: path.join(destination, "sqlite") });
     try {
       handle.sqlite
@@ -669,7 +669,7 @@ describe("blackglass-backup-v1 roundtrip", () => {
     // must come from the internal schemaVersion-vs-migrations check.
     raw.schemaVersion = originalVersion;
     await writeFile(manifestPath, `${JSON.stringify(raw)}\n`);
-    const snapshotPath = path.join(destination, "sqlite/blackglass.sqlite3");
+    const snapshotPath = path.join(destination, "sqlite/stonehush.sqlite3");
     const handle = openEngagementDatabase({ dataDirectory: path.join(destination, "sqlite") });
     try {
       // Delete one migration row to make count differ from manifest.

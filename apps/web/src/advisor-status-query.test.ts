@@ -15,7 +15,7 @@ const okStatus = {
   endpointHost: "127.0.0.1",
   publicEndpoint: false,
   optIn: false,
-  keyEnvVar: "BLACKGLASS_ADVISOR_API_KEY",
+  keyEnvVar: "STONEHUSH_ADVISOR_API_KEY",
   keyPresent: true,
   latencyMs: 12,
   reason: "ok",

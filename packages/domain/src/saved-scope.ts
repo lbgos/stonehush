@@ -21,7 +21,7 @@ import {
   type ScopePortRangeInput,
   type ScopeRuleNormalizationResult,
   type ScopeSubjectComparisonFact,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 
 import { normalizeTarget } from "./normalize-target.js";
 

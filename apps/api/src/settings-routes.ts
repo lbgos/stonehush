@@ -3,8 +3,8 @@ import {
   GetSettingsResponseSchema,
   UpdateAdvisorSettingsRequestSchema,
   UpdateSettingsRequestSchema,
-} from "@blackglass/contracts";
-import type { SettingsRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { SettingsRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type SettingsStore = Pick<

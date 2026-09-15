@@ -1,4 +1,4 @@
-# Blackglass Maintainer Handbook
+# Stonehush Maintainer Handbook
 
 Status: active
 

@@ -6,13 +6,13 @@
     {
       "id": "d2.process.executable-version-pinned",
       "description": "A lease records and rechecks immutable executable identity before launch.",
-      "given": { "configuredPath": "/opt/blackglass/fixtures/fake-exec", "resolvedPath": "/opt/blackglass/fixtures/fake-exec", "regularFile": true, "symlink": false, "ownerUid": 0, "mode": "0555", "parentOwnerUids": [0, 0, 0], "parentModes": ["0755", "0755", "0755"], "device": 2049, "inode": 7001, "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "observedVersion": "fixture-exec 1.0.0", "executableByRunner": true },
+      "given": { "configuredPath": "/opt/stonehush/fixtures/fake-exec", "resolvedPath": "/opt/stonehush/fixtures/fake-exec", "regularFile": true, "symlink": false, "ownerUid": 0, "mode": "0555", "parentOwnerUids": [0, 0, 0], "parentModes": ["0755", "0755", "0755"], "device": 2049, "inode": 7001, "digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "observedVersion": "fixture-exec 1.0.0", "executableByRunner": true },
       "expected": { "registered": true, "immutableVersion": 1, "launchRecheckRequired": true, "launchBinding": "execveat_verified_fd" }
     },
     {
       "id": "d2.process.missing-executable",
       "description": "A missing registry executable is a truthful capability error before spawn.",
-      "given": { "configuredPath": "/opt/blackglass/fixtures/missing-exec", "exists": false },
+      "given": { "configuredPath": "/opt/stonehush/fixtures/missing-exec", "exists": false },
       "error": { "code": "executable_missing", "spawnCount": 0 }
     },
     {
@@ -24,7 +24,7 @@
     {
       "id": "d2.process.symlink-executable-rejected",
       "description": "Registry inspection never follows a symlink executable.",
-      "given": { "configuredPath": "/opt/blackglass/fixtures/fake-link", "symlink": true, "linkDestination": "/opt/blackglass/fixtures/fake-exec" },
+      "given": { "configuredPath": "/opt/stonehush/fixtures/fake-link", "symlink": true, "linkDestination": "/opt/stonehush/fixtures/fake-exec" },
       "error": { "code": "executable_symlink_rejected", "registered": false }
     },
     {
@@ -36,7 +36,7 @@
     {
       "id": "d2.process.unsafe-executable-parent-rejected",
       "description": "A group-writable executable parent cannot enter the registry.",
-      "given": { "configuredPath": "/opt/blackglass/fixtures/fake-exec", "ownerUid": 0, "mode": "0555", "parentOwnerUids": [0, 0, 0], "parentModes": ["0755", "0775", "0755"] },
+      "given": { "configuredPath": "/opt/stonehush/fixtures/fake-exec", "ownerUid": 0, "mode": "0555", "parentOwnerUids": [0, 0, 0], "parentModes": ["0755", "0775", "0755"] },
       "error": { "code": "executable_parent_unsafe", "registered": false, "spawnCount": 0 }
     },
     {
@@ -54,31 +54,31 @@
     {
       "id": "d2.process.argv-metacharacters-are-literal",
       "description": "Shell metacharacters remain one literal argv value and never execute.",
-      "given": { "executable": "/opt/blackglass/fixtures/fake-exec", "argv": ["scan", "target.test;touch", "/tmp/fixture-owned"], "shell": false },
-      "expected": { "spawnExecutable": "/opt/blackglass/fixtures/fake-exec", "spawnArgv": ["scan", "target.test;touch", "/tmp/fixture-owned"], "sideEffectCreated": false }
+      "given": { "executable": "/opt/stonehush/fixtures/fake-exec", "argv": ["scan", "target.test;touch", "/tmp/fixture-owned"], "shell": false },
+      "expected": { "spawnExecutable": "/opt/stonehush/fixtures/fake-exec", "spawnArgv": ["scan", "target.test;touch", "/tmp/fixture-owned"], "sideEffectCreated": false }
     },
     {
       "id": "d2.process.command-string-contract-rejected",
       "description": "A command string or raw flags field is impossible in the process contract.",
-      "given": { "executable": "/opt/blackglass/fixtures/fake-exec", "command": "fake-exec target.test", "rawFlags": "--fixture" },
+      "given": { "executable": "/opt/stonehush/fixtures/fake-exec", "command": "fake-exec target.test", "rawFlags": "--fixture" },
       "error": { "code": "invalid_process_contract", "spawnCount": 0 }
     },
     {
       "id": "d2.process.environment-denied",
       "description": "Ambient and dangerous environment names are rejected.",
-      "given": { "requestedEnvironment": { "LD_PRELOAD": "/opt/blackglass/fixtures/fake-library", "HTTP_PROXY": "http://proxy.test", "UNDECLARED_FIXTURE": "value" }, "declaredNames": [] },
+      "given": { "requestedEnvironment": { "LD_PRELOAD": "/opt/stonehush/fixtures/fake-library", "HTTP_PROXY": "http://proxy.test", "UNDECLARED_FIXTURE": "value" }, "declaredNames": [] },
       "error": { "code": "environment_variable_denied", "spawnCount": 0, "deniedNames": ["HTTP_PROXY", "LD_PRELOAD", "UNDECLARED_FIXTURE"] }
     },
     {
       "id": "d2.process.minimal-environment",
       "description": "The runner constructs a predictable environment instead of inheriting its service environment.",
-      "given": { "ambientInherited": false, "runDirectory": "/var/lib/blackglass-runner/runs/run-fixture-18" },
-      "expected": { "environment": { "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC", "PATH": "/usr/bin:/bin", "TMPDIR": "/var/lib/blackglass-runner/runs/run-fixture-18/tmp" } }
+      "given": { "ambientInherited": false, "runDirectory": "/var/lib/stonehush-runner/runs/run-fixture-18" },
+      "expected": { "environment": { "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "TZ": "UTC", "PATH": "/usr/bin:/bin", "TMPDIR": "/var/lib/stonehush-runner/runs/run-fixture-18/tmp" } }
     },
     {
       "id": "d2.process.cwd-escape-rejected",
       "description": "Caller-controlled traversal cannot choose the working directory.",
-      "given": { "runnerRoot": "/var/lib/blackglass-runner/runs", "requestedCwd": "../outside", "generatedCwd": false },
+      "given": { "runnerRoot": "/var/lib/stonehush-runner/runs", "requestedCwd": "../outside", "generatedCwd": false },
       "error": { "code": "working_directory_escape", "spawnCount": 0 }
     },
     {
@@ -222,14 +222,14 @@
     {
       "id": "d2.process.restart-pid-reuse-mismatch",
       "description": "A reused PID with a different start identity or marker is never signalled.",
-      "given": { "bootIdMatches": true, "journalledProcessId": 4402, "journalledProcessStartTime": 91001, "liveProcessStartTime": 92002, "journalledCgroupPath": "/sys/fs/cgroup/blackglass/run-fixture-24-marker-b2", "liveCgroupPath": "/sys/fs/cgroup/other-fixture", "runMarkerMatches": false },
+      "given": { "bootIdMatches": true, "journalledProcessId": 4402, "journalledProcessStartTime": 91001, "liveProcessStartTime": 92002, "journalledCgroupPath": "/sys/fs/cgroup/stonehush/run-fixture-24-marker-b2", "liveCgroupPath": "/sys/fs/cgroup/other-fixture", "runMarkerMatches": false },
       "error": { "code": "restart_identity_mismatch", "signalCount": 0, "journalQuarantined": true, "workingDirectoryQuarantined": true, "terminalState": "failed" }
     },
     {
       "id": "d2.process.nmap-unprivileged-typed-argv",
       "description": "The first Nmap profile deterministically builds unprivileged typed argv.",
-      "given": { "target": "192.0.2.10", "ports": [{ "from": 80, "to": 80 }, { "from": 443, "to": 443 }], "serviceDetection": true, "timingTemplate": "T4", "skipHostDiscovery": true, "versionIntensity": 7, "maximumRetries": 2, "xmlPath": "/var/lib/blackglass-runner/runs/run-fixture-19/nmap-xml" },
-      "expected": { "executableRegistryId": "nmap-fixture-v1", "argv": ["-sT", "-sV", "-T4", "-Pn", "--version-intensity", "7", "--max-retries", "2", "-p", "80,443", "-oX", "/var/lib/blackglass-runner/runs/run-fixture-19/nmap-xml", "192.0.2.10"], "shell": false, "rawSocketCapability": false }
+      "given": { "target": "192.0.2.10", "ports": [{ "from": 80, "to": 80 }, { "from": 443, "to": 443 }], "serviceDetection": true, "timingTemplate": "T4", "skipHostDiscovery": true, "versionIntensity": 7, "maximumRetries": 2, "xmlPath": "/var/lib/stonehush-runner/runs/run-fixture-19/nmap-xml" },
+      "expected": { "executableRegistryId": "nmap-fixture-v1", "argv": ["-sT", "-sV", "-T4", "-Pn", "--version-intensity", "7", "--max-retries", "2", "-p", "80,443", "-oX", "/var/lib/stonehush-runner/runs/run-fixture-19/nmap-xml", "192.0.2.10"], "shell": false, "rawSocketCapability": false }
     },
     {
       "id": "d2.process.nmap-raw-flags-rejected",

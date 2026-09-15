@@ -74,6 +74,7 @@ function resumeDeps() {
             status: "open" as const,
             body: "details",
             evidenceArtifactIds: [],
+            revision: 1,
             createdAt: "2020-01-01T00:00:00.000Z",
             updatedAt: "2020-01-01T00:00:00.000Z",
           },
@@ -217,7 +218,11 @@ describe("engagement search routes", () => {
                 {
                   id: SCOPE_RULE_ID,
                   kind: "domain" as const,
-                  target: "admin-portal.example",
+                  target: {
+                    kind: "hostname" as const,
+                    normalizationProfile: "d1-v1" as const,
+                    hostname: "admin-portal.example",
+                  },
                   includeSubdomains: false,
                 },
               ],
@@ -237,6 +242,7 @@ describe("engagement search routes", () => {
               status: "open" as const,
               body: "admin login flow",
               evidenceArtifactIds: [],
+              revision: 1,
               createdAt: "2026-09-09T00:00:00.000Z",
               updatedAt: "2026-09-09T00:00:00.000Z",
             },
@@ -329,20 +335,6 @@ describe("engagement search routes", () => {
     registerEngagementSearchRoutes(app, searchDeps());
     expect((await app.inject({ method: "GET", url: `/api/v1/engagements/${ENGAGEMENT_ID}/search?q=+++` })).statusCode).toBe(400);
     expect((await app.inject({ method: "GET", url: `/api/v1/engagements/${ENGAGEMENT_ID}/search?q=a&limit=5` })).statusCode).toBe(400);
-    await app.close();
-  });
-
-  it("serves search with no resume store wired anywhere", async () => {
-    // Registration-level proof that search never consumes the next-step
-    // store: only the search deps are passed, and search still answers.
-    // app.ts mirrors this by registering search outside the resume gate.
-    const app = Fastify();
-    registerEngagementSearchRoutes(app, searchDeps());
-    const response = await app.inject({
-      method: "GET",
-      url: `/api/v1/engagements/${ENGAGEMENT_ID}/search?q=admin`,
-    });
-    expect(response.statusCode).toBe(200);
     await app.close();
   });
 });

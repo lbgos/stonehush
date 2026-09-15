@@ -1,4 +1,4 @@
-# Blackglass UI Constitution
+# Stonehush UI Constitution
 
 Status: v0.1 baseline
 
@@ -78,7 +78,7 @@ Lists use consistent density:
 - Jump navigation and multi-selection use the rendered visual order.
 - Long lists may use `content-visibility: auto` with an appropriate intrinsic size.
 
-Blackglass maps this hierarchy to active runs or current work as cards, queued or paused work in a shelf, and completed or reviewed work as compact history. Domain language comes from Blackglass contracts.
+Stonehush maps this hierarchy to active runs or current work as cards, queued or paused work in a shelf, and completed or reviewed work as compact history. Domain language comes from Stonehush contracts.
 
 ## 5. Row surface model
 
@@ -116,7 +116,7 @@ A compact row is 36 px on pointer-based desktop and at least 44 px on touch/mobi
 
 ## 6. Fast execution and warning contract
 
-Blackglass warnings use a single-step flow.
+Stonehush warnings use a single-step flow.
 
 - Routine T0/T1 actions start directly.
 - An outside-saved-scope, unusually large, or T2/T3/T4-labelled action shows at most one warning before the run.

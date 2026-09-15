@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { ThemeProvider } from "@blackglass/ui";
+import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,10 +22,10 @@ function response(payload: unknown, status = 200): Response {
   } as Response;
 }
 
-function runSummary(id: string, createdAt: string, state = "succeeded") {
+function runSummary(id: string, createdAt: string, state = "succeeded", actionId = "action-1") {
   return {
     id,
-    actionId: "action-1",
+    actionId,
     state,
     terminalKind:
       state === "succeeded" ? "succeeded" : state === "failed" ? "failed" : state === "cancelled" ? "cancelled" : null,
@@ -202,6 +202,46 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+});
+
+describe("run history panel empty baseline", () => {
+  it("keeps Show new results reachable when arrivals follow an empty baseline", async () => {
+    let historyCalls = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/runs?")) {
+        historyCalls += 1;
+        if (historyCalls === 1) return response({ runs: [], nextCursor: null });
+        return response({
+          runs: [runSummary("run-late", "2026-08-10T12:01:00.000Z", "running")],
+          nextCursor: null,
+        });
+      }
+      if (url.endsWith("/output")) return response(outputFor("run-late", "late-bytes", "running"));
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { queryClient } = renderPanel({ selectedRunId: undefined });
+
+    await waitFor(() => {
+      expect(screen.getByText("No runs yet")).toBeTruthy();
+    });
+    await act(async () => {
+      await queryClient.refetchQueries();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Show new results" })).toBeTruthy();
+    });
+    expect(screen.getByText(/1 new run arrived/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /run-late/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show new results" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run-late/ })).toBeTruthy();
+    });
+    expect(screen.queryByRole("button", { name: "Show new results" })).toBeNull();
+    assertReadOnly(fetchMock);
+  });
 });
 
 describe("run history panel", () => {
@@ -1238,5 +1278,253 @@ describe("run history panel", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("filters loaded runs by state with an explicit loaded-only label", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/runs?")) {
+        return response({
+          runs: [
+            runSummary("run-ok", "2026-08-10T12:00:00.000Z", "succeeded"),
+            runSummary("run-bad", "2026-08-09T12:00:00.000Z", "failed"),
+            runSummary("run-busy", "2026-08-08T12:00:00.000Z", "running"),
+          ],
+          nextCursor: null,
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel({ selectedRunId: undefined });
+
+    await screen.findByRole("button", { name: /run-ok/ });
+    expect(screen.getByText("3 runs shown, newest first")).toBeTruthy();
+    expect(screen.queryByText(/Filters match loaded runs only/)).toBeNull();
+
+    const stateSelect = screen.getByRole("combobox", { name: "State" });
+    expect((stateSelect as HTMLSelectElement).value).toBe("all");
+    fireEvent.change(stateSelect, { target: { value: "failed" } });
+
+    expect(screen.queryByRole("button", { name: /run-ok/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /run-busy/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /run-bad/ })).toBeTruthy();
+    expect(screen.getByText(/1 of 3 runs shown/)).toBeTruthy();
+    expect(screen.getByText(/Filters match loaded runs only/)).toBeTruthy();
+
+    fireEvent.change(stateSelect, { target: { value: "all" } });
+    expect(screen.getByRole("button", { name: /run-ok/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /run-busy/ })).toBeTruthy();
+    expect(screen.queryByText(/Filters match loaded runs only/)).toBeNull();
+    assertReadOnly(fetchMock);
+  });
+
+  it("filters loaded runs by run or action ID text, case-insensitively", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/runs?")) {
+        return response({
+          runs: [
+            runSummary("run-Alpha", "2026-08-10T12:00:00.000Z", "succeeded", "action-one"),
+            runSummary("run-beta", "2026-08-09T12:00:00.000Z", "succeeded", "action-two"),
+          ],
+          nextCursor: null,
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel({ selectedRunId: undefined });
+
+    await screen.findByRole("button", { name: /run-Alpha/ });
+    const search = screen.getByRole("searchbox", { name: /Search loaded runs/ });
+    fireEvent.change(search, { target: { value: "BETA" } });
+
+    expect(screen.queryByRole("button", { name: /run-Alpha/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /run-beta/ })).toBeTruthy();
+    expect(screen.getByText(/1 of 2 runs shown/)).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: "action-one" } });
+    expect(screen.getByRole("button", { name: /run-Alpha/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /run-beta/ })).toBeNull();
+    assertReadOnly(fetchMock);
+  });
+
+  it("keeps Load more available on zero matches and clears back to the list", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("before=cursor-1")) {
+        return response({
+          runs: [runSummary("run-old", "2026-08-09T12:00:00.000Z")],
+          nextCursor: null,
+        });
+      }
+      if (url.includes("/runs?")) {
+        return response({
+          runs: [runSummary("run-new", "2026-08-10T12:00:00.000Z")],
+          nextCursor: "cursor-1",
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel({ selectedRunId: undefined });
+
+    await screen.findByRole("button", { name: /run-new/ });
+    fireEvent.change(screen.getByRole("searchbox", { name: /Search loaded runs/ }), {
+      target: { value: "zzz-no-such-run" },
+    });
+
+    expect(screen.getByText("No matching runs")).toBeTruthy();
+    expect(screen.queryByText("No runs yet")).toBeNull();
+    expect(screen.queryByRole("button", { name: /run-new/ })).toBeNull();
+    // Pagination stays available: filters never search past loaded pages.
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Load more" }));
+    await waitFor(() => {
+      expect(fetchUrls(fetchMock).some((url) => url.includes("before=cursor-1"))).toBe(true);
+    });
+    expect(screen.getByText("No matching runs")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getByRole("button", { name: /run-new/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /run-old/ })).toBeTruthy();
+    expect(screen.queryByText("No matching runs")).toBeNull();
+    assertReadOnly(fetchMock);
+  });
+
+  it("keeps the selected run inspectable while filters hide its row", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/runs/run-keep/output")) {
+        return response(outputFor("run-keep", "kept-bytes"));
+      }
+      if (url.includes("/runs?")) {
+        return response({
+          runs: [
+            runSummary("run-keep", "2026-08-10T12:00:00.000Z"),
+            runSummary("run-other", "2026-08-09T12:00:00.000Z"),
+          ],
+          nextCursor: null,
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderPanel({ selectedRunId: "run-keep" });
+
+    await screen.findByTestId("run-history-stdout");
+    expect(screen.getByTestId("run-history-stdout").textContent).toBe("kept-bytes");
+
+    fireEvent.change(screen.getByRole("combobox", { name: "State" }), {
+      target: { value: "failed" },
+    });
+    expect(screen.getByText("No matching runs")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /run-keep/ })).toBeNull();
+    // Selection and output stay stable even though the row is hidden.
+    expect(screen.getByTestId("run-history-stdout").textContent).toBe("kept-bytes");
+    expect(outputGetCount(fetchMock)).toBe(1);
+    assertReadOnly(fetchMock);
+  });
+
+  it("resets filters when the engagement changes", async () => {
+    const otherEngagement = "eng-2";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes(`/engagements/${otherEngagement}/runs?`)) {
+        return response({
+          runs: [runSummary("run-eng2", "2026-08-10T12:00:00.000Z")],
+          nextCursor: null,
+        });
+      }
+      if (url.includes("/runs?")) {
+        return response({
+          runs: [
+            runSummary("run-ok", "2026-08-10T12:00:00.000Z", "succeeded"),
+            runSummary("run-bad", "2026-08-09T12:00:00.000Z", "failed"),
+          ],
+          nextCursor: null,
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { queryClient } = renderPanel({ selectedRunId: undefined });
+
+    await screen.findByRole("button", { name: /run-ok/ });
+    fireEvent.change(screen.getByRole("combobox", { name: "State" }), {
+      target: { value: "failed" },
+    });
+    expect(screen.queryByRole("button", { name: /run-ok/ })).toBeNull();
+
+    queryClient.clear();
+    cleanup();
+    const secondClient = createAppQueryClient();
+    testQueryClients.add(secondClient);
+    render(
+      <ThemeProvider>
+        <QueryClientProvider client={secondClient}>
+          <EngagementWorkspaceProvider openCreate={() => undefined}>
+            <RunHistoryPanel
+              engagementId={otherEngagement}
+              selectedRunId={undefined}
+              onSelect={() => undefined}
+            />
+            <AdvisorDraftProbe />
+          </EngagementWorkspaceProvider>
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+
+    await screen.findByRole("button", { name: /run-eng2/ });
+    expect((screen.getByRole("combobox", { name: "State" }) as HTMLSelectElement).value).toBe(
+      "all",
+    );
+    expect(
+      (screen.getByRole("searchbox", { name: /Search loaded runs/ }) as HTMLInputElement).value,
+    ).toBe("");
+    expect(screen.queryByText(/Filters match loaded runs only/)).toBeNull();
+    assertReadOnly(fetchMock);
+  });
+
+  it("preserves filters across a history refresh", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/runs?")) {
+        return response({
+          runs: [
+            runSummary("run-ok", "2026-08-10T12:00:00.000Z", "succeeded"),
+            runSummary("run-bad", "2026-08-09T12:00:00.000Z", "failed"),
+          ],
+          nextCursor: null,
+        });
+      }
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { queryClient } = renderPanel({ selectedRunId: undefined });
+
+    await screen.findByRole("button", { name: /run-ok/ });
+    fireEvent.change(screen.getByRole("combobox", { name: "State" }), {
+      target: { value: "failed" },
+    });
+    expect(screen.queryByRole("button", { name: /run-ok/ })).toBeNull();
+    const before = historyGetCount(fetchMock);
+
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+    await waitFor(() => {
+      expect(historyGetCount(fetchMock)).toBeGreaterThan(before);
+    });
+
+    expect((screen.getByRole("combobox", { name: "State" }) as HTMLSelectElement).value).toBe(
+      "failed",
+    );
+    expect(screen.queryByRole("button", { name: /run-ok/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /run-bad/ })).toBeTruthy();
+    assertReadOnly(fetchMock);
   });
 });

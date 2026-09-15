@@ -26,22 +26,22 @@ import {
   OPAQUE_EVIDENCE_ID_PATTERN,
   type BackupArtifactEntry,
   type BackupManifest,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   DATABASE_FILENAME,
   DATABASE_SCHEMA_VERSION,
   openReadOnlyEngagementDatabase,
   openReadOnlySqliteFile,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import {
   loadEvidenceNative,
   O_CLOEXEC,
   type EvidenceNativeBinding,
-} from "@blackglass/evidence-native";
+} from "@stonehush/evidence-native";
 
 import { BackupLock } from "./backup-lock.js";
 
-// ADR-0003 `blackglass-backup-v1` snapshot and restore. Backup refuses a
+// ADR-0003 `stonehush-backup-v1` snapshot and restore. Backup refuses a
 // nonempty destination before writing anything, takes the exclusive quiesce
 // lock around the whole snapshot, copies SQLite with the better-sqlite3
 // backup API plus every published artifact through descriptor-relative
@@ -593,7 +593,7 @@ function snapshotArtifactsMatchManifest(
 }
 
 /**
- * Runs one `blackglass-backup-v1` snapshot of the live data directory into
+ * Runs one `stonehush-backup-v1` snapshot of the live data directory into
  * an empty, control-plane-owned, 0700 destination directory. Holds the
  * exclusive quiesce lock for the whole snapshot; releases it in a finally
  * block. On any failure the INCOMPLETE marker stays behind and the outcome
@@ -930,7 +930,7 @@ export async function runBackup(input: RunBackupInput): Promise<BackupOutcome> {
 }
 
 /**
- * Restores one `blackglass-backup-v1` backup into an empty data directory.
+ * Restores one `stonehush-backup-v1` backup into an empty data directory.
  * Verifies the complete manifest, schema version, SQLite digest, and the
  * exact published membership plus every artifact digest BEFORE any
  * destination write, then copies with exclusive no-follow opens, verifies

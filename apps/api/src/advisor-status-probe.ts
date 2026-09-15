@@ -1,6 +1,6 @@
 import { lookup } from "node:dns/promises";
 
-import type { ConnectionTestResult } from "@blackglass/contracts";
+import type { ConnectionTestResult } from "@stonehush/contracts";
 
 // API-local advisor endpoint probe (D6). Classification is fail-closed:
 // loopback, RFC1918, link-local, unique-local, and .local/.localhost names

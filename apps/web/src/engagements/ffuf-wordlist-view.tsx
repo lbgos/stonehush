@@ -1,10 +1,11 @@
-import { describeFfufRateSupport, FFUF_WORDLIST_CATALOG } from "@blackglass/contracts";
+import { describeFfufRateSupport } from "@stonehush/contracts";
 import {
+  listWordlistOptions,
   loadLastWordlistChoice,
   missingWordlistRecovery,
   resolveWordlistByName,
   saveLastWordlistChoice,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 import { useMemo, useState } from "react";
 
 /**
@@ -38,14 +39,14 @@ export function FfufWordlistView({
     () => ({
       load: () => {
         try {
-          return window.localStorage.getItem("blackglass.ffuf.last-wordlist");
+          return window.localStorage.getItem("stonehush.ffuf.last-wordlist");
         } catch {
           return null;
         }
       },
       save: (name: string) => {
         try {
-          window.localStorage.setItem("blackglass.ffuf.last-wordlist", name);
+          window.localStorage.setItem("stonehush.ffuf.last-wordlist", name);
         } catch {
           // Best-effort.
         }
@@ -65,7 +66,7 @@ export function FfufWordlistView({
       </div>
       <div className="grid gap-2 p-3">
         <ul className="m-0 list-none space-y-1 p-0">
-          {FFUF_WORDLIST_CATALOG.options.map((option) => {
+          {listWordlistOptions().map((option) => {
             const override = configuredPaths[option.name];
             const effectivePath =
               override !== undefined && override.trim().length > 0 ? override : option.path;

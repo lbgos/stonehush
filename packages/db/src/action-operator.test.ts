@@ -28,7 +28,7 @@ const fixtures: Array<{
 }> = [];
 
 function createFixture() {
-  const directory = mkdtempSync(path.join(tmpdir(), "blackglass-action-operator-"));
+  const directory = mkdtempSync(path.join(tmpdir(), "stonehush-action-operator-"));
   chmodSync(directory, 0o700);
   const database = openEngagementDatabase({ dataDirectory: directory });
   let idIndex = 0;

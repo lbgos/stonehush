@@ -13,12 +13,12 @@ import {
   commandJsonV1RevokeRunnerDigest,
   commandJsonV1StartEnrollmentChallengeDigest,
   type JsonValue,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import type {
   EngagementWriteTransaction,
   OperatorCommandRepository,
   RunnerRepository,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import type { FastifyInstance } from "fastify";
 
 import {

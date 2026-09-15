@@ -32,8 +32,8 @@ export function Status({ action, detail, loading = false, title, tone = "info" }
     >
       <Icon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
       <div className="min-w-0 flex-1 text-foreground">
-        <p className="m-0 font-bold">{title}</p>
-        <p className="mt-1 mb-0 text-sm text-muted-foreground">{detail}</p>
+        <p className="m-0 text-[13px] font-semibold">{title}</p>
+        <p className="mt-1 mb-0 text-[13px] text-muted-foreground">{detail}</p>
         {action && <div className="mt-3">{action}</div>}
       </div>
     </section>

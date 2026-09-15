@@ -19,6 +19,7 @@ import {
   ScopeRevisionSchema,
   UpdateEngagementDeadlineRequestSchema,
   UpdateEngagementNotesRequestSchema,
+  UpdateFindingRequestSchema,
   type AcceptHeartbeatResult,
   type AppendScopeRevisionInput,
   type CreateEngagementInput,
@@ -34,8 +35,8 @@ import {
   type RetryActionContext,
   type ScopeRevision,
   type SavedScopeRule,
-} from "@blackglass/contracts";
-import { normalizeScopeRules, normalizeTarget } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { normalizeScopeRules, normalizeTarget } from "@stonehush/domain";
 import { and, asc, eq, inArray, max } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 
@@ -174,6 +175,11 @@ export interface EngagementWriteTransaction {
   reopenFinding(
     engagementId: string,
     findingId: string,
+  ): RepositoryResult<Finding>;
+  updateFinding(
+    engagementId: string,
+    findingId: string,
+    input: unknown,
   ): RepositoryResult<Finding>;
   getAction(
     engagementId: string,
@@ -401,6 +407,7 @@ function findingFromRow(row: FindingRow): RepositoryResult<Finding> {
     status: row.status,
     body: row.body,
     evidenceArtifactIds,
+    revision: row.revision,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   });
@@ -857,6 +864,7 @@ class TransactionRepository implements EngagementWriteTransaction {
       status: "open" as const,
       body: parsed.data.body,
       evidenceArtifactIdsJson: JSON.stringify(parsed.data.evidenceArtifactIds),
+      revision: 1,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -932,7 +940,7 @@ class TransactionRepository implements EngagementWriteTransaction {
     const updatedAt = this.clock().toISOString();
     this.client
       .update(findings)
-      .set({ status, updatedAt })
+      .set({ status, updatedAt, revision: row.revision + 1 })
       .where(eq(findings.id, findingId))
       .run();
     const stored = this.client
@@ -956,6 +964,70 @@ class TransactionRepository implements EngagementWriteTransaction {
     findingId: string,
   ): RepositoryResult<Finding> {
     return this.setFindingStatus(engagementId, findingId, "open");
+  }
+
+  // Content edit for title, severity, and body. Evidence references and
+  // status stay untouched by this slice. The required expectedRevision
+  // covers all three editable fields: a stale writer gets revision_conflict
+  // with the current revision instead of silently overwriting.
+  updateFinding(
+    engagementId: string,
+    findingId: string,
+    input: unknown,
+  ): RepositoryResult<Finding> {
+    const parsed = UpdateFindingRequestSchema.safeParse(input);
+    if (!parsed.success) return failed({ code: "invalid_repository_input" });
+    const current = this.currentEngagement(engagementId);
+    if (!current.ok) return current;
+    if (current.value.status === "archived") {
+      return failed({ code: "engagement_archived" });
+    }
+    const row = this.client
+      .select()
+      .from(findings)
+      .where(eq(findings.id, findingId))
+      .get();
+    if (row === undefined || row.engagementId !== engagementId) {
+      return failed({ code: "finding_not_found" });
+    }
+    const expectedRevision = parsed.data.expectedRevision;
+    if (expectedRevision !== row.revision) {
+      return failed({
+        code: "revision_conflict",
+        currentRevision: row.revision,
+      });
+    }
+    if (expectedRevision >= Number.MAX_SAFE_INTEGER) {
+      return failed({ code: "invalid_repository_input" });
+    }
+    const nextRevision = expectedRevision + 1;
+    const updatedAt = this.clock().toISOString();
+    this.client
+      .update(findings)
+      .set({
+        title: parsed.data.title,
+        severity: parsed.data.severity,
+        body: parsed.data.body,
+        updatedAt,
+        revision: nextRevision,
+      })
+      .where(
+        and(eq(findings.id, findingId), eq(findings.revision, expectedRevision)),
+      )
+      .run();
+    const stored = this.client
+      .select()
+      .from(findings)
+      .where(eq(findings.id, findingId))
+      .get();
+    if (stored === undefined) return failed({ code: "invalid_persisted_data" });
+    if (stored.revision !== nextRevision) {
+      return failed({
+        code: "revision_conflict",
+        currentRevision: stored.revision,
+      });
+    }
+    return findingFromRow(stored);
   }
 
   getAction(
@@ -1577,6 +1649,18 @@ export class EngagementRepository {
   ): RepositoryResult<Finding> {
     return this.runMutation(
       (repository) => repository.reopenFinding(engagementId, findingId),
+      transaction,
+    );
+  }
+
+  updateFinding(
+    engagementId: string,
+    findingId: string,
+    input: unknown,
+    transaction?: EngagementWriteTransaction,
+  ): RepositoryResult<Finding> {
+    return this.runMutation(
+      (repository) => repository.updateFinding(engagementId, findingId, input),
       transaction,
     );
   }

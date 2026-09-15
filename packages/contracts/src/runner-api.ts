@@ -21,7 +21,7 @@ export const RUNNER_SCRYPT_R = 8;
 export const RUNNER_SCRYPT_P = 1;
 export const RUNNER_SCRYPT_KEYLEN = 32;
 export const RUNNER_CREDENTIAL_FINGERPRINT_HEX_LENGTH = 12;
-export const RUNNER_AUTHORIZATION_SCHEME = "Blackglass-Runner" as const;
+export const RUNNER_AUTHORIZATION_SCHEME = "Stonehush-Runner" as const;
 export const RUNNER_SECRET_ENCODING = "base64url" as const;
 export const RUNNER_CONTROL_ROUTE_PREFIX = "/api/v1/runner/" as const;
 
@@ -330,7 +330,7 @@ export type RunnerAuthorization =
   | { ok: false };
 
 const RUNNER_AUTHORIZATION_PATTERN =
-  /^Blackglass-Runner ([^ \t]{1,255}) ([A-Za-z0-9_-]{43})$/;
+  /^Stonehush-Runner ([^ \t]{1,255}) ([A-Za-z0-9_-]{43})$/;
 
 export function isRunnerControlRoute(url: string): boolean {
   const path = url.split("?")[0] ?? url;

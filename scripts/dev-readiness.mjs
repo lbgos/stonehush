@@ -50,23 +50,23 @@ export async function waitForApiReadiness({
       exited.then((result) => ({ result })),
     ]);
     if ("result" in outcome) {
-      throw new Error("Blackglass API exited before it became ready.");
+      throw new Error("Stonehush API exited before it became ready.");
     }
     if (outcome.ready) return;
     await Promise.race([
       pause(READINESS_RETRY_DELAY_MS),
       exited.then(() => {
-        throw new Error("Blackglass API exited before it became ready.");
+        throw new Error("Stonehush API exited before it became ready.");
       }),
     ]);
   }
-  throw new Error("Blackglass API did not become ready before the development startup deadline.");
+  throw new Error("Stonehush API did not become ready before the development startup deadline.");
 }
 
 export async function startApiThenWeb({ apiIsRunning, startApi, startWeb, waitUntilReady }) {
   const api = startApi();
   await waitUntilReady(api);
-  if (!apiIsRunning(api)) throw new Error("Blackglass API exited before web startup.");
+  if (!apiIsRunning(api)) throw new Error("Stonehush API exited before web startup.");
   const web = startWeb();
   return { api, web };
 }

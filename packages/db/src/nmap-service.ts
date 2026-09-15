@@ -5,8 +5,8 @@ import {
   EvidenceArtifactRecordSchema,
   NMAP_MAX_XML_BYTES,
   NMAP_PARSER_VERSION,
-} from "@blackglass/contracts";
-import { parseNmapXml } from "@blackglass/domain";
+} from "@stonehush/contracts";
+import { parseNmapXml } from "@stonehush/domain";
 import * as schema from "./schema.js";
 import { actions, engagements, evidenceArtifacts, nmapServices, runs } from "./schema.js";
 

@@ -1,5 +1,5 @@
-import type { EngagementResumeResponse } from "@blackglass/contracts";
-import { Button, LoadingRegion, RecoverableError, Skeleton } from "@blackglass/ui";
+import type { EngagementResumeResponse } from "@stonehush/contracts";
+import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
 import { useState } from "react";
 
 import { useEngagementResumeQuery, useSaveNextStepMutation } from "./resume-query.js";

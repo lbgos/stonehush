@@ -5,7 +5,7 @@
  * length bounding for display summaries.
  */
 
-import type { EngagementResumeChange, EngagementResumeChangeKind } from "@blackglass/contracts";
+import type { EngagementResumeChange, EngagementResumeChangeKind } from "@stonehush/contracts";
 
 export interface ResumeChangeInput {
   readonly kind: EngagementResumeChangeKind;
@@ -73,6 +73,12 @@ export interface StarredFocusInput {
   readonly id: string;
   readonly starred: boolean;
   readonly hasActiveJob: boolean;
+}
+
+/** Toggle one id in a starred-id set; other ids are untouched. */
+export function toggleStarred(starredIds: readonly string[], id: string): readonly string[] {
+  if (starredIds.includes(id)) return starredIds.filter((entry) => entry !== id);
+  return [...starredIds, id];
 }
 
 /**

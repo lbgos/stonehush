@@ -13,7 +13,6 @@ import {
   workspaceStateKey,
   type WorkspaceStateStore,
 } from "./workspace-state.js";
-import { focusedStarredView, toggleStarred } from "./star-filter.js";
 import {
   registeredStone6Slots,
   mountStone6Slot,
@@ -63,24 +62,6 @@ describe("workspace state reload restores the narrowed view", () => {
     expect(parseWorkspaceState(JSON.stringify({ version: 999 })).filters).toEqual({});
     expect(parseWorkspaceState(null).starredIds).toEqual([]);
     expect(workspaceStateKey(ENGAGEMENT_ID)).toContain(ENGAGEMENT_ID);
-  });
-});
-
-describe("starred focus", () => {
-  const items = [
-    { id: "a", hasActiveJob: false },
-    { id: "b", hasActiveJob: true },
-    { id: "c", hasActiveJob: false },
-  ];
-
-  it("toggles stars without touching other ids", () => {
-    expect(toggleStarred([], "a")).toEqual(["a"]);
-    expect(toggleStarred(["a"], "a")).toEqual([]);
-  });
-
-  it("narrows to starred but never hides active jobs", () => {
-    expect(focusedStarredView(items, ["a"], true).map((item) => item.id)).toEqual(["a", "b"]);
-    expect(focusedStarredView(items, ["a"], false)).toHaveLength(3);
   });
 });
 

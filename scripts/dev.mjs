@@ -74,9 +74,9 @@ async function main() {
 
   const environment = {
     ...process.env,
-    BLACKGLASS_API_PORT: String(config.apiPort),
-    BLACKGLASS_DATA_DIR: config.dataDirectory,
-    BLACKGLASS_WEB_PORT: String(config.webPort),
+    STONEHUSH_API_PORT: String(config.apiPort),
+    STONEHUSH_DATA_DIR: config.dataDirectory,
+    STONEHUSH_WEB_PORT: String(config.webPort),
   };
   const children = [];
 
@@ -110,8 +110,8 @@ async function main() {
   try {
     started = await startApiThenWeb({
       apiIsRunning: ({ child }) => processGroupExists(child),
-      startApi: () => startChild("API", "@blackglass/api"),
-      startWeb: () => startChild("web", "@blackglass/web"),
+      startApi: () => startChild("API", "@stonehush/api"),
+      startWeb: () => startChild("web", "@stonehush/web"),
       waitUntilReady: ({ exited }) =>
         waitForApiReadiness({
           exited,
@@ -120,7 +120,7 @@ async function main() {
     });
   } catch (error) {
     if (!shutdownPromise) {
-      console.error(error instanceof Error ? error.message : "Blackglass API readiness failed.");
+      console.error(error instanceof Error ? error.message : "Stonehush API readiness failed.");
       await shutdown("SIGTERM", 1);
     } else {
       await shutdownPromise;
@@ -130,13 +130,13 @@ async function main() {
 
   for (const { child, exited, label } of [started.api, started.web]) {
     child.once("error", () => {
-      console.error(`Failed to start the Blackglass ${label} process.`);
+      console.error(`Failed to start the Stonehush ${label} process.`);
       void shutdown("SIGTERM", 1);
     });
     void exited.then(({ code, signal }) => {
       if (shutdownPromise) return;
       console.error(
-        `Blackglass ${label} process exited unexpectedly (${signal ?? `code ${code ?? 1}`}).`,
+        `Stonehush ${label} process exited unexpectedly (${signal ?? `code ${code ?? 1}`}).`,
       );
       void shutdown("SIGTERM", code && code > 0 ? code : 1);
     });

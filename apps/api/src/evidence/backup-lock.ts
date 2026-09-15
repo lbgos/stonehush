@@ -6,7 +6,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 
-import { O_CLOEXEC, type EvidenceNativeBinding } from "@blackglass/evidence-native";
+import { O_CLOEXEC, type EvidenceNativeBinding } from "@stonehush/evidence-native";
 
 // ADR-0003 backup quiesce gate: one advisory flock lockfile under the
 // control-owned data root. Grant admission and complete hold nonblocking

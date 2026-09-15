@@ -4,9 +4,9 @@ import { chmod, mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { NMAP_MAX_XML_BYTES } from "@blackglass/contracts";
-import { EngagementRepository, NmapServiceRepository, openEngagementDatabase } from "@blackglass/db";
-import { loadEvidenceNative } from "@blackglass/evidence-native";
+import { NMAP_MAX_XML_BYTES } from "@stonehush/contracts";
+import { EngagementRepository, NmapServiceRepository, openEngagementDatabase } from "@stonehush/db";
+import { loadEvidenceNative } from "@stonehush/evidence-native";
 import { EvidenceStore } from "./evidence-store.js";
 import { NmapProjectionService } from "./nmap-projection.js";
 async function fixture() {

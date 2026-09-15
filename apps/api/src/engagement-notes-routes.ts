@@ -4,8 +4,8 @@ import {
   EngagementQueryErrorSchema,
   UpdateEngagementNotesErrorSchema,
   UpdateEngagementNotesRequestSchema,
-} from "@blackglass/contracts";
-import type { EngagementRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { EngagementRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type NotesRepository = Pick<EngagementRepository, "getEngagementNotes" | "putEngagementNotes">;

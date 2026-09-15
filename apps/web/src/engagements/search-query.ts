@@ -1,7 +1,7 @@
 import {
   EngagementSearchResponseSchema,
   type EngagementSearchResponse,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useQuery } from "@tanstack/react-query";
 
 export const ENGAGEMENT_SEARCH_QUERY_ERROR_MESSAGE = "The search request failed.";

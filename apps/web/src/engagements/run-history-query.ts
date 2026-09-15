@@ -2,7 +2,7 @@ import {
   RUN_HISTORY_DEFAULT_LIMIT,
   RunHistoryResponseSchema,
   type RunHistoryResponse,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { infiniteQueryOptions, skipToken, useInfiniteQuery } from "@tanstack/react-query";
 
 export const RUN_HISTORY_QUERY_ERROR_MESSAGE = "The run history request failed.";

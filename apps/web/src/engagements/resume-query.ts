@@ -2,7 +2,7 @@ import {
   EngagementResumeResponseSchema,
   UpdateEngagementNextStepRequestSchema,
   type EngagementResumeResponse,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const ENGAGEMENT_RESUME_QUERY_ERROR_MESSAGE = "The resume request failed.";

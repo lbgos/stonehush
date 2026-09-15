@@ -5,7 +5,7 @@
  * the contract descriptor so UI copy never invents binary support.
  */
 
-import { FFUF_WORDLIST_CATALOG, type FfufWordlistOption } from "@blackglass/contracts";
+import { FFUF_WORDLIST_CATALOG, type FfufWordlistOption } from "@stonehush/contracts";
 
 export type WordlistChoiceStore = {
   readonly load: () => string | null;

@@ -13,8 +13,8 @@ import {
   SettingsRepository,
   openEngagementDatabase,
   type EngagementDatabase,
-} from "@blackglass/db";
-import { loadEvidenceNative } from "@blackglass/evidence-native";
+} from "@stonehush/db";
+import { loadEvidenceNative } from "@stonehush/evidence-native";
 import type { FastifyInstance } from "fastify";
 
 import { buildApp } from "./app.js";

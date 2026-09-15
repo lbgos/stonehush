@@ -10,12 +10,12 @@ import {
   type SavedScopeRule,
   type WarningContextAddition,
   type WarningReasonCode,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import {
   compareSavedScope,
   estimateConcreteTargetCardinality,
   normalizeTarget,
-} from "@blackglass/domain";
+} from "@stonehush/domain";
 
 import { bindActionSnapshot } from "./action-snapshot.js";
 import {
