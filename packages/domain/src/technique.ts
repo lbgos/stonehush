@@ -98,7 +98,7 @@ export function matchTechniquePrereqs(
   return { matched, satisfied, missing, reason };
 }
 
-const SHELL_METACHAR_PATTERN = /[;&|`$><\r\n]/;
+const SHELL_METACHAR_PATTERN = /[;&|`$><\\\r\n]/;
 const COMMAND_SUBSTITUTION_PATTERN = /\$\(/;
 
 // A supported check is one runnable argv-style line: single line, bounded,
@@ -109,6 +109,8 @@ const COMMAND_SUBSTITUTION_PATTERN = /\$\(/;
 // classifier is deliberately conservative: an unsupported verdict only
 // withholds the runnable affordance, while risk policy stays with the
 // action system. Prefilled actions copy text only and never execute.
+// Backslashes are rejected because escape handling would differ between
+// the argv splitter and a shell re-parse.
 export function isSupportedCheck(command: string): boolean {
   const line = command.trim();
   if (line.length === 0 || line.length > 500) return false;

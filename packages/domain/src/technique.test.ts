@@ -91,4 +91,9 @@ describe("supported-check classifier", () => {
     expect(isSupportedCheck("echo $(whoami)")).toBe(false);
     expect(isSupportedCheck("nmap 10.0.0.5 > out.txt")).toBe(false);
   });
+
+  it("rejects backslashes instead of splitting escapes inconsistently", () => {
+    expect(isSupportedCheck("curl foo\\ bar")).toBe(false);
+    expect(isSupportedCheck('curl -H "a\\"b" https://host')).toBe(false);
+  });
 });

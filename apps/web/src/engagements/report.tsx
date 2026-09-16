@@ -282,7 +282,9 @@ function ReportBody({
         `${JSON.stringify(manifest, null, 2)}\n`,
         "application/json",
       );
-      recordSnapshot(sharingMarkdown);
+      // No snapshot: the manifest carries no Markdown and ignores masking,
+      // so recording the Markdown snapshot here would mark an unchanged
+      // manifest stale on the next toggle.
     } catch {
       setActionError("Download failed. Try again.");
     }

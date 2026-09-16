@@ -238,6 +238,11 @@ describe("pin with citations", () => {
     }
     expect(toPrefilledAction('curl -H "X-Test: value').ok).toBe(false);
   });
+
+  it("refuses backslash escapes instead of splitting them inconsistently", () => {
+    expect(toPrefilledAction("curl foo\\ bar").ok).toBe(false);
+    expect(toPrefilledAction('curl -H "a\\"b" https://host').ok).toBe(false);
+  });
 });
 
 describe("citation passage links", () => {
