@@ -79,13 +79,20 @@ function sourcesLine(paragraph: PinnedParagraph): string {
 }
 
 // Split a stored answer into pinnable paragraphs on blank lines. Bounded
-// so pathological answers cannot flood the UI.
+// to PARAGRAPH_MAX entries so pathological answers cannot flood the UI,
+// but overflow paragraphs are coalesced into the final entry instead of
+// being dropped: pinning and suggested-check extraction still see them,
+// and answers are small enough that the tail stays displayable.
 export function splitAnswerParagraphs(answer: string): string[] {
-  return answer
+  const paragraphs = answer
     .split(/\n\s*\n/)
     .map((paragraph) => paragraph.trim())
-    .filter((paragraph) => paragraph.length > 0)
-    .slice(0, PARAGRAPH_MAX);
+    .filter((paragraph) => paragraph.length > 0);
+  if (paragraphs.length <= PARAGRAPH_MAX) return paragraphs;
+  return [
+    ...paragraphs.slice(0, PARAGRAPH_MAX - 1),
+    paragraphs.slice(PARAGRAPH_MAX - 1).join("\n\n"),
+  ];
 }
 
 export function pinParagraphToNote(

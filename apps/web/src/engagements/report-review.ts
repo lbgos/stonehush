@@ -7,13 +7,15 @@ import type { ReportOutline } from "./report-outline.js";
  * Report review panel (STONE-7).
  * A finishing aid, not a compliance form: flags selected findings with
  * missing proof, ambiguous reproduction, unsupported high-severity claims,
- * and accidental sensitive material. Detection reuses the existing
+ * and accidental sensitive material, plus selected evidence that is no
+ * longer available. Detection reuses the existing
  * heuristic advisor redactor (consumed, never modified), so secret flags
  * are best-effort and say so.
  */
 
 export const REVIEW_CODES = [
   "missing-proof",
+  "missing-evidence",
   "ambiguous-repro",
   "unsupported-claim",
   "possible-secret",
@@ -37,6 +39,7 @@ const REPRO_MARKER_PATTERN = /(^|\n)\s*(\d+[.)]|[-*]|```|`[^`]+`)/;
 export interface ReviewInput {
   readonly outline: ReportOutline;
   readonly findings: readonly Finding[];
+  readonly evidenceArtifactIds: readonly string[];
   readonly notesMarkdown: string;
 }
 
@@ -75,7 +78,7 @@ export function reviewOutline(input: ReviewInput): ReviewFlag[] {
         detail: `Finding "${finding.title}" makes an absolute impact claim with no cited evidence.`,
       });
     }
-    if (finding.body.trim().length > 0 && !REPRO_MARKER_PATTERN.test(finding.body)) {
+    if (!REPRO_MARKER_PATTERN.test(finding.body)) {
       flags.push({
         code: "ambiguous-repro",
         itemKey: item.key,
@@ -89,6 +92,15 @@ export function reviewOutline(input: ReviewInput): ReviewFlag[] {
         detail: `Finding "${finding.title}" may contain sensitive material; mask or remove it before sharing. Heuristic only.`,
       });
     }
+  }
+  const inventory = new Set(input.evidenceArtifactIds);
+  for (const item of input.outline.items) {
+    if (item.kind !== "evidence" || inventory.has(item.refId)) continue;
+    flags.push({
+      code: "missing-evidence",
+      itemKey: item.key,
+      detail: `Selected evidence ${item.refId} is no longer available; remove it or reselect.`,
+    });
   }
   const notesSelected = input.outline.items.some((item) => item.kind === "note");
   if (notesSelected && hasSecret(input.notesMarkdown)) {

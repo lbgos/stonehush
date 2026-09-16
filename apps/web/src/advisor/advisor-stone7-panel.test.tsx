@@ -67,7 +67,7 @@ interface PostedCall {
   body: unknown;
 }
 
-async function renderStonePanel(history: unknown[] = []) {
+async function renderStonePanel(history: unknown[] = [], techniques: unknown[] = []) {
   const posted: PostedCall[] = [];
   const stored: unknown[] = [...history];
   vi.stubGlobal(
@@ -83,7 +83,7 @@ async function renderStonePanel(history: unknown[] = []) {
       }
       if (String(url).includes("/advisor/status")) return response(okStatus);
       if (String(url).includes("/techniques")) {
-        if (method === "GET") return response([]);
+        if (method === "GET") return response(techniques);
         return response({ code: "invalid_request" }, 400);
       }
       if (String(url).includes("/findings")) return response([]);
@@ -218,6 +218,48 @@ describe("advisor stone-7 panel", () => {
     expect(
       await within(panel).findByText("Title is required (1 to 120 characters)."),
     ).toBeDefined();
+  });
+
+  it("rejects an overlong narrative before creating the finding", async () => {
+    await renderStonePanel([succeededTurn()]);
+    const panel = screen.getByRole("dialog");
+    const pinButtons = await within(panel).findAllByRole("button", { name: "Pin to lead" });
+    fireEvent.click(pinButtons[0] as HTMLElement);
+    fireEvent.click(await within(panel).findByRole("button", { name: "Prefill finding" }));
+    const narrativeBox = within(panel).getByLabelText(
+      "Narrative (correctable)",
+    ) as HTMLTextAreaElement;
+    fireEvent.change(narrativeBox, { target: { value: "x".repeat(70000) } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Create finding" }));
+    expect(
+      await within(panel).findByText(
+        "Narrative is too long: shorten it so the finding body stays within 65536 bytes.",
+      ),
+    ).toBeDefined();
+  });
+
+  it("substitutes placeholder values in the displayed procedure", async () => {
+    const technique = {
+      contractVersion: 1,
+      id: "10000000-0000-4000-8000-000000000010",
+      engagementId: ENGAGEMENT_ID,
+      name: "Probe check",
+      whenUseful: "",
+      prerequisites: [],
+      question: "Does it answer?",
+      procedure: [{ instruction: "Check {{target}}.", command: "nmap -sV {{target}}" }],
+      meaning: "",
+      createdAt: "2026-08-12T12:00:00.000Z",
+      updatedAt: "2026-08-12T12:00:00.000Z",
+    };
+    await renderStonePanel([], [technique]);
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    const panel = screen.getByRole("dialog");
+    expect(await within(panel).findByText("Check {{target}}.")).toBeDefined();
+    fireEvent.change(within(panel).getByLabelText("{{target}}"), {
+      target: { value: "10.0.0.5" },
+    });
+    expect(await within(panel).findByText("Check 10.0.0.5.")).toBeDefined();
   });
 
   it("renders supported checks as prefilled actions, never prose buttons", async () => {

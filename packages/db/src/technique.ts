@@ -111,20 +111,32 @@ export class TechniqueRepository {
         if (engagement.status === "archived") return failed("engagement_archived");
         const timestamp = this.now().toISOString();
         const id = this.createId();
+        // Validate the assembled record before inserting: a custom
+        // createId provider returning a non-UUID id must fail here, never
+        // leave a row that later reads back as invalid_persisted_data.
+        const candidate = TechniqueSchema.safeParse({
+          contractVersion: TECHNIQUE_CONTRACT_VERSION,
+          id,
+          engagementId,
+          ...parsed.data,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        if (!candidate.success) return failed("invalid_persisted_data");
         tx
           .insert(techniques)
           .values({
-            id,
-            contractVersion: TECHNIQUE_CONTRACT_VERSION,
-            engagementId,
-            name: parsed.data.name,
-            whenUseful: parsed.data.whenUseful,
-            prerequisitesJson: JSON.stringify(parsed.data.prerequisites),
-            question: parsed.data.question,
-            procedureJson: JSON.stringify(parsed.data.procedure),
-            meaning: parsed.data.meaning,
-            createdAt: timestamp,
-            updatedAt: timestamp,
+            id: candidate.data.id,
+            contractVersion: candidate.data.contractVersion,
+            engagementId: candidate.data.engagementId,
+            name: candidate.data.name,
+            whenUseful: candidate.data.whenUseful,
+            prerequisitesJson: JSON.stringify(candidate.data.prerequisites),
+            question: candidate.data.question,
+            procedureJson: JSON.stringify(candidate.data.procedure),
+            meaning: candidate.data.meaning,
+            createdAt: candidate.data.createdAt,
+            updatedAt: candidate.data.updatedAt,
           })
           .run();
         const stored = tx

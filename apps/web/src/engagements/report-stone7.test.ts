@@ -185,6 +185,22 @@ describe("report outline", () => {
     expect(digestOnly).not.toContain("./assets/");
     expect(digestOnly).toContain("digest-only");
   });
+
+  it("renders unresolved evidence as missing without an asset link", () => {
+    const outline = addOutlineItem(createOutline(), {
+      kind: "evidence",
+      refId: "gone-artifact",
+      caption: "old scan",
+    });
+    const material = {
+      findings: [],
+      evidence: [{ artifactId: "nmap-xml-1", digest: "sha256:0" }],
+      notesMarkdown: "",
+    };
+    const markdown = renderOutlineMarkdown(material, outline);
+    expect(markdown).toContain("old scan (missing: gone-artifact)");
+    expect(markdown).not.toContain("./assets/gone-artifact");
+  });
 });
 
 describe("report review panel", () => {
@@ -195,8 +211,50 @@ describe("report review panel", () => {
       caption: "Default credentials",
     });
     expect(
-      reviewOutline({ outline, findings: [findingFixture()], notesMarkdown: "notes" }),
+      reviewOutline({
+        outline,
+        findings: [findingFixture()],
+        evidenceArtifactIds: ["nmap-xml-1"],
+        notesMarkdown: "notes",
+      }),
     ).toEqual([]);
+  });
+
+  it("flags an empty finding body as a reproduction gap", () => {
+    const outline = addOutlineItem(createOutline(), {
+      kind: "finding",
+      refId: FINDING_ID,
+      caption: "Default credentials",
+    });
+    const flags = reviewOutline({
+      outline,
+      findings: [findingFixture({ body: "" })],
+      evidenceArtifactIds: ["nmap-xml-1"],
+      notesMarkdown: "notes",
+    });
+    expect(flags.map((flag) => flag.code)).toContain("ambiguous-repro");
+  });
+
+  it("flags selected evidence that is no longer available", () => {
+    const outline = addOutlineItem(createOutline(), {
+      kind: "evidence",
+      refId: "gone-artifact",
+      caption: "old scan",
+    });
+    const flags = reviewOutline({
+      outline,
+      findings: [findingFixture()],
+      evidenceArtifactIds: ["nmap-xml-1"],
+      notesMarkdown: "notes",
+    });
+    expect(flags.map((flag) => flag.code)).toContain("missing-evidence");
+    const fresh = reviewOutline({
+      outline,
+      findings: [findingFixture()],
+      evidenceArtifactIds: ["nmap-xml-1", "gone-artifact"],
+      notesMarkdown: "notes",
+    });
+    expect(fresh.map((flag) => flag.code)).not.toContain("missing-evidence");
   });
 
   it("flags missing proof and unknown selections", () => {
@@ -208,6 +266,7 @@ describe("report review panel", () => {
     const flags = reviewOutline({
       outline,
       findings: [findingFixture({ evidenceArtifactIds: [], body: "no steps here" })],
+      evidenceArtifactIds: [],
       notesMarkdown: "",
     });
     expect(flags.map((flag) => flag.code)).toContain("missing-proof");
@@ -229,6 +288,7 @@ describe("report review panel", () => {
           body: "This gives remote code execution on all hosts. token: sk-abcdef123456",
         }),
       ],
+      evidenceArtifactIds: [],
       notesMarkdown: "flag{ctf-secret}",
     });
     expect(flags.map((flag) => flag.code)).toContain("unsupported-claim");
@@ -412,6 +472,23 @@ describe("sharing preview", () => {
     expect(preview.markdown).toContain(
       "### Default credentials (missing: 30000000-0000-4000-8000-000000000001)",
     );
+  });
+
+  it("labels unresolved evidence as missing without an asset filename", () => {
+    const bundle = bundleFixture();
+    const outline = addOutlineItem(createOutline(), {
+      kind: "evidence",
+      refId: "gone-artifact",
+      caption: "old scan",
+    });
+    const preview = buildSharingPreview({
+      bundle,
+      outline,
+      options: { includeAssetLinks: true },
+    });
+    expect(preview.included[0]?.caption).toBe("Evidence old scan (missing: gone-artifact)");
+    expect(preview.included[0]?.filename).toBeUndefined();
+    expect(preview.markdown).not.toContain("./assets/gone-artifact");
   });
 
   it("builds a portable bundle distinct from the client report", () => {

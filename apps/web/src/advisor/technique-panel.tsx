@@ -184,7 +184,7 @@ function TechniqueCard({
       <ol className="m-0 mt-1 space-y-1 pl-4 text-[12px]">
         {technique.procedure.map((step, index) => (
           <li key={index}>
-            <span>{step.instruction}</span>
+            <span>{fillTechniquePlaceholders(step.instruction, values).text}</span>
             {step.command !== undefined ? (
               isSupportedCheck(fillTechniquePlaceholders(step.command, values).text) ? (
                 <code className="mt-0.5 block rounded bg-accent px-1.5 py-0.5 font-mono text-[11px]">

@@ -15,7 +15,7 @@ import {
   type NoteDraft,
 } from "./pin-citation.js";
 import type { SaveTechniqueInput } from "./technique-query.js";
-import type { AdvisorPartitionedCitation } from "@stonehush/contracts";
+import { FINDING_BODY_MAX_BYTES, type AdvisorPartitionedCitation } from "@stonehush/contracts";
 
 // Per-paragraph advisor actions (STONE-7). A useful paragraph pins into a
 // note draft or a lead draft with citations, a supported check becomes a
@@ -264,6 +264,10 @@ function FindingPrefillCard({
     const input = buildInput();
     if (input === undefined) {
       setError("Title is required (1 to 120 characters).");
+      return;
+    }
+    if (new TextEncoder().encode(input.body).length > FINDING_BODY_MAX_BYTES) {
+      setError("Narrative is too long: shorten it so the finding body stays within 65536 bytes.");
       return;
     }
     create.mutate(input, {

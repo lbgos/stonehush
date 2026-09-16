@@ -175,11 +175,14 @@ export function renderOutlineMarkdown(
         const digest = material.evidence.find(
           (entry) => entry.artifactId === item.refId,
         )?.digest;
-        const suffix = digest === undefined ? "" : ` ${digest}`;
+        if (digest === undefined) {
+          lines.push(`- ${item.caption} (missing: ${item.refId})`);
+          continue;
+        }
         lines.push(
           assetLinks
-            ? `- [${item.caption}](./assets/${item.refId})${suffix}`
-            : `- ${item.caption} (digest-only${suffix})`,
+            ? `- [${item.caption}](./assets/${item.refId}) ${digest}`
+            : `- ${item.caption} (digest-only ${digest})`,
         );
       }
       if (evidence.length > 0) lines.push("");

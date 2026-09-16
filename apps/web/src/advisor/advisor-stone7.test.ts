@@ -183,6 +183,15 @@ describe("pin with citations", () => {
     ]);
   });
 
+  it("coalesces overflow paragraphs instead of dropping them", () => {
+    const answer = Array.from({ length: 34 }, (_, index) => `Paragraph ${index + 1}.`).join("\n\n");
+    const paragraphs = splitAnswerParagraphs(answer);
+    expect(paragraphs).toHaveLength(32);
+    expect(paragraphs[0]).toBe("Paragraph 1.");
+    expect(paragraphs[31]).toContain("Paragraph 33.");
+    expect(paragraphs[31]).toContain("Paragraph 34.");
+  });
+
   it("pins a paragraph into a note with citations", () => {
     const draft = pinParagraphToNote(paragraph, "What shows?");
     expect(draft.body).toContain("The banner shows nginx 1.18.");

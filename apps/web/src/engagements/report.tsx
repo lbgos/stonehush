@@ -169,9 +169,12 @@ function ReportBody({
       reviewOutline({
         outline,
         findings: bundle.findings,
+        evidenceArtifactIds: bundle.evidenceArtifacts.rows.map(
+          (artifact) => artifact.artifactId,
+        ),
         notesMarkdown: bundle.notesMarkdown,
       }),
-    [outline, bundle.findings, bundle.notesMarkdown],
+    [outline, bundle.findings, bundle.evidenceArtifacts.rows, bundle.notesMarkdown],
   );
   const staleness = describeSnapshotStaleness(snapshot, {
     bundleGeneratedAt: bundle.generatedAt,

@@ -114,6 +114,20 @@ describe("technique repository", () => {
     if (!result.ok) expect(result.error.code).toBe("engagement_archived");
   });
 
+  it("rejects a non-UUID provider id without persisting a poisoned row", () => {
+    const fixture = createFixture();
+    const techniques = new TechniqueRepository(fixture.database.db, {
+      now: () => new Date("2026-08-12T12:00:00.000Z"),
+      createId: () => "not-a-uuid",
+    });
+    const result = techniques.createTechnique(fixture.engagementId, validInput());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("invalid_persisted_data");
+    const listed = fixture.techniques.listTechniques(fixture.engagementId);
+    expect(listed.ok).toBe(true);
+    if (listed.ok) expect(listed.value).toEqual([]);
+  });
+
   it("rejects invalid input without touching storage", () => {
     const fixture = createFixture();
     const result = fixture.techniques.createTechnique(

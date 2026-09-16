@@ -107,11 +107,20 @@ export function buildSharingPreview(input: SharingInput): SharingPreview {
     } else if (item.kind === "lead") {
       included.push({ caption: `Lead: ${item.caption}` });
     } else if (item.kind === "evidence") {
-      included.push(
-        options.includeAssetLinks
-          ? { caption: `Evidence ${item.refId}`, filename: `assets/${item.refId}` }
-          : { caption: `Evidence digest for ${item.refId} (asset link excluded)` },
+      const resolved = view.evidenceArtifacts.rows.some(
+        (artifact) => artifact.artifactId === item.refId,
       );
+      if (!resolved) {
+        included.push({ caption: `Evidence ${item.caption} (missing: ${item.refId})` });
+      } else if (options.includeAssetLinks) {
+        included.push(
+          { caption: `Evidence ${item.refId}`, filename: `assets/${item.refId}` },
+        );
+      } else {
+        included.push(
+          { caption: `Evidence digest for ${item.refId} (asset link excluded)` },
+        );
+      }
     } else {
       included.push({ caption: "Engagement notes excerpt" });
     }
