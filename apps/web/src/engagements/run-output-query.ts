@@ -1,8 +1,19 @@
 import {
+  AttachmentListResponseSchema,
+  AttachmentSchema,
+  CreateExcerptRequestSchema,
+  ExcerptListResponseSchema,
+  ExcerptSchema,
+  ExcerptSearchResponseSchema,
+  ExcerptSourceListResponseSchema,
   RunOutputResponseSchema,
+  type Attachment,
+  type Excerpt,
+  type ExcerptSearchResponse,
+  type ExcerptSourceRef,
   type RunOutputResponse,
 } from "@stonehush/contracts";
-import { queryOptions, skipToken, useQuery } from "@tanstack/react-query";
+import { queryOptions, skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 export const RUN_OUTPUT_QUERY_ERROR_MESSAGE = "The raw output request failed.";
 
@@ -25,6 +36,28 @@ export class RunNotFoundError extends Error {
     super("That run is no longer available.");
     this.name = "RunNotFoundError";
   }
+}
+
+// Terminal read failures that still leave an evidence reference. The code
+// selects the failed-download panel (reference plus retry) instead of the
+// generic unavailable state.
+export class RunOutputUnavailableError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super("The preserved output bytes are unavailable.");
+    this.name = "RunOutputUnavailableError";
+    this.code = code;
+  }
+}
+
+function throwForOutputStatus(status: number, payload: unknown): never {
+  const code = (payload as { code?: unknown } | null)?.code;
+  if (status === 404 && code === "no_terminal_run") throw new NoTerminalRunError();
+  if (status === 404 && code === "run_not_found") throw new RunNotFoundError();
+  if (typeof code === "string" && (code === "missing_artifact" || code === "corrupt_artifact")) {
+    throw new RunOutputUnavailableError(code);
+  }
+  throw new RunOutputQueryError();
 }
 
 export function latestRunOutputQueryKey(engagementId: string) {
@@ -58,7 +91,15 @@ export async function fetchLatestRunOutput(
     if (code === "no_terminal_run") throw new NoTerminalRunError();
     throw new RunOutputQueryError();
   }
-  if (response.status !== 200) throw new RunOutputQueryError();
+  if (response.status !== 200) {
+    let payload: unknown = undefined;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new RunOutputQueryError();
+    }
+    throwForOutputStatus(response.status, payload);
+  }
   let payload: unknown;
   try {
     payload = await response.json();
@@ -115,7 +156,15 @@ export async function fetchRunOutput(
     if (code === "run_not_found") throw new RunNotFoundError();
     throw new RunOutputQueryError();
   }
-  if (response.status !== 200) throw new RunOutputQueryError();
+  if (response.status !== 200) {
+    let payload: unknown = undefined;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new RunOutputQueryError();
+    }
+    throwForOutputStatus(response.status, payload);
+  }
   let payload: unknown;
   try {
     payload = await response.json();
@@ -169,4 +218,217 @@ export function selectRunIdFromSearch(search: unknown): string | undefined {
   if (typeof search !== "object" || search === null) return undefined;
   const run = (search as Record<string, unknown>)["run"];
   return typeof run === "string" && run.length > 0 ? run : undefined;
+}
+
+// ---- STONE-3 fast capture: excerpts, search, sources, finding handoff ----
+
+export const EXCERPT_QUERY_ERROR_MESSAGE = "The excerpt request failed.";
+
+export class ExcerptQueryError extends Error {
+  constructor() {
+    super(EXCERPT_QUERY_ERROR_MESSAGE);
+    this.name = "ExcerptQueryError";
+  }
+}
+
+interface JsonListSchema<T> {
+  safeParse: (payload: unknown) => { success: true; data: T } | { success: false; error: unknown };
+}
+
+// Shared GET/POST round trip for the capture endpoints below: every failure
+// mode (network, status, unparsable body, contract mismatch) surfaces the
+// same query error so panels show one truthful failure state.
+async function fetchCaptureJson<T>(
+  url: string,
+  schema: JsonListSchema<T>,
+  expectedStatus: number,
+  init?: RequestInit,
+  signal?: AbortSignal,
+): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(url, { ...init, ...(signal ? { signal } : {}) });
+  } catch {
+    throw new ExcerptQueryError();
+  }
+  if (response.status !== expectedStatus) throw new ExcerptQueryError();
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new ExcerptQueryError();
+  }
+  const result = schema.safeParse(payload);
+  if (!result.success) throw new ExcerptQueryError();
+  return result.data;
+}
+
+export function excerptsQueryKey(engagementId: string) {
+  return ["engagements", engagementId, "excerpts"] as const;
+}
+
+export async function fetchExcerpts(
+  engagementId: string,
+  signal?: AbortSignal,
+): Promise<Excerpt[]> {
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/excerpts`,
+    ExcerptListResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
+}
+
+export function excerptsQueryOptions(engagementId: string | undefined) {
+  return queryOptions({
+    queryKey:
+      engagementId === undefined
+        ? (["engagements", "excerpts", "none"] as const)
+        : excerptsQueryKey(engagementId),
+    queryFn:
+      engagementId === undefined ? skipToken : ({ signal }) => fetchExcerpts(engagementId, signal),
+    retry: false,
+  });
+}
+
+export function useExcerptsQuery(engagementId: string | undefined) {
+  return useQuery(excerptsQueryOptions(engagementId));
+}
+
+export interface CreateExcerptInput {
+  runId: string;
+  artifactId: string;
+  stream: "stdout" | "stderr";
+  byteOffset: number;
+  byteLength: number;
+  targetNote?: string;
+}
+
+export async function createExcerptRequest(
+  engagementId: string,
+  input: CreateExcerptInput,
+  signal?: AbortSignal,
+): Promise<Excerpt> {
+  const body = CreateExcerptRequestSchema.parse(input);
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/excerpts`,
+    ExcerptSchema,
+    201,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
+    signal,
+  );
+}
+
+export function useCreateExcerptMutation(engagementId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateExcerptInput) => createExcerptRequest(engagementId, input),
+    onSuccess: (excerpt) => {
+      queryClient.setQueryData<Excerpt[]>(excerptsQueryKey(engagementId), (current) =>
+        current === undefined ? [excerpt] : [...current, excerpt],
+      );
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: excerptsQueryKey(engagementId) });
+    },
+  });
+}
+
+export async function searchRunOutput(
+  engagementId: string,
+  runId: string,
+  query: string,
+  stream?: "stdout" | "stderr",
+  signal?: AbortSignal,
+): Promise<ExcerptSearchResponse> {
+  const params = new URLSearchParams({ q: query });
+  if (stream !== undefined) params.set("stream", stream);
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/runs/${encodeURIComponent(runId)}/output/search?${params.toString()}`,
+    ExcerptSearchResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
+}
+
+export function excerptSourcesQueryKey(engagementId: string, runId: string) {
+  return ["engagements", engagementId, "runs", runId, "excerpt-sources"] as const;
+}
+
+export async function fetchExcerptSources(
+  engagementId: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<ExcerptSourceRef[]> {
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/runs/${encodeURIComponent(runId)}/excerpt-sources`,
+    ExcerptSourceListResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
+}
+
+export function useExcerptSourcesQuery(engagementId: string, runId: string) {
+  return useQuery({
+    queryKey: excerptSourcesQueryKey(engagementId, runId),
+    queryFn: ({ signal }) => fetchExcerptSources(engagementId, runId, signal),
+    retry: false,
+  });
+}
+
+export function attachmentsQueryKey(engagementId: string) {
+  return ["engagements", engagementId, "attachments"] as const;
+}
+
+export async function fetchAttachments(
+  engagementId: string,
+  signal?: AbortSignal,
+): Promise<Attachment[]> {
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/attachments`,
+    AttachmentListResponseSchema,
+    200,
+    undefined,
+    signal,
+  );
+}
+
+export async function createAttachmentRequest(
+  engagementId: string,
+  input: {
+    filename: string;
+    mime: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+    contentBase64: string;
+    caption?: string;
+    targetLabel?: string;
+  },
+  signal?: AbortSignal,
+): Promise<Attachment> {
+  return fetchCaptureJson(
+    `/api/v1/engagements/${encodeURIComponent(engagementId)}/attachments`,
+    AttachmentSchema,
+    201,
+    { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
+    signal,
+  );
+}
+
+// Pending finding prefill handoff between the Raw output tab and the
+// Findings tab. Module-scoped and keyed by engagement: the workspace mounts
+// tabs independently and the route search schema is owned elsewhere, so the
+// excerpt object itself (already server-verified and masked) travels here.
+// Consumed once; a reload loses only the shortcut, never the saved excerpt.
+const pendingFindingExcerpts = new Map<string, Excerpt>();
+
+export function requestFindingFromExcerpt(engagementId: string, excerpt: Excerpt): void {
+  pendingFindingExcerpts.set(engagementId, excerpt);
+}
+
+export function takePendingFindingExcerpt(engagementId: string): Excerpt | undefined {
+  const excerpt = pendingFindingExcerpts.get(engagementId);
+  if (excerpt !== undefined) pendingFindingExcerpts.delete(engagementId);
+  return excerpt;
 }

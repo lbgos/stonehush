@@ -13,6 +13,7 @@ import type {
   AdvisorTurnsRepository,
   EngagementRepository,
   EvidenceGrantRepository,
+  ExcerptRepository,
   FfufRepository,
   HttpProbeRepository,
   NmapServiceRepository,
@@ -32,6 +33,7 @@ import type { EvidenceStore } from "./evidence/evidence-store.js";
 import { registerEngagementMutationRoutes } from "./engagement-mutation-routes.js";
 import { registerEngagementNotesRoutes } from "./engagement-notes-routes.js";
 import { registerEngagementRoutes } from "./engagement-routes.js";
+import { registerExcerptRoutes } from "./excerpt-routes.js";
 import { registerFindingRoutes } from "./finding-routes.js";
 import { registerRunnerAuthHook, stripAuthorizationHeader } from "./runner-http.js";
 import { registerRunnerEnrollmentRoutes } from "./runner-enrollment-routes.js";
@@ -105,7 +107,8 @@ interface BuildAppOptions {
   storageGate?: StorageQuiesceGate;
   // Operator artifact downloads are registered only when a verified managed
   // store is available; without it the route does not exist.
-  evidenceStore?: Pick<EvidenceStore, "verifiedDownload" | "verifiedExcerpt">;
+  evidenceStore?: Pick<EvidenceStore, "verifiedDownload" | "verifiedExcerpt" | "verifiedByteRange">;
+  excerptRepository?: ExcerptRepository;
   nmapServiceRepository?: Pick<NmapServiceRepository, "listForEngagement">;
   settingsRepository?: Pick<
     SettingsRepository,
@@ -159,6 +162,7 @@ export function buildApp({
   httpProbeRepository,
   ffufRepository,
   runOutputRepository,
+  excerptRepository,
   logger = false,
   now,
 }: BuildAppOptions): FastifyInstance {
@@ -319,6 +323,27 @@ export function buildApp({
   ) {
     registerRunOutputRoutes(app, {
       repository: runOutputRepository,
+      store: evidenceStore,
+    });
+  }
+  // STONE-3 fast capture. Additive: existing run-output and download routes
+  // are untouched; excerpts, search, sources, and attachments live here.
+  if (
+    excerptRepository !== undefined &&
+    evidenceGrantRepository !== undefined &&
+    evidenceStore !== undefined &&
+    runOutputRepository !== undefined
+  ) {
+    registerExcerptRoutes(app, {
+      engagements: {
+        getEngagement: engagementRepository.getEngagement.bind(engagementRepository),
+      },
+      excerpts: excerptRepository,
+      runs: {
+        runForEngagement: runOutputRepository.runForEngagement.bind(runOutputRepository),
+        artifactsForRun: runOutputRepository.artifactsForRun.bind(runOutputRepository),
+      },
+      grants: evidenceGrantRepository,
       store: evidenceStore,
     });
   }
