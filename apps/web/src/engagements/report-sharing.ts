@@ -1,0 +1,199 @@
+import type { ReportBundle } from "@stonehush/contracts";
+import {
+  redactAdvisorText,
+  stripAdvisorUrlUserinfo,
+} from "@stonehush/domain";
+
+import { maskReportBundle } from "./report-mask.js";
+import {
+  renderOutlineMarkdown,
+  type OutlineMaterial,
+  type ReportOutline,
+} from "./report-outline.js";
+
+/**
+ * Sharing preview and portable bundle (STONE-7).
+ * The sharing preview shows the exact inclusion before anything leaves the
+ * machine: entry captions and filenames, with scratchpad, secret values,
+ * note history, and raw artifact bytes out by default. Raw artifacts need
+ * an explicit opt-in. The portable workspace bundle is a distinct manifest
+ * for moving work between machines, not a client report.
+ */
+
+export interface SharingOptions {
+  readonly maskSecrets: boolean;
+  readonly includeAssetLinks: boolean;
+  readonly includeNoteHistory: boolean;
+  readonly includeScratchpad: boolean;
+}
+
+export const DEFAULT_SHARING_OPTIONS: SharingOptions = {
+  maskSecrets: true,
+  includeAssetLinks: false,
+  includeNoteHistory: false,
+  includeScratchpad: false,
+};
+
+export interface SharingEntry {
+  readonly caption: string;
+  readonly filename?: string;
+}
+
+export interface SharingPreview {
+  readonly included: readonly SharingEntry[];
+  readonly excluded: readonly string[];
+  readonly markdown: string;
+  readonly maskedFields: number;
+}
+
+export interface SharingInput {
+  readonly bundle: ReportBundle;
+  readonly outline: ReportOutline;
+  readonly options?: Partial<SharingOptions>;
+}
+
+function toMaterial(bundle: ReportBundle): OutlineMaterial {
+  return {
+    findings: bundle.findings,
+    evidence: bundle.evidenceArtifacts.rows.map((artifact) => ({
+      artifactId: artifact.artifactId,
+      digest: artifact.digest,
+    })),
+    notesMarkdown: bundle.notesMarkdown,
+  };
+}
+
+// Outline captions are operator-authored free text too: with secret masking
+// on they pass through the same heuristic redactor as bundle fields, so a
+// lead caption carrying a secret-shaped value never exports unchanged.
+function maskOutlineCaptions(outline: ReportOutline): {
+  outline: ReportOutline;
+  maskedCaptions: number;
+} {
+  let maskedCaptions = 0;
+  const items = outline.items.map((item) => {
+    const caption = redactAdvisorText(stripAdvisorUrlUserinfo(item.caption)).text;
+    if (caption === item.caption) return item;
+    maskedCaptions += 1;
+    return { ...item, caption };
+  });
+  return { outline: { template: outline.template, items }, maskedCaptions };
+}
+
+// One builder feeds the on-screen preview and every outline-based
+// download, so the preview always matches the file exactly. The asset-link
+// toggle changes the rendered Markdown itself (links vs digest-only lines),
+// never just the captions, so the two cannot drift.
+export function buildSharingPreview(input: SharingInput): SharingPreview {
+  const options: SharingOptions = { ...DEFAULT_SHARING_OPTIONS, ...input.options };
+  const masked = options.maskSecrets ? maskReportBundle(input.bundle) : null;
+  const view = masked?.bundle ?? input.bundle;
+  const outlineMask = masked === null ? null : maskOutlineCaptions(input.outline);
+  const outline = outlineMask?.outline ?? input.outline;
+  const maskedFields = (masked?.maskedFields ?? 0) + (outlineMask?.maskedCaptions ?? 0);
+  const markdown = renderOutlineMarkdown(toMaterial(view), outline, {
+    assetLinks: options.includeAssetLinks,
+  });
+  const included: SharingEntry[] = [];
+  for (const item of outline.items) {
+    if (item.kind === "finding") {
+      const finding = view.findings.find((entry) => entry.id === item.refId);
+      included.push({
+        caption:
+          finding === undefined
+            ? `${item.caption} (missing: ${item.refId})`
+            : `Finding: ${finding.title}`,
+      });
+    } else if (item.kind === "lead") {
+      included.push({ caption: `Lead: ${item.caption}` });
+    } else if (item.kind === "evidence") {
+      const resolved = view.evidenceArtifacts.rows.some(
+        (artifact) => artifact.artifactId === item.refId,
+      );
+      if (!resolved) {
+        included.push({ caption: `Evidence ${item.caption} (missing: ${item.refId})` });
+      } else if (options.includeAssetLinks) {
+        included.push(
+          { caption: `Evidence ${item.refId}`, filename: `assets/${item.refId}` },
+        );
+      } else {
+        included.push(
+          { caption: `Evidence digest for ${item.refId} (asset link excluded)` },
+        );
+      }
+    } else {
+      included.push({ caption: "Engagement notes excerpt" });
+    }
+  }
+  const excluded: string[] = [
+    "Scratchpad drafts are never part of a report.",
+    options.maskSecrets
+      ? `Secret-shaped values masked (${maskedFields} fields). Heuristic only.`
+      : "Secret masking OFF: the export contains original stored text.",
+    "Note history is never exported; only the current notes text.",
+    "Raw artifact bytes are never embedded in the export; it carries digests and optional asset links only.",
+  ];
+  if (!options.includeAssetLinks) {
+    excluded.push("Evidence asset links excluded; enable explicitly to reference ./assets/<id>.");
+  }
+  if (!options.includeNoteHistory) {
+    excluded.push("Note history excluded.");
+  }
+  if (!options.includeScratchpad) {
+    excluded.push("Scratchpad excluded.");
+  }
+  return {
+    included,
+    excluded,
+    markdown,
+    maskedFields,
+  };
+}
+
+// The exact artifact bytes for the outline Markdown download above. Same
+// string, no second renderer, so that preview and file cannot drift. The
+// print HTML wraps this Markdown and the portable bundle is a manifest, so
+// neither matches these bytes.
+export function exportSharingMarkdown(preview: SharingPreview): string {
+  return preview.markdown;
+}
+
+export interface PortableBundleManifest {
+  readonly kind: "blackglass-portable-bundle-v1";
+  readonly engagementId: string;
+  readonly generatedAt: string;
+  readonly template: string;
+  readonly outlineKeys: readonly string[];
+  readonly findingIds: readonly string[];
+  readonly evidence: readonly { readonly artifactId: string; readonly digest: string }[];
+  readonly notesIncluded: boolean;
+  readonly excludes: readonly string[];
+}
+
+// Portable workspace bundle: a manifest for moving work, distinct from the
+// client-facing report markdown. Digests only, never secret values, scratch
+// history, or ambient state.
+export function buildPortableBundleManifest(input: SharingInput): PortableBundleManifest {
+  return {
+    kind: "blackglass-portable-bundle-v1",
+    engagementId: input.bundle.engagement.id,
+    generatedAt: input.bundle.generatedAt,
+    template: input.outline.template,
+    outlineKeys: input.outline.items.map((item) => item.key),
+    findingIds: input.outline.items
+      .filter((item) => item.kind === "finding")
+      .map((item) => item.refId),
+    evidence: input.bundle.evidenceArtifacts.rows.map((artifact) => ({
+      artifactId: artifact.artifactId,
+      digest: artifact.digest,
+    })),
+    notesIncluded: input.outline.items.some((item) => item.kind === "note"),
+    excludes: [
+      "scratchpad",
+      "secret values",
+      "note history",
+      "raw artifact bytes (referenced by digest)",
+      "advisor turn history",
+    ],
+  };
+}

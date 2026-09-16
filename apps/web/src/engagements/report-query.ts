@@ -23,6 +23,18 @@ export function reportMarkdownFilename(engagementId: string): string {
   return `engagement-${engagementId}-report.md`;
 }
 
+export function reportPrintFilename(engagementId: string, template: string): string {
+  return `engagement-${engagementId}-report-${template}.html`;
+}
+
+export function reportOutlineFilename(engagementId: string, template: string): string {
+  return `engagement-${engagementId}-report-${template}-outline.md`;
+}
+
+export function reportPortableFilename(engagementId: string): string {
+  return `engagement-${engagementId}-workspace-bundle.json`;
+}
+
 export async function fetchReportBundle(
   engagementId: string,
   signal?: AbortSignal,

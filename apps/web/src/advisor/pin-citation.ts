@@ -1,0 +1,186 @@
+import { isSupportedCheck } from "@stonehush/domain";
+import type { AdvisorPartitionedCitation } from "@stonehush/contracts";
+
+/**
+ * Pin-with-citations and prefilled-action handoff (STONE-7).
+ * A useful answer paragraph pins into a note draft or a lead draft with its
+ * citations attached, and a supported check becomes a prefilled argv action
+ * so the operator never retypes prose. Unsupported commands never produce
+ * runnable output: they stay plain text. Lead drafts use a narrow
+ * structural interface; the STONE-4 lead API can adopt it without further
+ * translation.
+ */
+
+export interface PinnedParagraph {
+  readonly text: string;
+  readonly citations: readonly AdvisorPartitionedCitation[];
+}
+
+export interface NoteDraft {
+  readonly body: string;
+}
+
+export interface LeadDraft {
+  readonly title: string;
+  readonly narrative: string;
+  readonly artifactIds: readonly string[];
+  readonly findingIds: readonly string[];
+  readonly serviceIds: readonly string[];
+  readonly probeIds: readonly string[];
+  readonly sourceQuestion: string;
+}
+
+export type PrefilledAction =
+  | { readonly ok: true; readonly argv: readonly string[]; readonly label: string }
+  | { readonly ok: false; readonly reason: string };
+
+const PARAGRAPH_MAX = 32;
+
+function citationRefs(paragraph: PinnedParagraph): {
+  readonly artifacts: readonly string[];
+  readonly findings: readonly string[];
+  readonly services: readonly string[];
+  readonly probes: readonly string[];
+  readonly unverified: readonly string[];
+} {
+  const artifacts: string[] = [];
+  const findings: string[] = [];
+  const services: string[] = [];
+  const probes: string[] = [];
+  const unverified: string[] = [];
+  for (const citation of paragraph.citations) {
+    if (!citation.valid) {
+      unverified.push(citation.raw);
+    } else if (citation.kind === "artifact") {
+      artifacts.push(citation.raw);
+    } else if (citation.kind === "finding") {
+      findings.push(citation.raw);
+    } else if (citation.kind === "service") {
+      services.push(citation.raw);
+    } else if (citation.kind === "probe") {
+      probes.push(citation.raw);
+    } else {
+      unverified.push(citation.raw);
+    }
+  }
+  return { artifacts, findings, services, probes, unverified };
+}
+
+function sourcesLine(paragraph: PinnedParagraph): string {
+  const { artifacts, findings, services, probes, unverified } = citationRefs(paragraph);
+  const parts: string[] = [];
+  for (const id of artifacts) parts.push(`artifact ${id}`);
+  for (const id of findings) parts.push(`finding ${id}`);
+  for (const id of services) parts.push(`service ${id}`);
+  for (const id of probes) parts.push(`probe ${id}`);
+  for (const raw of unverified) parts.push(`unverified ${raw}`);
+  if (parts.length === 0) return "";
+  return `\n\nSources: ${parts.join(", ")}.`;
+}
+
+// Split a stored answer into pinnable paragraphs on blank lines. Bounded
+// to PARAGRAPH_MAX entries so pathological answers cannot flood the UI,
+// but overflow paragraphs are coalesced into the final entry instead of
+// being dropped: pinning and suggested-check extraction still see them,
+// and answers are small enough that the tail stays displayable.
+export function splitAnswerParagraphs(answer: string): string[] {
+  const paragraphs = answer
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0);
+  if (paragraphs.length <= PARAGRAPH_MAX) return paragraphs;
+  return [
+    ...paragraphs.slice(0, PARAGRAPH_MAX - 1),
+    paragraphs.slice(PARAGRAPH_MAX - 1).join("\n\n"),
+  ];
+}
+
+export function pinParagraphToNote(
+  paragraph: PinnedParagraph,
+  sourceQuestion: string,
+): NoteDraft {
+  return {
+    body: `${paragraph.text}${sourcesLine(paragraph)}\n\nAdvisor question: ${sourceQuestion}`,
+  };
+}
+
+export function pinParagraphToLead(
+  paragraph: PinnedParagraph,
+  sourceQuestion: string,
+): LeadDraft {
+  const { artifacts, findings, services, probes } = citationRefs(paragraph);
+  const firstLine = paragraph.text.split("\n")[0] ?? paragraph.text;
+  const title =
+    Array.from(firstLine).length > 120
+      ? `${Array.from(firstLine).slice(0, 117).join("")}...`
+      : firstLine;
+  return {
+    title,
+    narrative: `${paragraph.text}${sourcesLine(paragraph)}`,
+    artifactIds: artifacts,
+    findingIds: findings,
+    serviceIds: services,
+    probeIds: probes,
+    sourceQuestion,
+  };
+}
+
+// Split a supported command into argv without breaking quoted arguments:
+// `curl -H "X-Test: value" https://host` keeps the header as one element.
+// Returns undefined for unbalanced quotes so the caller refuses the draft
+// instead of prefilling a mangled argv.
+function splitCommandArgs(command: string): string[] | undefined {
+  const args: string[] = [];
+  let current = "";
+  let built = false;
+  let quote: '"' | "'" | null = null;
+  for (const char of command.trim()) {
+    if (quote !== null) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      built = true;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      built = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (built) {
+        args.push(current);
+        current = "";
+        built = false;
+      }
+      continue;
+    }
+    current += char;
+    built = true;
+  }
+  if (quote !== null) return undefined;
+  if (built) args.push(current);
+  return args;
+}
+
+// A supported single-line check becomes prefilled argv. Anything else is
+// refused with a reason so the UI renders it as inert text, never as a
+// runnable action.
+export function toPrefilledAction(command: string): PrefilledAction {
+  if (!isSupportedCheck(command)) {
+    return {
+      ok: false,
+      reason: "Not a runnable check: keep as prose, do not execute.",
+    };
+  }
+  const argv = splitCommandArgs(command);
+  if (argv === undefined) {
+    return {
+      ok: false,
+      reason: "Not a runnable check: keep as prose, do not execute.",
+    };
+  }
+  return { ok: true, argv, label: command.trim() };
+}

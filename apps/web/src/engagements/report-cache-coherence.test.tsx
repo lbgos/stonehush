@@ -353,7 +353,7 @@ describe("report cache coherence", () => {
     expect(client.getQueryState(reportQueryKey(engagementA))?.isInvalidated).toBe(true);
 
     renderReport(client, engagementA);
-    expect(await screen.findByText(/Fresh finding/)).toBeTruthy();
+    expect(await screen.findAllByText(/Fresh finding/)).toBeTruthy();
   });
 
   it("resolving a finding refreshes the report status", async () => {
@@ -444,7 +444,7 @@ describe("report cache coherence", () => {
     const client = trackClient(createAppQueryClient());
     renderReport(client, engagementA);
 
-    expect(await screen.findByText(/Export finding/)).toBeTruthy();
+    expect(await screen.findAllByText(/Export finding/)).toBeTruthy();
     expect(screen.getByText(/export-notes/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Download Markdown" }));

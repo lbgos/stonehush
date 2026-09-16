@@ -48,3 +48,4 @@ export * from "./advisor-turns.js";
 export * from "./leads.js";
 export * from "./objectives.js";
 export * from "./secrets.js";
+export * from "./technique.js";
