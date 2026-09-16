@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "dc2a7775-9f11-4135-b409-cf15b275e0e9",
-  "prevId": "4dc9f913-f91d-4af2-9fc3-d38ecaf1cfec",
+  "id": "80585a7b-4d58-4535-936e-a6b187ca6686",
+  "prevId": "dc2a7775-9f11-4135-b409-cf15b275e0e9",
   "tables": {
     "action_covered_destinations": {
       "name": "action_covered_destinations",
@@ -1363,6 +1363,355 @@
         }
       }
     },
+    "evidence_attachments": {
+      "name": "evidence_attachments",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contract_version": {
+          "name": "contract_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "engagement_id": {
+          "name": "engagement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "filename": {
+          "name": "filename",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mime": {
+          "name": "mime",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "size_bytes": {
+          "name": "size_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "digest": {
+          "name": "digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "caption": {
+          "name": "caption",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_label": {
+          "name": "target_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "parent_attachment_id": {
+          "name": "parent_attachment_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "crop_rect_json": {
+          "name": "crop_rect_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "content_base64": {
+          "name": "content_base64",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "evidence_attachment_engagement_created_idx": {
+          "name": "evidence_attachment_engagement_created_idx",
+          "columns": [
+            "engagement_id",
+            "created_at",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "evidence_attachments_engagement_id_engagements_id_fk": {
+          "name": "evidence_attachments_engagement_id_engagements_id_fk",
+          "tableFrom": "evidence_attachments",
+          "tableTo": "engagements",
+          "columnsFrom": [
+            "engagement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "evidence_attachment_parent_fk": {
+          "name": "evidence_attachment_parent_fk",
+          "tableFrom": "evidence_attachments",
+          "tableTo": "evidence_attachments",
+          "columnsFrom": [
+            "parent_attachment_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "evidence_attachment_contract_version": {
+          "name": "evidence_attachment_contract_version",
+          "value": "\"evidence_attachments\".\"contract_version\" = 1"
+        },
+        "evidence_attachment_filename": {
+          "name": "evidence_attachment_filename",
+          "value": "length(\"evidence_attachments\".\"filename\") between 1 and 128 and \"evidence_attachments\".\"filename\" not glob '*[^a-z0-9-]*'"
+        },
+        "evidence_attachment_mime": {
+          "name": "evidence_attachment_mime",
+          "value": "\"evidence_attachments\".\"mime\" in ('image/png', 'image/jpeg', 'image/gif', 'image/webp')"
+        },
+        "evidence_attachment_size_bytes": {
+          "name": "evidence_attachment_size_bytes",
+          "value": "\"evidence_attachments\".\"size_bytes\" between 1 and 2000000"
+        },
+        "evidence_attachment_digest": {
+          "name": "evidence_attachment_digest",
+          "value": "length(\"evidence_attachments\".\"digest\") = 71 and \"evidence_attachments\".\"digest\" glob 'sha256:[0-9a-f]*' and \"evidence_attachments\".\"digest\" not glob 'sha256:*[^0-9a-f]*'"
+        },
+        "evidence_attachment_caption": {
+          "name": "evidence_attachment_caption",
+          "value": "length(\"evidence_attachments\".\"caption\") <= 280"
+        },
+        "evidence_attachment_target_label": {
+          "name": "evidence_attachment_target_label",
+          "value": "\"evidence_attachments\".\"target_label\" is null or length(\"evidence_attachments\".\"target_label\") between 1 and 120"
+        },
+        "evidence_attachment_crop_json": {
+          "name": "evidence_attachment_crop_json",
+          "value": "\"evidence_attachments\".\"crop_rect_json\" is null or (json_valid(\"evidence_attachments\".\"crop_rect_json\") and length(cast(\"evidence_attachments\".\"crop_rect_json\" as blob)) <= 1024)"
+        },
+        "evidence_attachment_content_bytes": {
+          "name": "evidence_attachment_content_bytes",
+          "value": "length(cast(\"evidence_attachments\".\"content_base64\" as blob)) between 1 and 2000000"
+        },
+        "evidence_attachment_created_at": {
+          "name": "evidence_attachment_created_at",
+          "value": "length(\"evidence_attachments\".\"created_at\") >= 20"
+        }
+      }
+    },
+    "evidence_excerpts": {
+      "name": "evidence_excerpts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contract_version": {
+          "name": "contract_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "engagement_id": {
+          "name": "engagement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "artifact_digest": {
+          "name": "artifact_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "stream": {
+          "name": "stream",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "byte_offset": {
+          "name": "byte_offset",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "byte_length": {
+          "name": "byte_length",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "redactions": {
+          "name": "redactions",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_note": {
+          "name": "target_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "evidence_excerpt_engagement_created_idx": {
+          "name": "evidence_excerpt_engagement_created_idx",
+          "columns": [
+            "engagement_id",
+            "created_at",
+            "id"
+          ],
+          "isUnique": false
+        },
+        "evidence_excerpt_run_idx": {
+          "name": "evidence_excerpt_run_idx",
+          "columns": [
+            "engagement_id",
+            "run_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "evidence_excerpts_engagement_id_engagements_id_fk": {
+          "name": "evidence_excerpts_engagement_id_engagements_id_fk",
+          "tableFrom": "evidence_excerpts",
+          "tableTo": "engagements",
+          "columnsFrom": [
+            "engagement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "evidence_excerpt_contract_version": {
+          "name": "evidence_excerpt_contract_version",
+          "value": "\"evidence_excerpts\".\"contract_version\" = 1"
+        },
+        "evidence_excerpt_artifact_id": {
+          "name": "evidence_excerpt_artifact_id",
+          "value": "length(\"evidence_excerpts\".\"artifact_id\") between 1 and 127 and substr(\"evidence_excerpts\".\"artifact_id\", 1, 1) glob '[a-z0-9]' and \"evidence_excerpts\".\"artifact_id\" not glob '*[^a-z0-9-]*'"
+        },
+        "evidence_excerpt_artifact_digest": {
+          "name": "evidence_excerpt_artifact_digest",
+          "value": "length(\"evidence_excerpts\".\"artifact_digest\") = 71 and \"evidence_excerpts\".\"artifact_digest\" glob 'sha256:[0-9a-f]*' and \"evidence_excerpts\".\"artifact_digest\" not glob 'sha256:*[^0-9a-f]*'"
+        },
+        "evidence_excerpt_stream": {
+          "name": "evidence_excerpt_stream",
+          "value": "\"evidence_excerpts\".\"stream\" in ('stdout', 'stderr')"
+        },
+        "evidence_excerpt_range": {
+          "name": "evidence_excerpt_range",
+          "value": "\"evidence_excerpts\".\"byte_offset\" >= 0 and \"evidence_excerpts\".\"byte_length\" between 1 and 8192 and \"evidence_excerpts\".\"byte_offset\" + \"evidence_excerpts\".\"byte_length\" <= 1073741824"
+        },
+        "evidence_excerpt_content_bytes": {
+          "name": "evidence_excerpt_content_bytes",
+          "value": "length(cast(\"evidence_excerpts\".\"content\" as blob)) <= 16384"
+        },
+        "evidence_excerpt_redactions": {
+          "name": "evidence_excerpt_redactions",
+          "value": "\"evidence_excerpts\".\"redactions\" >= 0"
+        },
+        "evidence_excerpt_target_note": {
+          "name": "evidence_excerpt_target_note",
+          "value": "\"evidence_excerpts\".\"target_note\" is null or length(\"evidence_excerpts\".\"target_note\") between 1 and 120"
+        },
+        "evidence_excerpt_created_at": {
+          "name": "evidence_excerpt_created_at",
+          "value": "length(\"evidence_excerpts\".\"created_at\") >= 20"
+        }
+      }
+    },
     "evidence_grants": {
       "name": "evidence_grants",
       "columns": {
@@ -2112,6 +2461,425 @@
         }
       }
     },
+    "lead_attempts": {
+      "name": "lead_attempts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contract_version": {
+          "name": "contract_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "engagement_id": {
+          "name": "engagement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "lead_id": {
+          "name": "lead_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "sequence": {
+          "name": "sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "conditions": {
+          "name": "conditions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "evidence_artifact_ids_json": {
+          "name": "evidence_artifact_ids_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "linked_finding_id": {
+          "name": "linked_finding_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "linked_objective_id": {
+          "name": "linked_objective_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "lead_attempt_lead_sequence_unique": {
+          "name": "lead_attempt_lead_sequence_unique",
+          "columns": [
+            "lead_id",
+            "sequence"
+          ],
+          "isUnique": true
+        },
+        "lead_attempt_engagement_id_unique": {
+          "name": "lead_attempt_engagement_id_unique",
+          "columns": [
+            "engagement_id",
+            "id"
+          ],
+          "isUnique": true
+        },
+        "lead_attempt_lead_created_idx": {
+          "name": "lead_attempt_lead_created_idx",
+          "columns": [
+            "lead_id",
+            "created_at",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "lead_attempts_engagement_id_engagements_id_fk": {
+          "name": "lead_attempts_engagement_id_engagements_id_fk",
+          "tableFrom": "lead_attempts",
+          "tableTo": "engagements",
+          "columnsFrom": [
+            "engagement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "lead_attempts_lead_id_leads_id_fk": {
+          "name": "lead_attempts_lead_id_leads_id_fk",
+          "tableFrom": "lead_attempts",
+          "tableTo": "leads",
+          "columnsFrom": [
+            "lead_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "lead_attempt_contract_version": {
+          "name": "lead_attempt_contract_version",
+          "value": "\"lead_attempts\".\"contract_version\" = 1"
+        },
+        "lead_attempt_sequence": {
+          "name": "lead_attempt_sequence",
+          "value": "\"lead_attempts\".\"sequence\" >= 1"
+        },
+        "lead_attempt_summary_length": {
+          "name": "lead_attempt_summary_length",
+          "value": "length(\"lead_attempts\".\"summary\") between 1 and 2000 and \"lead_attempts\".\"summary\" = trim(\"lead_attempts\".\"summary\")"
+        },
+        "lead_attempt_outcome": {
+          "name": "lead_attempt_outcome",
+          "value": "\"lead_attempts\".\"outcome\" in ('observed', 'ruled_out', 'inconclusive', 'interrupted')"
+        },
+        "lead_attempt_conditions_length": {
+          "name": "lead_attempt_conditions_length",
+          "value": "\"lead_attempts\".\"conditions\" is null or length(\"lead_attempts\".\"conditions\") between 1 and 500"
+        },
+        "lead_attempt_evidence_json": {
+          "name": "lead_attempt_evidence_json",
+          "value": "json_valid(\"lead_attempts\".\"evidence_artifact_ids_json\") and length(cast(\"lead_attempts\".\"evidence_artifact_ids_json\" as blob)) <= 8192"
+        },
+        "lead_attempt_created_at": {
+          "name": "lead_attempt_created_at",
+          "value": "length(\"lead_attempts\".\"created_at\") >= 20"
+        }
+      }
+    },
+    "leads": {
+      "name": "leads",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contract_version": {
+          "name": "contract_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "engagement_id": {
+          "name": "engagement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target": {
+          "name": "target",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "service_ref": {
+          "name": "service_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "source_kind": {
+          "name": "source_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_ref": {
+          "name": "source_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_label": {
+          "name": "source_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "next_step": {
+          "name": "next_step",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "disposition": {
+          "name": "disposition",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "park_reason": {
+          "name": "park_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "tested_conditions": {
+          "name": "tested_conditions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "closed_note": {
+          "name": "closed_note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revisit_trigger": {
+          "name": "revisit_trigger",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revisit_reason": {
+          "name": "revisit_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revisit_created_at": {
+          "name": "revisit_created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "revisit_dismissed": {
+          "name": "revisit_dismissed",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "lead_engagement_created_idx": {
+          "name": "lead_engagement_created_idx",
+          "columns": [
+            "engagement_id",
+            "created_at",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "leads_engagement_id_engagements_id_fk": {
+          "name": "leads_engagement_id_engagements_id_fk",
+          "tableFrom": "leads",
+          "tableTo": "engagements",
+          "columnsFrom": [
+            "engagement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "lead_contract_version": {
+          "name": "lead_contract_version",
+          "value": "\"leads\".\"contract_version\" = 1"
+        },
+        "lead_title_length": {
+          "name": "lead_title_length",
+          "value": "length(\"leads\".\"title\") between 1 and 120 and \"leads\".\"title\" = trim(\"leads\".\"title\")"
+        },
+        "lead_target_length": {
+          "name": "lead_target_length",
+          "value": "\"leads\".\"target\" is null or (length(\"leads\".\"target\") between 1 and 253 and \"leads\".\"target\" = trim(\"leads\".\"target\"))"
+        },
+        "lead_service_ref_length": {
+          "name": "lead_service_ref_length",
+          "value": "\"leads\".\"service_ref\" is null or (length(\"leads\".\"service_ref\") between 1 and 253 and \"leads\".\"service_ref\" = trim(\"leads\".\"service_ref\"))"
+        },
+        "lead_source_kind": {
+          "name": "lead_source_kind",
+          "value": "\"leads\".\"source_kind\" in ('nmap_service', 'http_probe', 'ffuf_result', 'run_output', 'manual')"
+        },
+        "lead_source_ref_length": {
+          "name": "lead_source_ref_length",
+          "value": "length(\"leads\".\"source_ref\") between 1 and 2048"
+        },
+        "lead_source_label_length": {
+          "name": "lead_source_label_length",
+          "value": "\"leads\".\"source_label\" is null or length(\"leads\".\"source_label\") between 1 and 120"
+        },
+        "lead_next_step_length": {
+          "name": "lead_next_step_length",
+          "value": "\"leads\".\"next_step\" is null or length(\"leads\".\"next_step\") between 1 and 500"
+        },
+        "lead_disposition": {
+          "name": "lead_disposition",
+          "value": "\"leads\".\"disposition\" in ('open', 'parked', 'closed')"
+        },
+        "lead_park_reason_present": {
+          "name": "lead_park_reason_present",
+          "value": "(\"leads\".\"disposition\" = 'parked' and \"leads\".\"park_reason\" is not null and length(\"leads\".\"park_reason\") between 1 and 500) or (\"leads\".\"disposition\" <> 'parked' and \"leads\".\"park_reason\" is null)"
+        },
+        "lead_tested_conditions_length": {
+          "name": "lead_tested_conditions_length",
+          "value": "\"leads\".\"tested_conditions\" is null or length(\"leads\".\"tested_conditions\") between 1 and 500"
+        },
+        "lead_closed_note_present": {
+          "name": "lead_closed_note_present",
+          "value": "\"leads\".\"closed_note\" is null or (\"leads\".\"disposition\" = 'closed' and length(\"leads\".\"closed_note\") between 1 and 500)"
+        },
+        "lead_revisit_tuple": {
+          "name": "lead_revisit_tuple",
+          "value": "(\"leads\".\"revisit_trigger\" is null and \"leads\".\"revisit_reason\" is null and \"leads\".\"revisit_created_at\" is null) or (\"leads\".\"revisit_trigger\" in ('new_access', 'hostname_change', 'service_change') and \"leads\".\"revisit_reason\" is not null and length(\"leads\".\"revisit_reason\") between 1 and 500 and \"leads\".\"revisit_created_at\" is not null and length(\"leads\".\"revisit_created_at\") >= 20)"
+        },
+        "lead_revisit_parked_only": {
+          "name": "lead_revisit_parked_only",
+          "value": "\"leads\".\"revisit_trigger\" is null or \"leads\".\"disposition\" = 'parked'"
+        },
+        "lead_revisit_dismissed_boolean": {
+          "name": "lead_revisit_dismissed_boolean",
+          "value": "\"leads\".\"revisit_dismissed\" in (0, 1)"
+        },
+        "lead_created_at": {
+          "name": "lead_created_at",
+          "value": "length(\"leads\".\"created_at\") >= 20"
+        },
+        "lead_updated_at": {
+          "name": "lead_updated_at",
+          "value": "length(\"leads\".\"updated_at\") >= 20"
+        }
+      }
+    },
     "nmap_services": {
       "name": "nmap_services",
       "columns": {
@@ -2255,6 +3023,157 @@
         "nmap_service_observed_at": {
           "name": "nmap_service_observed_at",
           "value": "length(\"nmap_services\".\"observed_at\") >= 20"
+        }
+      }
+    },
+    "objectives": {
+      "name": "objectives",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contract_version": {
+          "name": "contract_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "engagement_id": {
+          "name": "engagement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "proof_hint": {
+          "name": "proof_hint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "proof_digest": {
+          "name": "proof_digest",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "captured_at": {
+          "name": "captured_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "objective_engagement_created_idx": {
+          "name": "objective_engagement_created_idx",
+          "columns": [
+            "engagement_id",
+            "created_at",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "objectives_engagement_id_engagements_id_fk": {
+          "name": "objectives_engagement_id_engagements_id_fk",
+          "tableFrom": "objectives",
+          "tableTo": "engagements",
+          "columnsFrom": [
+            "engagement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "objective_contract_version": {
+          "name": "objective_contract_version",
+          "value": "\"objectives\".\"contract_version\" = 1"
+        },
+        "objective_name_length": {
+          "name": "objective_name_length",
+          "value": "length(\"objectives\".\"name\") between 1 and 120 and \"objectives\".\"name\" = trim(\"objectives\".\"name\")"
+        },
+        "objective_kind": {
+          "name": "objective_kind",
+          "value": "\"objectives\".\"kind\" in ('user_flag', 'root_flag', 'single_proof', 'custom')"
+        },
+        "objective_state": {
+          "name": "objective_state",
+          "value": "\"objectives\".\"state\" in ('open', 'captured', 'submitted')"
+        },
+        "objective_proof_tuple": {
+          "name": "objective_proof_tuple",
+          "value": "(\"objectives\".\"state\" = 'open' and \"objectives\".\"proof_hint\" is null and \"objectives\".\"proof_digest\" is null and \"objectives\".\"captured_at\" is null and \"objectives\".\"submitted_at\" is null) or (\"objectives\".\"state\" = 'captured' and \"objectives\".\"proof_hint\" is not null and \"objectives\".\"proof_digest\" is not null and \"objectives\".\"captured_at\" is not null and \"objectives\".\"submitted_at\" is null) or (\"objectives\".\"state\" = 'submitted' and \"objectives\".\"proof_hint\" is not null and \"objectives\".\"proof_digest\" is not null and \"objectives\".\"captured_at\" is not null and \"objectives\".\"submitted_at\" is not null)"
+        },
+        "objective_proof_digest": {
+          "name": "objective_proof_digest",
+          "value": "\"objectives\".\"proof_digest\" is null or (\"objectives\".\"proof_digest\" glob 'sha256:[0-9a-f]*' and length(\"objectives\".\"proof_digest\") = 71)"
+        },
+        "objective_created_at": {
+          "name": "objective_created_at",
+          "value": "length(\"objectives\".\"created_at\") >= 20"
+        },
+        "objective_updated_at": {
+          "name": "objective_updated_at",
+          "value": "length(\"objectives\".\"updated_at\") >= 20"
         }
       }
     },
@@ -3398,6 +4317,275 @@
         }
       }
     },
+    "secret_verifications": {
+      "name": "secret_verifications",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contract_version": {
+          "name": "contract_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "engagement_id": {
+          "name": "engagement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "secret_id": {
+          "name": "secret_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result": {
+          "name": "result",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "method": {
+          "name": "method",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "note": {
+          "name": "note",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "secret_verification_engagement_id_unique": {
+          "name": "secret_verification_engagement_id_unique",
+          "columns": [
+            "engagement_id",
+            "id"
+          ],
+          "isUnique": true
+        },
+        "secret_verification_secret_created_idx": {
+          "name": "secret_verification_secret_created_idx",
+          "columns": [
+            "secret_id",
+            "created_at",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "secret_verifications_engagement_id_engagements_id_fk": {
+          "name": "secret_verifications_engagement_id_engagements_id_fk",
+          "tableFrom": "secret_verifications",
+          "tableTo": "engagements",
+          "columnsFrom": [
+            "engagement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "secret_verifications_secret_id_secrets_id_fk": {
+          "name": "secret_verifications_secret_id_secrets_id_fk",
+          "tableFrom": "secret_verifications",
+          "tableTo": "secrets",
+          "columnsFrom": [
+            "secret_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "secret_verification_contract_version": {
+          "name": "secret_verification_contract_version",
+          "value": "\"secret_verifications\".\"contract_version\" = 1"
+        },
+        "secret_verification_result": {
+          "name": "secret_verification_result",
+          "value": "\"secret_verifications\".\"result\" in ('verified', 'failed')"
+        },
+        "secret_verification_method_length": {
+          "name": "secret_verification_method_length",
+          "value": "length(\"secret_verifications\".\"method\") between 1 and 120 and \"secret_verifications\".\"method\" = trim(\"secret_verifications\".\"method\")"
+        },
+        "secret_verification_note_length": {
+          "name": "secret_verification_note_length",
+          "value": "\"secret_verifications\".\"note\" is null or length(\"secret_verifications\".\"note\") between 1 and 500"
+        },
+        "secret_verification_created_at": {
+          "name": "secret_verification_created_at",
+          "value": "length(\"secret_verifications\".\"created_at\") >= 20"
+        }
+      }
+    },
+    "secrets": {
+      "name": "secrets",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "contract_version": {
+          "name": "contract_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "engagement_id": {
+          "name": "engagement_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "username": {
+          "name": "username",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "service_ref": {
+          "name": "service_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "secret_ref": {
+          "name": "secret_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "hint": {
+          "name": "hint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "secret_engagement_created_idx": {
+          "name": "secret_engagement_created_idx",
+          "columns": [
+            "engagement_id",
+            "created_at",
+            "id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "secrets_engagement_id_engagements_id_fk": {
+          "name": "secrets_engagement_id_engagements_id_fk",
+          "tableFrom": "secrets",
+          "tableTo": "engagements",
+          "columnsFrom": [
+            "engagement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "secret_contract_version": {
+          "name": "secret_contract_version",
+          "value": "\"secrets\".\"contract_version\" = 1"
+        },
+        "secret_label_length": {
+          "name": "secret_label_length",
+          "value": "length(\"secrets\".\"label\") between 1 and 120 and \"secrets\".\"label\" = trim(\"secrets\".\"label\")"
+        },
+        "secret_username_length": {
+          "name": "secret_username_length",
+          "value": "\"secrets\".\"username\" is null or length(\"secrets\".\"username\") between 1 and 253"
+        },
+        "secret_service_ref_length": {
+          "name": "secret_service_ref_length",
+          "value": "length(\"secrets\".\"service_ref\") between 1 and 253 and \"secrets\".\"service_ref\" = trim(\"secrets\".\"service_ref\")"
+        },
+        "secret_ref_length": {
+          "name": "secret_ref_length",
+          "value": "length(\"secrets\".\"secret_ref\") between 1 and 253 and \"secrets\".\"secret_ref\" = trim(\"secrets\".\"secret_ref\")"
+        },
+        "secret_hint_length": {
+          "name": "secret_hint_length",
+          "value": "\"secrets\".\"hint\" is null or length(\"secrets\".\"hint\") between 1 and 64"
+        },
+        "secret_created_at": {
+          "name": "secret_created_at",
+          "value": "length(\"secrets\".\"created_at\") >= 20"
+        },
+        "secret_updated_at": {
+          "name": "secret_updated_at",
+          "value": "length(\"secrets\".\"updated_at\") >= 20"
+        }
+      }
+    },
     "settings": {
       "name": "settings",
       "columns": {
@@ -3439,355 +4627,6 @@
         "settings_updated_at": {
           "name": "settings_updated_at",
           "value": "length(\"settings\".\"updated_at\") >= 20"
-        }
-      }
-    },
-    "evidence_excerpts": {
-      "name": "evidence_excerpts",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "contract_version": {
-          "name": "contract_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "engagement_id": {
-          "name": "engagement_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "run_id": {
-          "name": "run_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "artifact_id": {
-          "name": "artifact_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "artifact_digest": {
-          "name": "artifact_digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "stream": {
-          "name": "stream",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "byte_offset": {
-          "name": "byte_offset",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "byte_length": {
-          "name": "byte_length",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "content": {
-          "name": "content",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "redactions": {
-          "name": "redactions",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_note": {
-          "name": "target_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "evidence_excerpt_engagement_created_idx": {
-          "name": "evidence_excerpt_engagement_created_idx",
-          "columns": [
-            "engagement_id",
-            "created_at",
-            "id"
-          ],
-          "isUnique": false
-        },
-        "evidence_excerpt_run_idx": {
-          "name": "evidence_excerpt_run_idx",
-          "columns": [
-            "engagement_id",
-            "run_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "evidence_excerpts_engagement_id_engagements_id_fk": {
-          "name": "evidence_excerpts_engagement_id_engagements_id_fk",
-          "tableFrom": "evidence_excerpts",
-          "tableTo": "engagements",
-          "columnsFrom": [
-            "engagement_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "evidence_excerpt_contract_version": {
-          "name": "evidence_excerpt_contract_version",
-          "value": "\"evidence_excerpts\".\"contract_version\" = 1"
-        },
-        "evidence_excerpt_artifact_id": {
-          "name": "evidence_excerpt_artifact_id",
-          "value": "length(\"evidence_excerpts\".\"artifact_id\") between 1 and 127 and substr(\"evidence_excerpts\".\"artifact_id\", 1, 1) glob '[a-z0-9]' and \"evidence_excerpts\".\"artifact_id\" not glob '*[^a-z0-9-]*'"
-        },
-        "evidence_excerpt_artifact_digest": {
-          "name": "evidence_excerpt_artifact_digest",
-          "value": "length(\"evidence_excerpts\".\"artifact_digest\") = 71 and \"evidence_excerpts\".\"artifact_digest\" glob 'sha256:[0-9a-f]*' and \"evidence_excerpts\".\"artifact_digest\" not glob 'sha256:*[^0-9a-f]*'"
-        },
-        "evidence_excerpt_stream": {
-          "name": "evidence_excerpt_stream",
-          "value": "\"evidence_excerpts\".\"stream\" in ('stdout', 'stderr')"
-        },
-        "evidence_excerpt_range": {
-          "name": "evidence_excerpt_range",
-          "value": "\"evidence_excerpts\".\"byte_offset\" >= 0 and \"evidence_excerpts\".\"byte_length\" between 1 and 8192 and \"evidence_excerpts\".\"byte_offset\" + \"evidence_excerpts\".\"byte_length\" <= 1073741824"
-        },
-        "evidence_excerpt_content_bytes": {
-          "name": "evidence_excerpt_content_bytes",
-          "value": "length(cast(\"evidence_excerpts\".\"content\" as blob)) <= 16384"
-        },
-        "evidence_excerpt_redactions": {
-          "name": "evidence_excerpt_redactions",
-          "value": "\"evidence_excerpts\".\"redactions\" >= 0"
-        },
-        "evidence_excerpt_target_note": {
-          "name": "evidence_excerpt_target_note",
-          "value": "\"evidence_excerpts\".\"target_note\" is null or length(\"evidence_excerpts\".\"target_note\") between 1 and 120"
-        },
-        "evidence_excerpt_created_at": {
-          "name": "evidence_excerpt_created_at",
-          "value": "length(\"evidence_excerpts\".\"created_at\") >= 20"
-        }
-      }
-    },
-    "evidence_attachments": {
-      "name": "evidence_attachments",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "contract_version": {
-          "name": "contract_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "engagement_id": {
-          "name": "engagement_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "filename": {
-          "name": "filename",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "mime": {
-          "name": "mime",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "size_bytes": {
-          "name": "size_bytes",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "digest": {
-          "name": "digest",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "caption": {
-          "name": "caption",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "target_label": {
-          "name": "target_label",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "parent_attachment_id": {
-          "name": "parent_attachment_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "crop_rect_json": {
-          "name": "crop_rect_json",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "content_base64": {
-          "name": "content_base64",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "evidence_attachment_engagement_created_idx": {
-          "name": "evidence_attachment_engagement_created_idx",
-          "columns": [
-            "engagement_id",
-            "created_at",
-            "id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "evidence_attachments_engagement_id_engagements_id_fk": {
-          "name": "evidence_attachments_engagement_id_engagements_id_fk",
-          "tableFrom": "evidence_attachments",
-          "tableTo": "engagements",
-          "columnsFrom": [
-            "engagement_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        },
-        "evidence_attachment_parent_fk": {
-          "name": "evidence_attachment_parent_fk",
-          "tableFrom": "evidence_attachments",
-          "tableTo": "evidence_attachments",
-          "columnsFrom": [
-            "parent_attachment_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "restrict",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {
-        "evidence_attachment_contract_version": {
-          "name": "evidence_attachment_contract_version",
-          "value": "\"evidence_attachments\".\"contract_version\" = 1"
-        },
-        "evidence_attachment_filename": {
-          "name": "evidence_attachment_filename",
-          "value": "length(\"evidence_attachments\".\"filename\") between 1 and 128 and \"evidence_attachments\".\"filename\" not glob '*[^a-z0-9-]*'"
-        },
-        "evidence_attachment_mime": {
-          "name": "evidence_attachment_mime",
-          "value": "\"evidence_attachments\".\"mime\" in ('image/png', 'image/jpeg', 'image/gif', 'image/webp')"
-        },
-        "evidence_attachment_size_bytes": {
-          "name": "evidence_attachment_size_bytes",
-          "value": "\"evidence_attachments\".\"size_bytes\" between 1 and 2000000"
-        },
-        "evidence_attachment_digest": {
-          "name": "evidence_attachment_digest",
-          "value": "length(\"evidence_attachments\".\"digest\") = 71 and \"evidence_attachments\".\"digest\" glob 'sha256:[0-9a-f]*' and \"evidence_attachments\".\"digest\" not glob 'sha256:*[^0-9a-f]*'"
-        },
-        "evidence_attachment_caption": {
-          "name": "evidence_attachment_caption",
-          "value": "length(\"evidence_attachments\".\"caption\") <= 280"
-        },
-        "evidence_attachment_target_label": {
-          "name": "evidence_attachment_target_label",
-          "value": "\"evidence_attachments\".\"target_label\" is null or length(\"evidence_attachments\".\"target_label\") between 1 and 120"
-        },
-        "evidence_attachment_crop_json": {
-          "name": "evidence_attachment_crop_json",
-          "value": "\"evidence_attachments\".\"crop_rect_json\" is null or (json_valid(\"evidence_attachments\".\"crop_rect_json\") and length(cast(\"evidence_attachments\".\"crop_rect_json\" as blob)) <= 1024)"
-        },
-        "evidence_attachment_content_bytes": {
-          "name": "evidence_attachment_content_bytes",
-          "value": "length(cast(\"evidence_attachments\".\"content_base64\" as blob)) between 1 and 2000000"
-        },
-        "evidence_attachment_created_at": {
-          "name": "evidence_attachment_created_at",
-          "value": "length(\"evidence_attachments\".\"created_at\") >= 20"
         }
       }
     }
