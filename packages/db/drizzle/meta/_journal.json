@@ -162,6 +162,13 @@
       "when": 1789556099427,
       "tag": "0022_techniques",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1789571804009,
+      "tag": "0023_stone_access_records",
+      "breakpoints": true
     }
   ]
 }

@@ -27,6 +27,7 @@ import {
   EngagementObjectivesSection,
   EngagementSecretsSection,
 } from "./leads.js";
+import { EngagementAccessSection } from "./access.js";
 import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
 import { RunHistoryPanel } from "./run-history-panel.js";
@@ -550,6 +551,11 @@ function EngagementDetail({
           />
           <EngagementSecretsSection
             key={`secrets-${displayed.id}`}
+            archived={archived}
+            engagementId={displayed.id}
+          />
+          <EngagementAccessSection
+            key={`access-${displayed.id}`}
             archived={archived}
             engagementId={displayed.id}
           />

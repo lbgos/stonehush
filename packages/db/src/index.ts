@@ -86,6 +86,12 @@ export {
   type SecretResult,
 } from "./secrets.js";
 export {
+  AccessRepository,
+  type AccessRepositoryError,
+  type AccessRepositoryProviders,
+  type AccessResult,
+} from "./access.js";
+export {
   StoneTargetRepository,
   digestStoneCaptureContent,
   type CreateStoneCaptureInput,
@@ -136,6 +142,7 @@ export {
 } from "./advisor-turns.js";
 export {
   actionCoveredDestinations,
+  accessRecords,
   actionSnapshots,
   actionWarningAcknowledgments,
   actions,

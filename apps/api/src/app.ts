@@ -10,6 +10,7 @@ import Fastify, {
   type FastifyServerOptions,
 } from "fastify";
 import type {
+  AccessRepository,
   AdvisorTurnsRepository,
   EngagementRepository,
   EngagementResumeRepository,
@@ -26,6 +27,7 @@ import type {
   RunnerRepository,
   SecretRepository,
   SettingsRepository,
+  StoneTargetRepository,
   TechniqueRepository,
 } from "@stonehush/db";
 
@@ -49,6 +51,10 @@ import { registerFfufRoutes } from "./ffuf-routes.js";
 import { registerNmapServiceRoutes } from "./nmap-service-routes.js";
 import { registerRunOutputRoutes } from "./run-output-routes.js";
 import { registerRunHistoryRoutes } from "./run-history-routes.js";
+import { registerAccessRoutes } from "./access-routes.js";
+import { registerStoneCaptureRoutes } from "./capture-routes.js";
+import { registerStoneImportRoutes } from "./import-routes.js";
+import { registerStoneTargetRoutes } from "./target-routes.js";
 import { registerRunnerEvidenceGrantRoutes } from "./runner-evidence-grant-routes.js";
 import { registerRunnerEvidenceUploadRoutes } from "./runner-evidence-upload-routes.js";
 import { registerHttpProbeRoutes } from "./http-probe-routes.js";
@@ -181,6 +187,24 @@ interface BuildAppOptions {
     SecretRepository,
     "createSecret" | "listSecrets" | "getSecret" | "recordVerification"
   >;
+  accessRepository?: Pick<
+    AccessRepository,
+    "createAccess" | "listAccess" | "getAccess" | "refreshAccess"
+  >;
+  // STONE-5 target identity plus external capture/import. Wired here because
+  // access records reference stone targets and the target context panel reads
+  // them; the routes stay additive under their own paths.
+  stoneTargetRepository?: Pick<
+    StoneTargetRepository,
+    | "createTarget"
+    | "listTargets"
+    | "listBindings"
+    | "changeAddress"
+    | "proposeHostnameAssociation"
+    | "decideHostnameAssociation"
+    | "createCapture"
+    | "listCaptures"
+  >;
   // Saved advisor techniques (STONE-7). Registered only when the technique
   // repository is wired; without it the routes do not exist.
   techniqueRepository?: Pick<
@@ -213,6 +237,8 @@ export function buildApp({
   leadRepository,
   objectiveRepository,
   secretRepository,
+  accessRepository,
+  stoneTargetRepository,
   resumeRepository,
   techniqueRepository,
   logger = false,
@@ -372,6 +398,16 @@ export function buildApp({
   }
   if (secretRepository !== undefined) {
     registerSecretRoutes(app, secretRepository);
+  }
+  if (accessRepository !== undefined) {
+    registerAccessRoutes(app, accessRepository, {
+      ...(leadRepository === undefined ? {} : { leads: leadRepository }),
+    });
+  }
+  if (stoneTargetRepository !== undefined) {
+    registerStoneTargetRoutes(app, { targets: stoneTargetRepository });
+    registerStoneCaptureRoutes(app, { captures: stoneTargetRepository });
+    registerStoneImportRoutes(app, { imports: stoneTargetRepository });
   }
   if (runOutputRepository !== undefined) {
     registerRunHistoryRoutes(app, {

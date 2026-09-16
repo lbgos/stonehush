@@ -1815,6 +1815,58 @@ export const secretVerifications = sqliteTable(
   ],
 );
 
+// STONE-8 access records. One row per recorded working access: target,
+// account, access type, source lead, optional secret reference by id, and
+// last confirmed. There is deliberately no secret-value column anywhere in
+// this table: secretId points at the secrets table, and lastConfirmedAt
+// records when the operator last confirmed the access, never a live
+// connection state.
+export const accessRecords = sqliteTable(
+  "access_records",
+  {
+    id: text("id").primaryKey(),
+    contractVersion: integer("contract_version").notNull(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    targetId: text("target_id").notNull(),
+    account: text("account").notNull(),
+    accessType: text("access_type", {
+      enum: ["ssh", "web_session", "database", "shell", "other"],
+    }).notNull(),
+    sourceLeadId: text("source_lead_id").notNull(),
+    secretId: text("secret_id"),
+    context: text("context"),
+    lastConfirmedAt: text("last_confirmed_at").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check("access_contract_version", sql`${table.contractVersion} = 1`),
+    check(
+      "access_account_length",
+      sql`length(${table.account}) between 1 and 120 and ${table.account} = trim(${table.account})`,
+    ),
+    check(
+      "access_type",
+      sql`${table.accessType} in ('ssh', 'web_session', 'database', 'shell', 'other')`,
+    ),
+    check(
+      "access_context_length",
+      sql`${table.context} is null or (length(${table.context}) between 1 and 500 and ${table.context} = trim(${table.context}))`,
+    ),
+    check("access_last_confirmed_at", sql`length(${table.lastConfirmedAt}) >= 20`),
+    check("access_created_at", sql`length(${table.createdAt}) >= 20`),
+    check("access_updated_at", sql`length(${table.updatedAt}) >= 20`),
+    index("access_engagement_created_idx").on(
+      table.engagementId,
+      table.createdAt,
+      table.id,
+    ),
+    index("access_engagement_target_idx").on(table.engagementId, table.targetId),
+  ],
+);
+
 // STONE-5 target identity and external capture tables. Targets are identity
 // rows: two targets never merge by reused address. Address bindings carry the
 // actionable address over time with exactly one current row per target.
@@ -2076,6 +2128,7 @@ export type LeadAttemptRow = typeof leadAttempts.$inferSelect;
 export type ObjectiveRow = typeof objectives.$inferSelect;
 export type SecretRow = typeof secrets.$inferSelect;
 export type SecretVerificationRow = typeof secretVerifications.$inferSelect;
+export type AccessRecordRow = typeof accessRecords.$inferSelect;
 export type AdvisorTurnRow = typeof advisorTurns.$inferSelect;
 export type SettingsRow = typeof settings.$inferSelect;
 export type StoneTargetRow = typeof stoneTargets.$inferSelect;
