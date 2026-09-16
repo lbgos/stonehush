@@ -78,6 +78,26 @@ describe("technique repository", () => {
     expect(listed.value.map((technique) => technique.id)).toEqual([created.value.id]);
   });
 
+  it("persists contract-valid unicode-heavy techniques within the widened column bounds", () => {
+    const fixture = createFixture();
+    // Eight 280-code-point emoji prerequisites and sixteen full-size CJK
+    // steps stay inside the contract's array limits but serialize past the
+    // pre-fix 8192/16384-byte column bounds. The CHECK constraints must
+    // cover the contract's worst case instead of rejecting valid requests.
+    const prerequisites = Array.from({ length: 8 }, () => "😀".repeat(280));
+    const procedure = Array.from({ length: 16 }, () => ({
+      instruction: "密".repeat(500),
+      command: `curl -s http://127.0.0.1/${"密".repeat(470)}`,
+    }));
+    expect(Buffer.byteLength(JSON.stringify(prerequisites), "utf8")).toBeGreaterThan(8192);
+    expect(Buffer.byteLength(JSON.stringify(procedure), "utf8")).toBeGreaterThan(16384);
+    const created = fixture.techniques.createTechnique(
+      fixture.engagementId,
+      validInput({ prerequisites, procedure }),
+    );
+    expect(created.ok).toBe(true);
+  });
+
   it("rejects creates on unknown and archived engagements", () => {
     const fixture = createFixture();
     expect(

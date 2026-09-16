@@ -21,6 +21,12 @@ describe("technique procedure parsing", () => {
     ).toBeUndefined();
   });
 
+  it("rejects instruction text after the command instead of reordering it", () => {
+    expect(
+      parseProcedure("Open connection\n$ curl -s {{url}}\nVerify the response"),
+    ).toBeUndefined();
+  });
+
   it("keeps a command-only step with a generic instruction", () => {
     expect(parseProcedure("$ nmap -sV {{target}}")).toEqual([
       { instruction: "Run the command.", command: "nmap -sV {{target}}" },

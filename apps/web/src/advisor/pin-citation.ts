@@ -118,6 +118,46 @@ export function pinParagraphToLead(
   };
 }
 
+// Split a supported command into argv without breaking quoted arguments:
+// `curl -H "X-Test: value" https://host` keeps the header as one element.
+// Returns undefined for unbalanced quotes so the caller refuses the draft
+// instead of prefilling a mangled argv.
+function splitCommandArgs(command: string): string[] | undefined {
+  const args: string[] = [];
+  let current = "";
+  let built = false;
+  let quote: '"' | "'" | null = null;
+  for (const char of command.trim()) {
+    if (quote !== null) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        current += char;
+      }
+      built = true;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      built = true;
+      continue;
+    }
+    if (/\s/.test(char)) {
+      if (built) {
+        args.push(current);
+        current = "";
+        built = false;
+      }
+      continue;
+    }
+    current += char;
+    built = true;
+  }
+  if (quote !== null) return undefined;
+  if (built) args.push(current);
+  return args;
+}
+
 // A supported single-line check becomes prefilled argv. Anything else is
 // refused with a reason so the UI renders it as inert text, never as a
 // runnable action.
@@ -128,6 +168,12 @@ export function toPrefilledAction(command: string): PrefilledAction {
       reason: "Not a runnable check: keep as prose, do not execute.",
     };
   }
-  const argv = command.trim().split(/\s+/);
-  return { ok: true, argv, label: argv.join(" ") };
+  const argv = splitCommandArgs(command);
+  if (argv === undefined) {
+    return {
+      ok: false,
+      reason: "Not a runnable check: keep as prose, do not execute.",
+    };
+  }
+  return { ok: true, argv, label: command.trim() };
 }

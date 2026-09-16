@@ -13,6 +13,8 @@ export interface ExportSnapshot {
   readonly bundleGeneratedAt: string;
   readonly template: string;
   readonly itemKeys: readonly string[];
+  readonly assetLinks: boolean;
+  readonly maskSecrets: boolean;
   readonly markdown: string;
   readonly byteLength: number;
 }
@@ -21,6 +23,8 @@ export interface SnapshotInput {
   readonly bundleGeneratedAt: string;
   readonly template: string;
   readonly itemKeys: readonly string[];
+  readonly assetLinks: boolean;
+  readonly maskSecrets: boolean;
   readonly markdown: string;
   readonly now?: () => Date;
   readonly createId?: () => string;
@@ -39,6 +43,8 @@ export function captureExportSnapshot(input: SnapshotInput): ExportSnapshot {
     bundleGeneratedAt: input.bundleGeneratedAt,
     template: input.template,
     itemKeys: [...input.itemKeys],
+    assetLinks: input.assetLinks,
+    maskSecrets: input.maskSecrets,
     markdown: input.markdown,
     byteLength: utf8Length(input.markdown),
   };
@@ -53,6 +59,8 @@ export interface SnapshotLiveState {
   readonly bundleGeneratedAt: string;
   readonly template: string;
   readonly itemKeys: readonly string[];
+  readonly assetLinks: boolean;
+  readonly maskSecrets: boolean;
 }
 
 function sameKeys(left: readonly string[], right: readonly string[]): boolean {
@@ -60,9 +68,11 @@ function sameKeys(left: readonly string[], right: readonly string[]): boolean {
 }
 
 // A snapshot goes stale when the live bundle regenerated after the export
-// (a later edit, finding, or run changed the underlying data) or when the
-// outline itself drifted (reselected, reordered, or retemplated): the
-// snapshot markdown would no longer match a fresh export.
+// (a later edit, finding, or run changed the underlying data), when the
+// outline itself drifted (reselected, reordered, or retemplated), or when
+// rendering options changed (asset links or secret masking toggle the
+// Markdown itself): the snapshot markdown would no longer match a fresh
+// export.
 export function describeSnapshotStaleness(
   snapshot: ExportSnapshot | null,
   live: SnapshotLiveState,
@@ -86,6 +96,18 @@ export function describeSnapshotStaleness(
     return {
       stale: true,
       reason: "Stale: outline selection or order changed after this export. Re-export for a current snapshot.",
+    };
+  }
+  if (live.assetLinks !== snapshot.assetLinks) {
+    return {
+      stale: true,
+      reason: "Stale: evidence asset-link rendering changed after this export. Re-export for a current snapshot.",
+    };
+  }
+  if (live.maskSecrets !== snapshot.maskSecrets) {
+    return {
+      stale: true,
+      reason: "Stale: secret-masking rendering changed after this export. Re-export for a current snapshot.",
     };
   }
   return { stale: false, reason: `Current as of ${snapshot.createdAt}.` };

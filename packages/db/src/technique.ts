@@ -99,38 +99,42 @@ export class TechniqueRepository {
     const parsed = CreateTechniqueRequestSchema.safeParse(input);
     if (!parsed.success) return failed("invalid_repository_input");
     try {
-      const engagement = this.db
-        .select({ status: engagements.status })
-        .from(engagements)
-        .where(eq(engagements.id, engagementId))
-        .get();
-      if (engagement === undefined) return failed("engagement_not_found");
-      if (engagement.status === "archived") return failed("engagement_archived");
-      const timestamp = this.now().toISOString();
-      const id = this.createId();
-      this.db
-        .insert(techniques)
-        .values({
-          id,
-          contractVersion: TECHNIQUE_CONTRACT_VERSION,
-          engagementId,
-          name: parsed.data.name,
-          whenUseful: parsed.data.whenUseful,
-          prerequisitesJson: JSON.stringify(parsed.data.prerequisites),
-          question: parsed.data.question,
-          procedureJson: JSON.stringify(parsed.data.procedure),
-          meaning: parsed.data.meaning,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-        })
-        .run();
-      const stored = this.db
-        .select()
-        .from(techniques)
-        .where(eq(techniques.id, id))
-        .get();
-      if (stored === undefined) return failed("invalid_persisted_data");
-      return techniqueFromRow(stored);
+      // The archived-status check and the insert run in one transaction so
+      // a concurrent archive cannot slip between the SELECT and the INSERT.
+      return this.db.transaction((tx) => {
+        const engagement = tx
+          .select({ status: engagements.status })
+          .from(engagements)
+          .where(eq(engagements.id, engagementId))
+          .get();
+        if (engagement === undefined) return failed("engagement_not_found");
+        if (engagement.status === "archived") return failed("engagement_archived");
+        const timestamp = this.now().toISOString();
+        const id = this.createId();
+        tx
+          .insert(techniques)
+          .values({
+            id,
+            contractVersion: TECHNIQUE_CONTRACT_VERSION,
+            engagementId,
+            name: parsed.data.name,
+            whenUseful: parsed.data.whenUseful,
+            prerequisitesJson: JSON.stringify(parsed.data.prerequisites),
+            question: parsed.data.question,
+            procedureJson: JSON.stringify(parsed.data.procedure),
+            meaning: parsed.data.meaning,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          })
+          .run();
+        const stored = tx
+          .select()
+          .from(techniques)
+          .where(eq(techniques.id, id))
+          .get();
+        if (stored === undefined) return failed("invalid_persisted_data");
+        return techniqueFromRow(stored);
+      });
     } catch (error) {
       return failed(storageError(error).code);
     }

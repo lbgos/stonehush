@@ -136,6 +136,35 @@ describe("report outline", () => {
     expect(assessment).toContain("Default credentials on admin panel");
   });
 
+  it("renders findings and leads in outline order within the Findings section", () => {
+    let outline = addOutlineItem(createOutline(), {
+      kind: "finding",
+      refId: FINDING_ID,
+      caption: "Default credentials",
+    });
+    outline = addOutlineItem(outline, {
+      kind: "lead",
+      refId: "lead-1",
+      caption: "Weak login",
+    });
+    const material = {
+      findings: [findingFixture()],
+      evidence: [],
+      notesMarkdown: "",
+    };
+    const ordered = renderOutlineMarkdown(material, outline);
+    expect(ordered.indexOf("Default credentials on admin panel")).toBeLessThan(
+      ordered.indexOf("Lead: Weak login"),
+    );
+    const moved = renderOutlineMarkdown(
+      material,
+      moveOutlineItem(outline, "lead:lead-1", 0),
+    );
+    expect(moved.indexOf("Lead: Weak login")).toBeLessThan(
+      moved.indexOf("Default credentials on admin panel"),
+    );
+  });
+
   it("links evidence with relative asset paths", () => {
     const outline = addOutlineItem(createOutline(), {
       kind: "evidence",
@@ -212,18 +241,28 @@ describe("export snapshots", () => {
     bundleGeneratedAt: string,
     template = "ctf-writeup",
     itemKeys: readonly string[] = ["finding:x"],
+    assetLinks = false,
+    maskSecrets = true,
   ) {
-    return { bundleGeneratedAt, template, itemKeys };
+    return { bundleGeneratedAt, template, itemKeys, assetLinks, maskSecrets };
+  }
+
+  function snapshotInput() {
+    return {
+      bundleGeneratedAt: "2026-08-12T13:00:00.000Z",
+      template: "ctf-writeup",
+      assetLinks: false,
+      maskSecrets: true,
+      now: () => new Date("2026-08-12T13:05:00.000Z"),
+      createId: () => "snapshot-1",
+    };
   }
 
   it("goes visibly stale after a later edit", () => {
     const snapshot = captureExportSnapshot({
-      bundleGeneratedAt: "2026-08-12T13:00:00.000Z",
-      template: "ctf-writeup",
+      ...snapshotInput(),
       itemKeys: ["finding:x"],
       markdown: "# Report\n",
-      now: () => new Date("2026-08-12T13:05:00.000Z"),
-      createId: () => "snapshot-1",
     });
     expect(
       describeSnapshotStaleness(snapshot, liveFor("2026-08-12T13:00:00.000Z")).stale,
@@ -235,12 +274,9 @@ describe("export snapshots", () => {
 
   it("goes stale when the outline is reordered or retemplated", () => {
     const snapshot = captureExportSnapshot({
-      bundleGeneratedAt: "2026-08-12T13:00:00.000Z",
-      template: "ctf-writeup",
+      ...snapshotInput(),
       itemKeys: ["finding:x", "evidence:y"],
       markdown: "# Report\n",
-      now: () => new Date("2026-08-12T13:05:00.000Z"),
-      createId: () => "snapshot-1",
     });
     const reordered = describeSnapshotStaleness(
       snapshot,
@@ -254,6 +290,26 @@ describe("export snapshots", () => {
     );
     expect(retemplated.stale).toBe(true);
     expect(retemplated.reason).toContain("template");
+  });
+
+  it("goes stale when rendering options change the Markdown", () => {
+    const snapshot = captureExportSnapshot({
+      ...snapshotInput(),
+      itemKeys: ["finding:x"],
+      markdown: "# Report\n",
+    });
+    const relinked = describeSnapshotStaleness(
+      snapshot,
+      liveFor("2026-08-12T13:00:00.000Z", "ctf-writeup", ["finding:x"], true, true),
+    );
+    expect(relinked.stale).toBe(true);
+    expect(relinked.reason).toContain("asset-link");
+    const unmasked = describeSnapshotStaleness(
+      snapshot,
+      liveFor("2026-08-12T13:00:00.000Z", "ctf-writeup", ["finding:x"], false, false),
+    );
+    expect(unmasked.stale).toBe(true);
+    expect(unmasked.reason).toContain("masking");
   });
 });
 
@@ -319,6 +375,43 @@ describe("sharing preview", () => {
     expect(original.maskedFields).toBe(0);
     expect(original.markdown).toContain(token);
     expect(masked.markdown).not.toContain(token);
+  });
+
+  it("masks secret-shaped outline captions with the export", () => {
+    const token = "token: sk-abcdef123456";
+    const bundle = bundleFixture();
+    const outline = addOutlineItem(createOutline(), {
+      kind: "lead",
+      refId: "lead-1",
+      caption: `Weak login ${token}`,
+    });
+    const masked = buildSharingPreview({ bundle, outline });
+    expect(masked.markdown).not.toContain(token);
+    expect(masked.included.map((entry) => entry.caption).join("\n")).not.toContain(token);
+    expect(masked.maskedFields).toBeGreaterThan(0);
+    const original = buildSharingPreview({
+      bundle,
+      outline,
+      options: { maskSecrets: false },
+    });
+    expect(original.markdown).toContain(token);
+    expect(original.maskedFields).toBe(0);
+  });
+
+  it("describes a missing finding with its outline caption", () => {
+    const bundle = bundleFixture();
+    const outline = addOutlineItem(createOutline(), {
+      kind: "finding",
+      refId: "30000000-0000-4000-8000-000000000001",
+      caption: "Default credentials",
+    });
+    const preview = buildSharingPreview({ bundle, outline });
+    expect(preview.included[0]?.caption).toBe(
+      "Default credentials (missing: 30000000-0000-4000-8000-000000000001)",
+    );
+    expect(preview.markdown).toContain(
+      "### Default credentials (missing: 30000000-0000-4000-8000-000000000001)",
+    );
   });
 
   it("builds a portable bundle distinct from the client report", () => {

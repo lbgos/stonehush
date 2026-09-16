@@ -21,9 +21,11 @@ export interface TechniqueDraft extends SaveTechniqueInput {
 
 // Parse the procedure textarea: blank line between steps, `$` prefix for
 // commands. A block holds at most one command, so a second `$` line
-// rejects the draft instead of silently dropping input. A command-only
-// block keeps a generic instruction so a bare runnable check stays
-// savable. Exported for focused unit tests.
+// rejects the draft instead of silently dropping input. Instruction lines
+// must precede the command: text after the `$` line rejects the block
+// instead of being moved before the command in the saved step. A
+// command-only block keeps a generic instruction so a bare runnable check
+// stays savable. Exported for focused unit tests.
 export function parseProcedure(
   raw: string,
 ): SaveTechniqueInput["procedure"] | undefined {
@@ -34,9 +36,15 @@ export function parseProcedure(
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
     if (lines.length === 0) continue;
+    const commandIndex = lines.findIndex((line) => line.startsWith("$"));
     const instruction = lines.filter((line) => !line.startsWith("$")).join(" ");
     const commandLines = lines.filter((line) => line.startsWith("$"));
-    if (commandLines.length > 1) return undefined;
+    if (
+      commandLines.length > 1 ||
+      (commandIndex >= 0 && lines.slice(commandIndex + 1).some((line) => !line.startsWith("$")))
+    ) {
+      return undefined;
+    }
     const command = commandLines[0]?.slice(1).trim();
     if (instruction.length === 0 && (command === undefined || command.length === 0)) {
       return undefined;
@@ -117,7 +125,7 @@ function TechniqueCard({
   facts: readonly string[];
   archived: boolean;
 }) {
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(Object.create(null));
   const [copied, setCopied] = useState(false);
   const match = useMemo(
     () => matchTechniquePrereqs(technique.prerequisites, facts),
@@ -138,7 +146,7 @@ function TechniqueCard({
   );
 
   function setValue(name: string, value: string) {
-    setValues((current) => ({ ...current, [name]: value }));
+    setValues((current) => Object.assign(Object.create(null), current, { [name]: value }));
   }
 
   function replayText(): string {

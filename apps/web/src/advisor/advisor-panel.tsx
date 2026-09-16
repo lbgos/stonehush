@@ -341,7 +341,7 @@ export function AdvisorPanel({
 
   // Context preview: exactly what Ask would send, shown before send.
   const preview = buildContextPreview({
-    question: normalizedQuestion,
+    question: shapedQuestion,
     excerpts: excerpts.map((id) => ({ id })),
     findings: findingIds.map((id) => {
       const title = findingTitles.get(id);

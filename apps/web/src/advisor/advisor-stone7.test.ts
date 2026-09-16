@@ -220,6 +220,15 @@ describe("pin with citations", () => {
     const prose = toPrefilledAction("First scan the box, then try harder.");
     expect(prose.ok).toBe(false);
   });
+
+  it("keeps quoted arguments together in prefilled argv", () => {
+    const quoted = toPrefilledAction('curl -H "X-Test: value" https://host');
+    expect(quoted.ok).toBe(true);
+    if (quoted.ok) {
+      expect(quoted.argv).toEqual(["curl", "-H", "X-Test: value", "https://host"]);
+    }
+    expect(toPrefilledAction('curl -H "X-Test: value').ok).toBe(false);
+  });
 });
 
 describe("citation passage links", () => {

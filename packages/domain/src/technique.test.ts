@@ -31,6 +31,12 @@ describe("technique placeholders", () => {
     expect(filled.text).toBe("nmap {{target}}");
     expect(filled.missing).toEqual(["target"]);
   });
+
+  it("treats inherited properties as missing until the operator provides them", () => {
+    const filled = fillTechniquePlaceholders("nmap {{constructor}}", {});
+    expect(filled.text).toBe("nmap {{constructor}}");
+    expect(filled.missing).toEqual(["constructor"]);
+  });
 });
 
 describe("technique prerequisite matching", () => {

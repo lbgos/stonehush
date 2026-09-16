@@ -175,6 +175,17 @@ describe("advisor stone-7 panel", () => {
     );
   });
 
+  it("previews the shaped question sent at hint depth", async () => {
+    await renderStonePanel();
+    const box = screen.getByLabelText(/Question/) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "What does this show?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Next check" }));
+    const preview = await screen.findByText("Context preview (sent on Ask)");
+    const region = preview.closest("div")?.parentElement;
+    expect(region?.textContent).toContain("What does this show?");
+    expect(region?.textContent).toContain("exactly one specific check");
+  });
+
   it("opens valid artifact citations at the saved passage", async () => {
     await renderStonePanel([succeededTurn()]);
     const panel = screen.getByRole("dialog");

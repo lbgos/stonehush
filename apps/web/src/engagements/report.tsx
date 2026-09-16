@@ -177,6 +177,8 @@ function ReportBody({
     bundleGeneratedAt: bundle.generatedAt,
     template: outline.template,
     itemKeys: outline.items.map((item) => item.key),
+    assetLinks: includeAssetLinks,
+    maskSecrets: masked,
   });
 
   const onCopy = () => {
@@ -229,6 +231,8 @@ function ReportBody({
         bundleGeneratedAt: bundle.generatedAt,
         template: outline.template,
         itemKeys: outline.items.map((item) => item.key),
+        assetLinks: includeAssetLinks,
+        maskSecrets: masked,
         markdown,
       }),
     );

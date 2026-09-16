@@ -31,20 +31,25 @@ export interface FilledTemplate {
 // are substituted everywhere; unprovided ones stay verbatim so the replay
 // shows exactly what still needs a value. Missing names are reported so
 // the UI can prompt for them instead of running a half-filled command.
+// Only own properties count as provided: inherited names such as
+// `constructor` stay missing until the operator enters a value.
 export function fillTechniquePlaceholders(
   template: string,
   values: Readonly<Record<string, string>>,
 ): FilledTemplate {
+  const provided = (name: string): string | undefined =>
+    Object.prototype.hasOwnProperty.call(values, name) ? values[name] : undefined;
   const missing: string[] = [];
   for (const name of extractTechniquePlaceholders(template)) {
-    if (values[name] === undefined || values[name] === "") {
+    const value = provided(name);
+    if (value === undefined || value === "") {
       missing.push(name);
     }
   }
   const text = template.replace(
     TECHNIQUE_PLACEHOLDER_PATTERN,
     (match: string, name: string) => {
-      const value = values[name];
+      const value = provided(name);
       return value === undefined || value === "" ? match : value;
     },
   );

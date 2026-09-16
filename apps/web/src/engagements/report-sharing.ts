@@ -1,4 +1,8 @@
 import type { ReportBundle } from "@stonehush/contracts";
+import {
+  redactAdvisorText,
+  stripAdvisorUrlUserinfo,
+} from "@stonehush/domain";
 
 import { maskReportBundle } from "./report-mask.js";
 import {
@@ -59,6 +63,23 @@ function toMaterial(bundle: ReportBundle): OutlineMaterial {
   };
 }
 
+// Outline captions are operator-authored free text too: with secret masking
+// on they pass through the same heuristic redactor as bundle fields, so a
+// lead caption carrying a secret-shaped value never exports unchanged.
+function maskOutlineCaptions(outline: ReportOutline): {
+  outline: ReportOutline;
+  maskedCaptions: number;
+} {
+  let maskedCaptions = 0;
+  const items = outline.items.map((item) => {
+    const caption = redactAdvisorText(stripAdvisorUrlUserinfo(item.caption)).text;
+    if (caption === item.caption) return item;
+    maskedCaptions += 1;
+    return { ...item, caption };
+  });
+  return { outline: { template: outline.template, items }, maskedCaptions };
+}
+
 // One builder feeds the on-screen preview and every outline-based
 // download, so the preview always matches the file exactly. The asset-link
 // toggle changes the rendered Markdown itself (links vs digest-only lines),
@@ -67,15 +88,21 @@ export function buildSharingPreview(input: SharingInput): SharingPreview {
   const options: SharingOptions = { ...DEFAULT_SHARING_OPTIONS, ...input.options };
   const masked = options.maskSecrets ? maskReportBundle(input.bundle) : null;
   const view = masked?.bundle ?? input.bundle;
-  const markdown = renderOutlineMarkdown(toMaterial(view), input.outline, {
+  const outlineMask = masked === null ? null : maskOutlineCaptions(input.outline);
+  const outline = outlineMask?.outline ?? input.outline;
+  const maskedFields = (masked?.maskedFields ?? 0) + (outlineMask?.maskedCaptions ?? 0);
+  const markdown = renderOutlineMarkdown(toMaterial(view), outline, {
     assetLinks: options.includeAssetLinks,
   });
   const included: SharingEntry[] = [];
-  for (const item of input.outline.items) {
+  for (const item of outline.items) {
     if (item.kind === "finding") {
       const finding = view.findings.find((entry) => entry.id === item.refId);
       included.push({
-        caption: finding === undefined ? `Finding ${item.refId} (missing)` : `Finding: ${finding.title}`,
+        caption:
+          finding === undefined
+            ? `${item.caption} (missing: ${item.refId})`
+            : `Finding: ${finding.title}`,
       });
     } else if (item.kind === "lead") {
       included.push({ caption: `Lead: ${item.caption}` });
@@ -92,7 +119,7 @@ export function buildSharingPreview(input: SharingInput): SharingPreview {
   const excluded: string[] = [
     "Scratchpad drafts are never part of a report.",
     options.maskSecrets
-      ? `Secret-shaped values masked (${masked?.maskedFields ?? 0} fields). Heuristic only.`
+      ? `Secret-shaped values masked (${maskedFields} fields). Heuristic only.`
       : "Secret masking OFF: the export contains original stored text.",
     "Note history is never exported; only the current notes text.",
     "Raw artifact bytes are never embedded in the export; it carries digests and optional asset links only.",
@@ -110,7 +137,7 @@ export function buildSharingPreview(input: SharingInput): SharingPreview {
     included,
     excluded,
     markdown,
-    maskedFields: masked?.maskedFields ?? 0,
+    maskedFields,
   };
 }
 

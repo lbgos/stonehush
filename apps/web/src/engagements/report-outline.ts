@@ -132,28 +132,32 @@ export function renderOutlineMarkdown(
         lines.push("_No findings or leads selected._");
         lines.push("");
       }
-      for (const item of findings) {
-        const finding = findingById(material.findings, item.refId);
-        lines.push(
-          finding === undefined
-            ? `### ${item.caption} (missing: ${item.refId})`
-            : `### [${finding.severity}] ${finding.title}`,
-        );
-        lines.push("");
-        lines.push(
-          finding === undefined
-            ? "_Selected finding is no longer available._"
-            : finding.body.length > 0
-              ? finding.body
-              : "_No detail._",
-        );
-        lines.push("");
-      }
-      for (const item of leads) {
-        lines.push(`### Lead: ${item.caption}`);
-        lines.push("");
-        lines.push(`_Lead reference ${item.refId}; resolve through the lead record._`);
-        lines.push("");
+      // Findings and leads share this section, so they render in outline
+      // order: a lead moved above a finding exports above it. Template
+      // sections still govern cross-section placement.
+      for (const item of outline.items) {
+        if (item.kind === "finding") {
+          const finding = findingById(material.findings, item.refId);
+          lines.push(
+            finding === undefined
+              ? `### ${item.caption} (missing: ${item.refId})`
+              : `### [${finding.severity}] ${finding.title}`,
+          );
+          lines.push("");
+          lines.push(
+            finding === undefined
+              ? "_Selected finding is no longer available._"
+              : finding.body.length > 0
+                ? finding.body
+                : "_No detail._",
+          );
+          lines.push("");
+        } else if (item.kind === "lead") {
+          lines.push(`### Lead: ${item.caption}`);
+          lines.push("");
+          lines.push(`_Lead reference ${item.refId}; resolve through the lead record._`);
+          lines.push("");
+        }
       }
     } else if (section === "Reproduction" || section === "Methodology") {
       lines.push(

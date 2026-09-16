@@ -5413,7 +5413,7 @@
         },
         "technique_prerequisites_json": {
           "name": "technique_prerequisites_json",
-          "value": "json_valid(\"techniques\".\"prerequisites_json\") and length(cast(\"techniques\".\"prerequisites_json\" as blob)) <= 8192"
+          "value": "json_valid(\"techniques\".\"prerequisites_json\") and length(cast(\"techniques\".\"prerequisites_json\" as blob)) <= 16384"
         },
         "technique_question_bytes": {
           "name": "technique_question_bytes",
@@ -5421,7 +5421,7 @@
         },
         "technique_procedure_json": {
           "name": "technique_procedure_json",
-          "value": "json_valid(\"techniques\".\"procedure_json\") and length(cast(\"techniques\".\"procedure_json\" as blob)) <= 16384"
+          "value": "json_valid(\"techniques\".\"procedure_json\") and length(cast(\"techniques\".\"procedure_json\" as blob)) <= 131072"
         },
         "technique_meaning_bytes": {
           "name": "technique_meaning_bytes",

@@ -1997,6 +1997,11 @@ export const stoneCaptures = sqliteTable(
 // engagement-scoped with restrict deletes so saved material never loses
 // provenance. JSON columns carry prerequisites and procedure steps; the
 // repository validates them against the technique contract on every read.
+// Column bounds cover the contract's worst-case serialized size so valid
+// requests never fail the CHECK: 8 prerequisites of 280 code points each
+// serialize to at most 13,465 bytes, and 16 procedure steps of two
+// 500-code-point fields each serialize to at most 96,577 bytes (JSON
+// escaping can expand one code point to six bytes).
 export const techniques = sqliteTable(
   "techniques",
   {
@@ -2026,7 +2031,7 @@ export const techniques = sqliteTable(
     ),
     check(
       "technique_prerequisites_json",
-      sql`json_valid(${table.prerequisitesJson}) and length(cast(${table.prerequisitesJson} as blob)) <= 8192`,
+      sql`json_valid(${table.prerequisitesJson}) and length(cast(${table.prerequisitesJson} as blob)) <= 16384`,
     ),
     check(
       "technique_question_bytes",
@@ -2034,7 +2039,7 @@ export const techniques = sqliteTable(
     ),
     check(
       "technique_procedure_json",
-      sql`json_valid(${table.procedureJson}) and length(cast(${table.procedureJson} as blob)) <= 16384`,
+      sql`json_valid(${table.procedureJson}) and length(cast(${table.procedureJson} as blob)) <= 131072`,
     ),
     check(
       "technique_meaning_bytes",
