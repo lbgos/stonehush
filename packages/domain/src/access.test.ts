@@ -16,6 +16,14 @@ describe("access revisit rules", () => {
     expect(parkedForLackOfAccess(null, null)).toBe(false);
   });
 
+  it("does not fire on ambiguous marker text", () => {
+    expect(
+      parkedForLackOfAccess("No client permission to test this endpoint", null),
+    ).toBe(false);
+    expect(parkedForLackOfAccess("OAuth redirect mismatch", null)).toBe(false);
+    expect(parkedForLackOfAccess("Waiting on the scan to finish", "Retrying hourly")).toBe(false);
+  });
+
   it("cites the new access without secret material and without reopening language", () => {
     const reason = accessRevisitReason({ accessType: "ssh", account: "deploy" });
     expect(reason).toContain("Recorded SSH access");

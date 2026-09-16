@@ -196,4 +196,41 @@ describe("recorded access section", () => {
     await waitFor(() => expect(screen.getByText(/11 Sept 2026/)).toBeDefined());
     expect(document.body.textContent).not.toContain("Connected");
   });
+
+  it("rejects a malformed target id with a typed error and no request", async () => {
+    const posts: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") posts.push(url);
+        if (url.endsWith("/access")) {
+          return { json: async () => [], ok: true, status: 200 } as Response;
+        }
+        if (url.endsWith("/stone-targets")) {
+          return { json: async () => [], ok: true, status: 200 } as Response;
+        }
+        if (url.endsWith("/leads")) {
+          return { json: async () => [lead], ok: true, status: 200 } as Response;
+        }
+        if (url.endsWith("/secrets")) {
+          return { json: async () => [], ok: true, status: 200 } as Response;
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+    renderSection();
+
+    await waitFor(() => expect(screen.getByText("No access recorded yet")).toBeDefined());
+    fireEvent.change(screen.getByLabelText("Target"), { target: { value: "not-a-uuid" } });
+    fireEvent.change(screen.getByLabelText("Account"), { target: { value: "deploy" } });
+    await waitFor(() =>
+      expect(screen.getByRole("option", { name: "Odd login form" })).toBeDefined(),
+    );
+    fireEvent.change(screen.getByLabelText("Source lead"), { target: { value: LEAD_ID } });
+    fireEvent.click(screen.getByRole("button", { name: "Record access" }));
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeDefined());
+    expect(screen.getByRole("alert").textContent).toContain("not accepted");
+    expect(posts).toEqual([]);
+  });
 });

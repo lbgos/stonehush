@@ -111,7 +111,7 @@ export async function createAccessRequest(
   engagementId: string,
   input: CreateAccessInput,
 ): Promise<AccessRecord> {
-  const body = CreateAccessRequestSchema.parse({
+  const parsed = CreateAccessRequestSchema.safeParse({
     targetId: input.targetId,
     account: input.account,
     accessType: input.accessType,
@@ -119,6 +119,10 @@ export async function createAccessRequest(
     ...(input.secretId === undefined ? {} : { secretId: input.secretId }),
     ...(input.context === undefined ? {} : { context: input.context }),
   });
+  // Client-side validation failure stays a typed mutation error: the raw
+  // ZodError never reaches the alert.
+  if (!parsed.success) throw new AccessMutationClientError("invalid_request");
+  const body = parsed.data;
   let response: Response;
   try {
     response = await fetch(`/api/v1/engagements/${engagementId}/access`, {
@@ -136,9 +140,9 @@ export async function createAccessRequest(
     throw new AccessMutationClientError("request_failed");
   }
   if (response.status !== 201) throw parseAccessMutationError(payload);
-  const parsed = AccessResponseSchema.safeParse(payload);
-  if (!parsed.success) throw new AccessMutationClientError("invalid_persisted_data");
-  return parsed.data;
+  const validated = AccessResponseSchema.safeParse(payload);
+  if (!validated.success) throw new AccessMutationClientError("invalid_persisted_data");
+  return validated.data;
 }
 
 export async function refreshAccessRequest(
