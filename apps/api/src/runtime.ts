@@ -36,6 +36,7 @@ import { EvidenceStore } from "./evidence/evidence-store.js";
 import { FfufProjectionService } from "./evidence/ffuf-projection.js";
 import { HttpProbeProjectionService } from "./evidence/http-probe-projection.js";
 import { NmapProjectionService } from "./evidence/nmap-projection.js";
+import type { WorkspaceBundleDependencies } from "./workspace-bundle-service.js";
 
 interface RuntimeDependencies {
   bootstrapStorage?: typeof bootstrapDevelopmentStorage;
@@ -82,6 +83,7 @@ export async function buildStorageBackedApp(
     let evidencePublication: EvidencePublicationService | undefined;
     let evidenceStore: EvidenceStore | undefined;
     let backupLock: BackupLock | undefined;
+    let workspaceBundle: WorkspaceBundleDependencies | undefined;
     const native = loadEvidenceNative();
     if (native.ok) {
       const storeResult = EvidenceStore.open(dataDirectory, native.binding);
@@ -110,6 +112,22 @@ export async function buildStorageBackedApp(
           },
         });
         evidenceStore = storeResult.store;
+        // Portable workspace bundle (stone-9): export and import ride on the
+        // same repositories plus direct artifact storage, so an exported
+        // engagement rehydrates as a new working engagement elsewhere.
+        workspaceBundle = {
+          engagements: engagementRepository,
+          leads: leadRepository,
+          excerpts: excerptRepository,
+          secrets: secretRepository,
+          objectives: objectiveRepository,
+          runs: runOutputRepository,
+          sqlite: database.sqlite,
+          store: storeResult.store,
+          nmapProjection,
+          httpProbeProjection,
+          ffufProjection,
+        };
       }
     }
 
@@ -138,6 +156,7 @@ export async function buildStorageBackedApp(
       stoneTargetRepository,
       resumeRepository,
       techniqueRepository,
+      ...(workspaceBundle === undefined ? {} : { workspaceBundle }),
       async getDevelopmentStorageReadiness() {
         await checkDevelopmentStorage(dataDirectory);
         return "ready" as const;

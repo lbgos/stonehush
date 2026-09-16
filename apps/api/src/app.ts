@@ -54,6 +54,8 @@ import { registerRunHistoryRoutes } from "./run-history-routes.js";
 import { registerAccessRoutes } from "./access-routes.js";
 import { registerStoneCaptureRoutes } from "./capture-routes.js";
 import { registerStoneImportRoutes } from "./import-routes.js";
+import { registerWorkspaceBundleRoutes } from "./workspace-bundle-routes.js";
+import type { WorkspaceBundleDependencies } from "./workspace-bundle-service.js";
 import { registerStoneTargetRoutes } from "./target-routes.js";
 import { registerRunnerEvidenceGrantRoutes } from "./runner-evidence-grant-routes.js";
 import { registerRunnerEvidenceUploadRoutes } from "./runner-evidence-upload-routes.js";
@@ -211,6 +213,9 @@ interface BuildAppOptions {
     TechniqueRepository,
     "createTechnique" | "listTechniques" | "getTechniqueForEngagement"
   >;
+  // Portable workspace bundle (stone-9). Registered only when the bundle
+  // service is wired; without evidence storage the routes do not exist.
+  workspaceBundle?: WorkspaceBundleDependencies;
   logger?: FastifyServerOptions["logger"];
   now?: () => Date;
 }
@@ -241,6 +246,7 @@ export function buildApp({
   stoneTargetRepository,
   resumeRepository,
   techniqueRepository,
+  workspaceBundle,
   logger = false,
   now,
 }: BuildAppOptions): FastifyInstance {
@@ -489,6 +495,9 @@ export function buildApp({
   }
   if (techniqueRepository !== undefined) {
     registerTechniqueRoutes(app, techniqueRepository);
+  }
+  if (workspaceBundle !== undefined) {
+    registerWorkspaceBundleRoutes(app, workspaceBundle);
   }
 
   app.get("/health", async (_request, reply) => {
