@@ -22,7 +22,6 @@ import {
 import { buildPrintHtml } from "./report-print.js";
 import { reviewOutline } from "./report-review.js";
 import {
-  buildPortableBundleManifest,
   buildSharingPreview,
   exportSharingMarkdown,
 } from "./report-sharing.js";
@@ -40,10 +39,10 @@ import {
   reportJsonFilename,
   reportMarkdownFilename,
   reportOutlineFilename,
-  reportPortableFilename,
   reportPrintFilename,
   useReportQuery,
 } from "./report-query.js";
+import { WorkspaceBundleSection } from "./workspace-bundle.js";
 
 export function EngagementReportSection({
   engagementId,
@@ -269,27 +268,6 @@ function ReportBody({
     }
   };
 
-  const onDownloadPortableBundle = () => {
-    setActionError(undefined);
-    try {
-      const manifest = buildPortableBundleManifest({
-        bundle,
-        outline,
-        options: { includeAssetLinks },
-      });
-      downloadTextFile(
-        reportPortableFilename(engagementId),
-        `${JSON.stringify(manifest, null, 2)}\n`,
-        "application/json",
-      );
-      // No snapshot: the manifest carries no Markdown and ignores masking,
-      // so recording the Markdown snapshot here would mark an unchanged
-      // manifest stale on the next toggle.
-    } catch {
-      setActionError("Download failed. Try again.");
-    }
-  };
-
   return (
     <div className="grid min-w-0 gap-3">
       <p className="m-0 text-[12px] text-muted-foreground" aria-live="polite">
@@ -371,8 +349,8 @@ function ReportBody({
         refreshing={refreshing}
         onDownloadOutlineMarkdown={onDownloadOutlineMarkdown}
         onDownloadPrintHtml={onDownloadPrintHtml}
-        onDownloadPortableBundle={onDownloadPortableBundle}
       />
+      <WorkspaceBundleSection engagementId={engagementId} />
     </div>
   );
 }
@@ -615,7 +593,6 @@ function SharingSection({
   refreshing,
   onDownloadOutlineMarkdown,
   onDownloadPrintHtml,
-  onDownloadPortableBundle,
 }: {
   sharing: { included: readonly { caption: string; filename?: string }[]; excluded: readonly string[]; maskedFields: number };
   sharingMarkdown: string;
@@ -625,7 +602,6 @@ function SharingSection({
   refreshing: boolean;
   onDownloadOutlineMarkdown: () => void;
   onDownloadPrintHtml: () => void;
-  onDownloadPortableBundle: () => void;
 }) {
   return (
     <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">
@@ -677,9 +653,6 @@ function SharingSection({
           </Button>
           <Button type="button" variant="secondary" disabled={refreshing} onClick={onDownloadPrintHtml}>
             Download print HTML
-          </Button>
-          <Button type="button" variant="secondary" disabled={refreshing} onClick={onDownloadPortableBundle}>
-            Download portable bundle
           </Button>
           <Button
             type="button"

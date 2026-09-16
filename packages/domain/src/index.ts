@@ -1,3 +1,10 @@
+export {
+  checkWorkspaceBundleBounds,
+  planIdRemap,
+  remapStoredRefs,
+  summarizeWorkspaceBundle,
+  type BundleBoundsErrorCode,
+} from "./workspace-bundle.js";
 export { normalizeTarget } from "./normalize-target.js";
 export {
   anonymousConditionsMatch,

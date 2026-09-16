@@ -170,9 +170,11 @@ export interface PortableBundleManifest {
   readonly excludes: readonly string[];
 }
 
-// Portable workspace bundle: a manifest for moving work, distinct from the
-// client-facing report markdown. Digests only, never secret values, scratch
-// history, or ambient state.
+// Portable outline manifest (STONE-7): a lightweight digest-only record of
+// what an outline export covered. The full working file for continuing on
+// another machine is the server-side workspace bundle
+// (GET/POST workspace-bundle routes), which carries records plus evidence
+// bytes with integrity checks; this manifest never carries bytes.
 export function buildPortableBundleManifest(input: SharingInput): PortableBundleManifest {
   return {
     kind: "blackglass-portable-bundle-v1",
