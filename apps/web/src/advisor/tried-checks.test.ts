@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AdvisorTurn } from "@blackglass/contracts";
+import type { AdvisorTurn } from "@stonehush/contracts";
 
 import { filterRuledOutSuggestions } from "./ruled-out.js";
 import {

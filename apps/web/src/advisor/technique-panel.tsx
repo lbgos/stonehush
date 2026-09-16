@@ -1,11 +1,11 @@
-import type { Technique } from "@blackglass/contracts";
+import type { Technique } from "@stonehush/contracts";
 import {
   extractTechniquePlaceholders,
   fillTechniquePlaceholders,
   isSupportedCheck,
   matchTechniquePrereqs,
-} from "@blackglass/domain";
-import { Button } from "@blackglass/ui";
+} from "@stonehush/domain";
+import { Button } from "@stonehush/ui";
 import { useMemo, useState } from "react";
 
 import { copyTextToClipboard } from "../engagements/report-query.js";

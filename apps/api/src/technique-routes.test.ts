@@ -6,7 +6,7 @@ import {
   EngagementRepository,
   TechniqueRepository,
   openEngagementDatabase,
-} from "@blackglass/db";
+} from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";

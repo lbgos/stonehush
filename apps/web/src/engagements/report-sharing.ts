@@ -1,4 +1,4 @@
-import type { ReportBundle } from "@blackglass/contracts";
+import type { ReportBundle } from "@stonehush/contracts";
 
 import { maskReportBundle } from "./report-mask.js";
 import {

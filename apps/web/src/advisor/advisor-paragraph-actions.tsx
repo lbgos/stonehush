@@ -1,4 +1,4 @@
-import { Button } from "@blackglass/ui";
+import { Button } from "@stonehush/ui";
 import { useState } from "react";
 
 import { copyTextToClipboard } from "../engagements/report-query.js";
@@ -15,7 +15,7 @@ import {
   type NoteDraft,
 } from "./pin-citation.js";
 import type { SaveTechniqueInput } from "./technique-query.js";
-import type { AdvisorPartitionedCitation } from "@blackglass/contracts";
+import type { AdvisorPartitionedCitation } from "@stonehush/contracts";
 
 // Per-paragraph advisor actions (STONE-7). A useful paragraph pins into a
 // note draft or a lead draft with citations, a supported check becomes a

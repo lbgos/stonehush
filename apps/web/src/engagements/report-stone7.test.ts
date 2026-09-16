@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Finding, ReportBundle } from "@blackglass/contracts";
+import type { Finding, ReportBundle } from "@stonehush/contracts";
 
 import {
   addOutlineItem,

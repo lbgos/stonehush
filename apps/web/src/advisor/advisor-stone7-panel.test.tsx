@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 
@@ -131,6 +131,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -190,7 +191,8 @@ describe("advisor stone-7 panel", () => {
     const pinButtons = await within(panel).findAllByRole("button", { name: "Pin to note" });
     fireEvent.click(pinButtons[0] as HTMLElement);
     expect(await within(panel).findByText(/Note draft/)).toBeDefined();
-    expect(within(panel).getByText(/artifact artifact-1/).textContent).toContain("Sources");
+    const sources = within(panel).getAllByText(/artifact artifact-1/);
+    expect(sources.some((entry) => entry.textContent?.includes("Sources"))).toBe(true);
   });
 
   it("rejects finding prefill titles outside 1 to 120 characters", async () => {

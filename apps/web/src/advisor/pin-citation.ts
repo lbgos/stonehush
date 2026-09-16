@@ -1,5 +1,5 @@
-import { isSupportedCheck } from "@blackglass/domain";
-import type { AdvisorPartitionedCitation } from "@blackglass/contracts";
+import { isSupportedCheck } from "@stonehush/domain";
+import type { AdvisorPartitionedCitation } from "@stonehush/contracts";
 
 /**
  * Pin-with-citations and prefilled-action handoff (STONE-7).

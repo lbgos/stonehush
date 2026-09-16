@@ -6,8 +6,8 @@ import {
   TechniqueMutationErrorSchema,
   TechniqueQueryErrorSchema,
   TechniqueResponseSchema,
-} from "@blackglass/contracts";
-import type { TechniqueRepository } from "@blackglass/db";
+} from "@stonehush/contracts";
+import type { TechniqueRepository } from "@stonehush/db";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
 type TechniquesRepository = Pick<

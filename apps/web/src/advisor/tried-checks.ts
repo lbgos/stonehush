@@ -1,4 +1,4 @@
-import type { AdvisorTurn } from "@blackglass/contracts";
+import type { AdvisorTurn } from "@stonehush/contracts";
 
 import type { HintDepthStorage } from "./hint-depth.js";
 import { splitAnswerParagraphs, toPrefilledAction } from "./pin-citation.js";

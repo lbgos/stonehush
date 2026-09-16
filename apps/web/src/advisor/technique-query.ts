@@ -3,7 +3,7 @@ import {
   TechniqueListResponseSchema,
   TechniqueResponseSchema,
   type Technique,
-} from "@blackglass/contracts";
+} from "@stonehush/contracts";
 import { useMutation, useQuery, useQueryClient, queryOptions } from "@tanstack/react-query";
 
 export const TECHNIQUE_QUERY_ERROR_MESSAGE = "The techniques request failed.";
