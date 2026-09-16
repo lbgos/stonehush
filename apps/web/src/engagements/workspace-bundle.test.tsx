@@ -258,4 +258,19 @@ describe("workspace bundle section", () => {
     fireEvent.change(picker, { target: { files: [file] } });
     expect(await screen.findByText(/integrity check/)).toBeTruthy();
   });
+
+  it("rejects an oversized file before reading it", async () => {
+    const fetchMock = vi.fn(() => Promise.reject(new Error("must not fetch")));
+    vi.stubGlobal("fetch", fetchMock);
+    await renderSection();
+    const picker = screen.getByLabelText("Choose a workspace bundle file");
+    const oversized = new File(
+      [new ArrayBuffer(32 * 1024 * 1024 + 1)],
+      "bundle.json",
+      { type: "application/json" },
+    );
+    fireEvent.change(picker, { target: { files: [oversized] } });
+    expect(await screen.findByText(/larger than the import limit/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

@@ -109,3 +109,43 @@ export function remapStoredRefs(
 ): string[] {
   return ids.map((id) => remap.get(id) ?? id);
 }
+
+export interface AttachmentParentLink {
+  readonly id: string;
+  readonly parentAttachmentId: string | null;
+}
+
+export type AttachmentOrderErrorCode = "unknown_parent" | "attachment_cycle";
+
+// Order attachments so every parent is created before its children.
+// Parents absent from the carried set and dependency cycles both fail
+// closed: the importer must never invent a parent or loop forever.
+// Independent attachments keep their input order for determinism.
+export function orderAttachmentsForImport<Link extends AttachmentParentLink>(
+  attachments: readonly Link[],
+): { ok: true; ordered: Link[] } | { ok: false; code: AttachmentOrderErrorCode } {
+  const ids = new Set(attachments.map((attachment) => attachment.id));
+  for (const attachment of attachments) {
+    if (attachment.parentAttachmentId !== null && !ids.has(attachment.parentAttachmentId)) {
+      return { ok: false, code: "unknown_parent" };
+    }
+  }
+  const ordered: Link[] = [];
+  const placed = new Set<string>();
+  let remaining = [...attachments];
+  while (remaining.length > 0) {
+    const ready = remaining.filter(
+      (attachment) =>
+        attachment.parentAttachmentId === null ||
+        placed.has(attachment.parentAttachmentId),
+    );
+    if (ready.length === 0) return { ok: false, code: "attachment_cycle" };
+    for (const attachment of ready) {
+      ordered.push(attachment);
+      placed.add(attachment.id);
+    }
+    const placedNow = new Set(ready.map((attachment) => attachment.id));
+    remaining = remaining.filter((attachment) => !placedNow.has(attachment.id));
+  }
+  return { ok: true, ordered };
+}

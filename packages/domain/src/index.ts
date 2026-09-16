@@ -1,8 +1,11 @@
 export {
   checkWorkspaceBundleBounds,
+  orderAttachmentsForImport,
   planIdRemap,
   remapStoredRefs,
   summarizeWorkspaceBundle,
+  type AttachmentOrderErrorCode,
+  type AttachmentParentLink,
   type BundleBoundsErrorCode,
 } from "./workspace-bundle.js";
 export { normalizeTarget } from "./normalize-target.js";

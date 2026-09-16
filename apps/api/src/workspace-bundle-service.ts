@@ -2,9 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 
 import {
   WORKSPACE_BUNDLE_KIND,
-  WORKSPACE_BUNDLE_VERSION,
   WORKSPACE_BUNDLE_MAX_EVIDENCE_BYTES,
   WORKSPACE_BUNDLE_MAX_EVIDENCE_FILE_BYTES,
+  WORKSPACE_BUNDLE_MAX_JSON_BYTES,
+  WORKSPACE_BUNDLE_VERSION,
   WorkspaceBundleSchema,
   WorkspaceBundleVersionProbeSchema,
   workspaceBundleRawBytes,
@@ -22,6 +23,7 @@ import type {
 import type { EngagementDatabase } from "@stonehush/db";
 import {
   checkWorkspaceBundleBounds,
+  orderAttachmentsForImport,
   planIdRemap,
   remapStoredRefs,
   summarizeWorkspaceBundle,
@@ -254,26 +256,35 @@ export async function exportWorkspaceBundle(
     objectives: [],
   } as const;
 
+  let secrets: WorkspaceBundle["secrets"] = [];
+  let objectives: WorkspaceBundle["objectives"] = [];
   if (options.privateCopy) {
-    const secrets = deps.secrets.listSecrets(engagementId);
-    if (!secrets.ok) return failed(mapRepositoryError(secrets.error.code));
-    const objectives = deps.objectives.listObjectives(engagementId);
-    if (!objectives.ok) return failed(mapRepositoryError(objectives.error.code));
-    const parsed = WorkspaceBundleSchema.safeParse({
-      ...bundle,
-      secrets: secrets.value,
-      objectives: objectives.value,
-    });
-    if (!parsed.success) return failed("invalid_persisted_data");
-    if (checkWorkspaceBundleBounds(parsed.data).ok === false) {
-      return failed("bundle_too_large");
+    const listedSecrets = deps.secrets.listSecrets(engagementId);
+    if (!listedSecrets.ok) return failed(mapRepositoryError(listedSecrets.error.code));
+    const listedObjectives = deps.objectives.listObjectives(engagementId);
+    if (!listedObjectives.ok) {
+      return failed(mapRepositoryError(listedObjectives.error.code));
     }
-    return { ok: true, value: { bundle: parsed.data } };
+    secrets = listedSecrets.value;
+    objectives = listedObjectives.value;
   }
 
-  const parsed = WorkspaceBundleSchema.safeParse(bundle);
+  const parsed = WorkspaceBundleSchema.safeParse({
+    ...bundle,
+    secrets,
+    objectives,
+  });
   if (!parsed.success) return failed("invalid_persisted_data");
   if (checkWorkspaceBundleBounds(parsed.data).ok === false) {
+    return failed("bundle_too_large");
+  }
+  // The record and byte caps above do not bound attachment image bytes, so
+  // the finished file is measured directly: an export the import route would
+  // refuse through its body limit is refused here instead of shipped.
+  if (
+    Buffer.byteLength(JSON.stringify(parsed.data), "utf8") >
+    WORKSPACE_BUNDLE_MAX_JSON_BYTES
+  ) {
     return failed("bundle_too_large");
   }
   return { ok: true, value: { bundle: parsed.data } };
@@ -360,16 +371,37 @@ export async function importWorkspaceBundle(
   if (!created.ok) return failed("invalid_persisted_data");
   const engagementId = created.value.id;
 
+  // Post-create failures compensate every database row this import wrote, so
+  // a failed import never leaves a partial engagement behind. Published bytes
+  // cannot be removed through the store interface; they stay as unreferenced
+  // objects, exactly like interrupted runner uploads.
+  const ledger: {
+    actionId?: string;
+    runId?: string;
+    artifactIds: string[];
+  } = { artifactIds: [] };
+  const fail = <T>(code: WorkspaceBundleErrorCode): WorkspaceBundleResult<T> => {
+    compensateImport(deps.sqlite, {
+      engagementId,
+      ...(ledger.actionId === undefined ? {} : { actionId: ledger.actionId }),
+      ...(ledger.runId === undefined ? {} : { runId: ledger.runId }),
+      artifactIds: ledger.artifactIds,
+    });
+    return failed(code);
+  };
+
   const noted = deps.engagements.putEngagementNotes(engagementId, {
     markdown: bundle.notes.markdown,
     expectedRevision: 0,
   });
-  if (!noted.ok) return failed("invalid_persisted_data");
+  if (!noted.ok) return fail("invalid_persisted_data");
 
   // One synthetic import run owns every rehydrated artifact. Runs require an
   // action parent; both rows are import provenance, never operator history.
   const actionId = randomUUID();
   const runId = randomUUID();
+  ledger.actionId = actionId;
+  ledger.runId = runId;
   try {
     deps.sqlite
       .prepare(
@@ -382,7 +414,7 @@ export async function importWorkspaceBundle(
       )
       .run(runId, 1, actionId, engagementId, now, now);
   } catch (error) {
-    return failed(storageCode(error));
+    return fail(storageCode(error));
   }
 
   // Evidence bytes move through the same staging plus exclusive publish path
@@ -392,18 +424,19 @@ export async function importWorkspaceBundle(
     verifiedEvidence.map(({ entry }) => entry.artifactId),
     newArtifactIds,
   );
-  if (artifactRemap === undefined) return failed("invalid_persisted_data");
+  if (artifactRemap === undefined) return fail("invalid_persisted_data");
   for (let index = 0; index < verifiedEvidence.length; index += 1) {
     const item = verifiedEvidence[index] as VerifiedEvidenceBytes;
     const newArtifactId = newArtifactIds[index] as string;
     const stored = await publishImportedBytes(deps, item.bytes);
-    if (stored === undefined) return failed("invalid_persisted_data");
+    if (stored === undefined) return fail("invalid_persisted_data");
     const renamed = deps.store.publish({
       uploadId: stored,
       artifactId: newArtifactId,
       expectedSizeBytes: item.entry.sizeBytes,
     });
-    if (renamed.status !== "published") return failed("invalid_persisted_data");
+    if (renamed.status !== "published") return fail("invalid_persisted_data");
+    ledger.artifactIds.push(newArtifactId);
     const redaction =
       item.entry.kind === "stdout" || item.entry.kind === "stderr" ?
         { applied: 1, boundary: "runner_stream", preserved: 0 }
@@ -430,7 +463,7 @@ export async function importWorkspaceBundle(
           now,
         );
     } catch (error) {
-      return failed(storageCode(error));
+      return fail(storageCode(error));
     }
     // Re-derive discovery projections from the same bytes so the imported
     // engagement keeps its services, probes, and ffuf results.
@@ -440,7 +473,7 @@ export async function importWorkspaceBundle(
       deps.ffufProjection,
     ]) {
       const projected = await projection.projectForArtifact(newArtifactId);
-      if (!projected.ok) return failed("invalid_persisted_data");
+      if (!projected.ok) return fail("invalid_persisted_data");
     }
   }
 
@@ -457,19 +490,19 @@ export async function importWorkspaceBundle(
       },
       ...(lead.nextStep === null ? {} : { nextStep: lead.nextStep }),
     });
-    if (!made.ok) return failed("invalid_persisted_data");
+    if (!made.ok) return fail("invalid_persisted_data");
     const newLeadId = made.value.id;
     if (lead.disposition === "parked") {
       const parked = deps.leads.parkLead(engagementId, newLeadId, {
         reason: lead.parkReason ?? "Parked before export.",
         ...(lead.testedConditions === null ? {} : { testedConditions: lead.testedConditions }),
       });
-      if (!parked.ok) return failed("invalid_persisted_data");
+      if (!parked.ok) return fail("invalid_persisted_data");
     } else if (lead.disposition === "closed") {
       const closed = deps.leads.closeLead(engagementId, newLeadId, {
         ...(lead.closedNote === null ? {} : { note: lead.closedNote }),
       });
-      if (!closed.ok) return failed("invalid_persisted_data");
+      if (!closed.ok) return fail("invalid_persisted_data");
     }
     // Quiet revisit suggestions are not carried: they name transient runner
     // conditions from the source machine. The parked reason stays, so the
@@ -480,7 +513,7 @@ export async function importWorkspaceBundle(
   let objectiveRemap = new Map<string, string>();
   if (bundle.privateCopy) {
     const restored = restorePrivateRecords(deps, engagementId, bundle, now);
-    if (!restored.ok) return failed(restored.error.code);
+    if (!restored.ok) return fail(restored.error.code);
     objectiveRemap = new Map(restored.value);
   }
 
@@ -492,17 +525,17 @@ export async function importWorkspaceBundle(
       body: finding.body,
       evidenceArtifactIds: remapStoredRefs(finding.evidenceArtifactIds, artifactRemap),
     });
-    if (!made.ok) return failed("invalid_persisted_data");
+    if (!made.ok) return fail("invalid_persisted_data");
     if (finding.status === "resolved") {
       const resolved = deps.engagements.resolveFinding(engagementId, made.value.id);
-      if (!resolved.ok) return failed("invalid_persisted_data");
+      if (!resolved.ok) return fail("invalid_persisted_data");
     }
     findingRemap.set(finding.id, made.value.id);
   }
 
   for (const attempt of bundle.attempts) {
     const newLeadId = leadRemap.get(attempt.leadId);
-    if (newLeadId === undefined) return failed("invalid_persisted_data");
+    if (newLeadId === undefined) return fail("invalid_persisted_data");
     const recorded = deps.leads.recordAttempt(engagementId, newLeadId, {
       summary: attempt.summary,
       outcome: attempt.outcome,
@@ -519,12 +552,12 @@ export async function importWorkspaceBundle(
           linkedObjectiveId: objectiveRemap.get(attempt.linkedObjectiveId) as string,
         }),
     });
-    if (!recorded.ok) return failed("invalid_persisted_data");
+    if (!recorded.ok) return fail("invalid_persisted_data");
   }
 
   for (const excerpt of bundle.excerpts) {
     const newArtifactId = artifactRemap.get(excerpt.artifactId);
-    if (newArtifactId === undefined) return failed("invalid_persisted_data");
+    if (newArtifactId === undefined) return fail("invalid_persisted_data");
     const made = deps.excerpts.createExcerpt({
       engagementId,
       runId,
@@ -537,27 +570,23 @@ export async function importWorkspaceBundle(
       redactions: excerpt.redactions,
       targetNote: excerpt.targetNote,
     });
-    if (!made.ok) return failed("invalid_persisted_data");
+    if (!made.ok) return fail("invalid_persisted_data");
   }
 
-  // Originals before derived crops so parent ids always resolve.
-  const orderedAttachments = [...verifiedAttachments].sort((left, right) => {
-    if (left.attachment.parentAttachmentId === null && right.attachment.parentAttachmentId !== null) {
-      return -1;
-    }
-    if (left.attachment.parentAttachmentId !== null && right.attachment.parentAttachmentId === null) {
-      return 1;
-    }
-    return 0;
-  });
+  // Parents before children via the domain ordering, which rejects missing
+  // parents and cycles before the first attachment write.
+  const ordered = orderAttachmentsForImport(
+    verifiedAttachments.map(({ attachment }) => attachment),
+  );
+  if (!ordered.ok) return fail("invalid_persisted_data");
   const attachmentRemap = new Map<string, string>();
-  for (const { attachment } of orderedAttachments) {
+  for (const attachment of ordered.ordered) {
     const parent =
       attachment.parentAttachmentId === null ?
         null
       : (attachmentRemap.get(attachment.parentAttachmentId) ?? null);
     if (attachment.parentAttachmentId !== null && parent === null) {
-      return failed("invalid_persisted_data");
+      return fail("invalid_persisted_data");
     }
     const made = deps.excerpts.createAttachment({
       engagementId,
@@ -571,7 +600,7 @@ export async function importWorkspaceBundle(
       cropRectJson: attachment.crop === null ? null : JSON.stringify(attachment.crop),
       contentBase64: attachment.contentBase64,
     });
-    if (!made.ok) return failed("invalid_persisted_data");
+    if (!made.ok) return fail("invalid_persisted_data");
     attachmentRemap.set(attachment.id, made.value.id);
   }
 
@@ -579,6 +608,88 @@ export async function importWorkspaceBundle(
     ok: true,
     value: { engagementId, summary: summarizeWorkspaceBundle(bundle) },
   };
+}
+
+export interface ImportLedger {
+  readonly engagementId: string;
+  readonly actionId?: string;
+  readonly runId?: string;
+  readonly artifactIds: readonly string[];
+}
+
+// Best-effort removal of every database row one import created, in reverse
+// dependency order. Runs when any post-create step fails so a failed import
+// never leaves a partial engagement behind. Published bytes stay as
+// unreferenced objects; the store interface offers no removal path and raw
+// filesystem deletes would bypass its descriptor defenses.
+function compensateImport(
+  sqlite: WorkspaceBundleDependencies["sqlite"],
+  created: ImportLedger,
+): void {
+  try {
+    if (created.artifactIds.length > 0) {
+      const placeholders = created.artifactIds.map(() => "?").join(",");
+      const ids = [...created.artifactIds];
+      sqlite
+        .prepare(`delete from nmap_services where artifact_id in (${placeholders})`)
+        .run(...ids);
+      sqlite
+        .prepare(`delete from http_probe_results where artifact_id in (${placeholders})`)
+        .run(...ids);
+      sqlite
+        .prepare(`delete from ffuf_results where artifact_id in (${placeholders})`)
+        .run(...ids);
+    }
+    if (created.runId !== undefined) {
+      sqlite
+        .prepare("delete from evidence_artifacts where run_id = ?")
+        .run(created.runId);
+    }
+    sqlite
+      .prepare("delete from evidence_excerpts where engagement_id = ?")
+      .run(created.engagementId);
+    sqlite
+      .prepare(
+        "delete from evidence_attachments where engagement_id = ? and parent_attachment_id is not null",
+      )
+      .run(created.engagementId);
+    sqlite
+      .prepare("delete from evidence_attachments where engagement_id = ?")
+      .run(created.engagementId);
+    sqlite
+      .prepare("delete from lead_attempts where engagement_id = ?")
+      .run(created.engagementId);
+    sqlite.prepare("delete from leads where engagement_id = ?").run(created.engagementId);
+    sqlite
+      .prepare("delete from findings where engagement_id = ?")
+      .run(created.engagementId);
+    sqlite
+      .prepare("delete from secret_verifications where engagement_id = ?")
+      .run(created.engagementId);
+    sqlite
+      .prepare("delete from secrets where engagement_id = ?")
+      .run(created.engagementId);
+    sqlite
+      .prepare("delete from objectives where engagement_id = ?")
+      .run(created.engagementId);
+    sqlite
+      .prepare("delete from engagement_notes where engagement_id = ?")
+      .run(created.engagementId);
+    if (created.runId !== undefined) {
+      sqlite
+        .prepare("delete from runs where id = ? and engagement_id = ?")
+        .run(created.runId, created.engagementId);
+    }
+    if (created.actionId !== undefined) {
+      sqlite
+        .prepare("delete from actions where id = ? and engagement_id = ?")
+        .run(created.actionId, created.engagementId);
+    }
+    sqlite.prepare("delete from engagements where id = ?").run(created.engagementId);
+  } catch {
+    // The original error code still reports the failure. Remaining rows
+    // belong to an engagement id that was never returned to the operator.
+  }
 }
 
 // Staged write of already-verified import bytes. Returns the upload id for

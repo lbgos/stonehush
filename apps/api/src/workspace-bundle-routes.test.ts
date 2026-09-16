@@ -311,6 +311,42 @@ async function exportBundle(app: Harness["app"], engagementId: string, privateCo
   return response.json() as Record<string, unknown>;
 }
 
+function countRows(harness: Harness, table: string): number {
+  const row = harness.database.sqlite
+    .prepare(`select count(*) as count from ${table}`)
+    .get() as { count: number };
+  return row.count;
+}
+
+function minimalBundle(
+  overrides: Partial<Record<"evidence" | "attachments", unknown[]>> = {},
+): Record<string, unknown> {
+  return {
+    kind: "stonehush-workspace-bundle-v1",
+    bundleVersion: 1,
+    exportedAt: "2026-09-01T12:00:00.000Z",
+    sourceEngagementId: "10000000-0000-4000-8000-000000000001",
+    sourceEngagementName: "Source",
+    privateCopy: false,
+    engagement: {
+      name: "Source",
+      kind: "lab",
+      deadlineAt: null,
+      description: null,
+      authorizationContext: null,
+    },
+    notes: { markdown: "", updatedAt: "2026-09-01T12:00:00.000Z" },
+    leads: [],
+    attempts: [],
+    excerpts: [],
+    attachments: overrides.attachments ?? [],
+    findings: [],
+    evidence: overrides.evidence ?? [],
+    secrets: [],
+    objectives: [],
+  };
+}
+
 describe("workspace bundle routes", () => {
   it("round-trips leads, excerpts, findings, and byte-identical evidence", async () => {
     const harness = await createHarness();
@@ -588,5 +624,137 @@ describe("workspace bundle routes", () => {
     });
     expect(malformed.statusCode).toBe(400);
     expect(malformed.json()).toEqual({ code: "invalid_request" });
+  });
+
+  it("removes imported rows when a projection fails after creation", async () => {
+    const harness = await createHarness();
+    const before = countRows(harness, "engagements");
+    // Schema-valid bytes with a matching digest that no parser accepts: the
+    // nmap projection fails only after the engagement and artifact exist.
+    const raw = Buffer.from("definitely not xml", "utf8");
+    const bundle = minimalBundle({
+      evidence: [
+        {
+          artifactId: "unparsable-1",
+          kind: "tool_raw",
+          sizeBytes: raw.length,
+          digest: sha256Hex(raw),
+          completeness: "complete",
+          artifactSlot: "nmap-xml",
+          originalRunId: "run-1",
+          contentBase64: raw.toString("base64"),
+        },
+      ],
+    });
+    const response = await harness.app.inject({
+      method: "POST",
+      url: "/api/v1/workspace-bundles/import",
+      payload: bundle,
+    });
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ code: "invalid_persisted_data" });
+    expect(countRows(harness, "engagements")).toBe(before);
+    expect(countRows(harness, "evidence_artifacts")).toBe(0);
+    expect(countRows(harness, "leads")).toBe(0);
+    expect(countRows(harness, "actions")).toBe(0);
+    expect(countRows(harness, "runs")).toBe(0);
+  });
+
+  it("orders nested attachments after parents and rejects cycles", async () => {
+    const harness = await createHarness();
+    const rootBytes = Buffer.from("root-bytes", "utf8");
+    const childBytes = Buffer.from("child-bytes", "utf8");
+    const grandchildBytes = Buffer.from("grandchild-bytes", "utf8");
+    const attachment = (
+      id: string,
+      parent: string | null,
+      raw: Buffer,
+    ) => ({
+      contractVersion: 1,
+      id,
+      engagementId: "10000000-0000-4000-8000-000000000001",
+      filename: `shot-${id.slice(0, 8)}`,
+      mime: "image/png",
+      sizeBytes: raw.length,
+      digest: sha256Hex(raw),
+      caption: "synthetic",
+      targetLabel: null,
+      parentAttachmentId: parent,
+      crop: null,
+      createdAt: "2026-09-01T12:00:00.000Z",
+      contentBase64: raw.toString("base64"),
+    });
+    // Grandchild first: import must still create parents before children.
+    const nested = minimalBundle({
+      attachments: [
+        attachment("30000000-0000-4000-8000-000000000003", "30000000-0000-4000-8000-000000000002", grandchildBytes),
+        attachment("30000000-0000-4000-8000-000000000002", "30000000-0000-4000-8000-000000000001", childBytes),
+        attachment("30000000-0000-4000-8000-000000000001", null, rootBytes),
+      ],
+    });
+    const imported = await harness.app.inject({
+      method: "POST",
+      url: "/api/v1/workspace-bundles/import",
+      payload: nested,
+    });
+    expect(imported.statusCode).toBe(201);
+    const engagementId = (imported.json() as { engagementId: string }).engagementId;
+    const listed = harness.excerptRepository.listAttachments(engagementId);
+    if (!listed.ok) throw new Error(listed.error.code);
+    expect(listed.value).toHaveLength(3);
+    const byDigest = new Map(listed.value.map((row) => [row.digest, row]));
+    const root = byDigest.get(sha256Hex(rootBytes));
+    const child = byDigest.get(sha256Hex(childBytes));
+    const grandchild = byDigest.get(sha256Hex(grandchildBytes));
+    expect(root?.parentAttachmentId).toBe(null);
+    expect(child?.parentAttachmentId).toBe(root?.id);
+    expect(grandchild?.parentAttachmentId).toBe(child?.id);
+
+    const cyclic = minimalBundle({
+      attachments: [
+        attachment("30000000-0000-4000-8000-000000000001", "30000000-0000-4000-8000-000000000002", rootBytes),
+        attachment("30000000-0000-4000-8000-000000000002", "30000000-0000-4000-8000-000000000001", childBytes),
+      ],
+    });
+    const rejected = await harness.app.inject({
+      method: "POST",
+      url: "/api/v1/workspace-bundles/import",
+      payload: cyclic,
+    });
+    expect(rejected.statusCode).toBe(500);
+    expect(rejected.json()).toEqual({ code: "invalid_persisted_data" });
+  });
+
+  it("refuses to export a bundle larger than the import limit", async () => {
+    const harness = await createHarness();
+    const created = harness.engagementRepository.createEngagement({
+      name: "Heavy lab",
+      kind: "lab",
+      autoContinueWarnings: false,
+    });
+    if (!created.ok) throw new Error(`Fixture failed: ${created.error.code}`);
+    // Twenty full-size attachments serialize past the 32 MiB import bound.
+    for (let index = 0; index < 20; index += 1) {
+      const raw = Buffer.alloc(1_500_000, 0x61 + (index % 26));
+      const made = harness.excerptRepository.createAttachment({
+        engagementId: created.value.id,
+        filename: `shot-${index}`,
+        mime: "image/png",
+        sizeBytes: raw.length,
+        digest: sha256Hex(raw),
+        caption: "synthetic",
+        targetLabel: null,
+        parentAttachmentId: null,
+        cropRectJson: null,
+        contentBase64: raw.toString("base64"),
+      });
+      if (!made.ok) throw new Error(`Fixture failed: ${made.error.code}`);
+    }
+    const response = await harness.app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${created.value.id}/workspace-bundle`,
+    });
+    expect(response.statusCode).toBe(413);
+    expect(response.json()).toEqual({ code: "bundle_too_large" });
   });
 });

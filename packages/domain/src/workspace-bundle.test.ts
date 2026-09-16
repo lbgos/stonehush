@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   checkWorkspaceBundleBounds,
+  orderAttachmentsForImport,
   planIdRemap,
   remapStoredRefs,
   summarizeWorkspaceBundle,
@@ -62,5 +63,35 @@ describe("workspace bundle rules", () => {
       "new-1",
       "outside",
     ]);
+  });
+
+  it("orders children after parents regardless of input order", () => {
+    const links = [
+      { id: "grandchild", parentAttachmentId: "child" },
+      { id: "child", parentAttachmentId: "root" },
+      { id: "root", parentAttachmentId: null },
+      { id: "other", parentAttachmentId: null },
+    ];
+    const ordered = orderAttachmentsForImport(links);
+    expect(ordered.ok).toBe(true);
+    if (!ordered.ok) return;
+    const positions = new Map(ordered.ordered.map((link, index) => [link.id, index]));
+    expect((positions.get("root") as number) < (positions.get("child") as number)).toBe(true);
+    expect((positions.get("child") as number) < (positions.get("grandchild") as number)).toBe(true);
+  });
+
+  it("rejects missing parents and cycles", () => {
+    expect(
+      orderAttachmentsForImport([{ id: "orphan", parentAttachmentId: "gone" }]),
+    ).toEqual({ ok: false, code: "unknown_parent" });
+    expect(
+      orderAttachmentsForImport([
+        { id: "a", parentAttachmentId: "b" },
+        { id: "b", parentAttachmentId: "a" },
+      ]),
+    ).toEqual({ ok: false, code: "attachment_cycle" });
+    expect(
+      orderAttachmentsForImport([{ id: "self", parentAttachmentId: "self" }]),
+    ).toEqual({ ok: false, code: "attachment_cycle" });
   });
 });

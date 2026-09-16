@@ -1,4 +1,7 @@
-import { WorkspaceBundleImportResponseSchema } from "@stonehush/contracts";
+import {
+  WORKSPACE_BUNDLE_MAX_JSON_BYTES,
+  WorkspaceBundleImportResponseSchema,
+} from "@stonehush/contracts";
 import { Button } from "@stonehush/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -103,6 +106,13 @@ export function WorkspaceBundleSection({
 
   const onImportFile = (file: File | undefined) => {
     if (file === undefined || busy) return;
+    // The server enforces the same bound as its body limit, but the file
+    // must not be read into memory first to find that out.
+    if (file.size > WORKSPACE_BUNDLE_MAX_JSON_BYTES) {
+      setError(importErrorMessage("bundle_too_large"));
+      if (fileInput.current !== null) fileInput.current.value = "";
+      return;
+    }
     setImporting(true);
     setError(undefined);
     setStatus(undefined);
