@@ -17,6 +17,11 @@ export {
   type SuggestRevisitResult,
 } from "./leads.js";
 export {
+  accessRevisitReason,
+  parkedForLackOfAccess,
+  type AccessRevisitSource,
+} from "./access.js";
+export {
   SECRET_DISPLAY_MASK,
   SECRET_STORAGE_COPY,
   proofHintForValue,

@@ -18,6 +18,8 @@ import {
   useStoneBindingsQuery,
   useStoneTargetsQuery,
 } from "./target-context-query.js";
+import { EngagementAccessSection } from "./access.js";
+import { useAccessRecordsQuery } from "./access-query.js";
 
 export interface StoneAccessContext {
   readonly accountRef: string | null;
@@ -38,15 +40,18 @@ const FOLLOW_UP_RECIPE: {
 // Reusable target context: address and hostname bindings, origin, and
 // read-only access references. STONE-2 mounts this panel through the slot
 // below after its workspace extension points merge. Access records stay owned
-// by STONE-4; this panel only reads account and connection references.
+// by STONE-8; this panel reads them for the selected target and lists them
+// below the reusable values.
 export function TargetContextPanel({
   engagementId,
   accessContext,
   origin,
+  archived = false,
 }: {
   engagementId: string;
   accessContext: StoneAccessContext;
   origin?: string | null;
+  archived?: boolean;
 }) {
   const queryClient = useQueryClient();
   const targets = useStoneTargetsQuery(engagementId);
@@ -57,6 +62,7 @@ export function TargetContextPanel({
   const activeTargetId = selectedTargetId ?? targets.data?.[0]?.id ?? null;
   activeTargetRef.current = activeTargetId;
   const bindings = useStoneBindingsQuery(engagementId, activeTargetId);
+  const accessRecords = useAccessRecordsQuery(engagementId);
 
   const [newAddress, setNewAddress] = useState("");
   const [changeError, setChangeError] = useState<string | null>(null);
@@ -105,6 +111,24 @@ export function TargetContextPanel({
     [baseSnapshot, recipeResolution],
   );
 
+  // The recorded-session line prefers the latest access record for the
+  // selected target; the prop stays as the fallback until records load.
+  // Recorded wording only, never a live connection indicator.
+  const latestAccessForTarget = useMemo(() => {
+    const scoped = (accessRecords.data ?? []).filter(
+      (record) => activeTargetId !== null && record.targetId === activeTargetId,
+    );
+    return scoped.sort((a, b) => (a.lastConfirmedAt < b.lastConfirmedAt ? 1 : -1))[0] ?? null;
+  }, [accessRecords.data, activeTargetId]);
+
+  const accessSection = (
+    <EngagementAccessSection
+      archived={archived}
+      engagementId={engagementId}
+      targetId={activeTargetId}
+    />
+  );
+
   if (targets.isPending || (activeTargetId !== null && bindings.isPending)) {
     return (
       <section aria-label="Target context" className="mt-5 border-t border-border pt-4">
@@ -127,6 +151,7 @@ export function TargetContextPanel({
         >
           Retry
         </Button>
+        {accessSection}
       </section>
     );
   }
@@ -228,7 +253,9 @@ export function TargetContextPanel({
       </header>
 
       <p className="m-0 text-[12px] leading-5 text-muted-foreground" data-testid="recorded-session">
-        {formatRecordedSessionLabel(accessContext.lastConfirmedAt)}
+        {formatRecordedSessionLabel(
+          latestAccessForTarget?.lastConfirmedAt ?? accessContext.lastConfirmedAt,
+        )}
       </p>
       <p className="mt-1 mb-0 text-[12px] leading-5 text-muted-foreground">
         Access context is read-only here. Access records own it.
@@ -392,6 +419,8 @@ export function TargetContextPanel({
         )}
         <p className="m-0 text-[12px] text-muted-foreground">{COPIED_NOT_RAN_NOTE}</p>
       </div>
+
+      {accessSection}
     </section>
   );
 }

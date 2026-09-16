@@ -1,4 +1,5 @@
 import {
+  AccessRepository,
   AdvisorTurnsRepository,
   EngagementRepository,
   EngagementResumeRepository,
@@ -15,12 +16,14 @@ import {
   RunnerRepository,
   SecretRepository,
   SettingsRepository,
+  StoneTargetRepository,
   TechniqueRepository,
   openEngagementDatabase,
   type EngagementDatabase,
 } from "@stonehush/db";
 import { loadEvidenceNative } from "@stonehush/evidence-native";
 import type { FastifyInstance } from "fastify";
+import { randomUUID } from "node:crypto";
 
 import { buildApp } from "./app.js";
 import {
@@ -66,6 +69,11 @@ export async function buildStorageBackedApp(
     const leadRepository = new LeadRepository(database.db);
     const objectiveRepository = new ObjectiveRepository(database.db);
     const secretRepository = new SecretRepository(database.db);
+    const accessRepository = new AccessRepository(database.db);
+    const stoneTargetRepository = new StoneTargetRepository(database.db, {
+      createId: randomUUID,
+      now: () => new Date(),
+    });
     const resumeRepository = new EngagementResumeRepository(database.db);
     const techniqueRepository = new TechniqueRepository(database.db);
 
@@ -126,6 +134,8 @@ export async function buildStorageBackedApp(
       leadRepository,
       objectiveRepository,
       secretRepository,
+      accessRepository,
+      stoneTargetRepository,
       resumeRepository,
       techniqueRepository,
       async getDevelopmentStorageReadiness() {
