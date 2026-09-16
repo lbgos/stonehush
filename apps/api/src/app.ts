@@ -12,6 +12,7 @@ import Fastify, {
 import type {
   AdvisorTurnsRepository,
   EngagementRepository,
+  EngagementResumeRepository,
   EvidenceGrantRepository,
   ExcerptRepository,
   FfufRepository,
@@ -35,7 +36,9 @@ import type { EvidencePublicationService } from "./evidence/evidence-publication
 import type { EvidenceStore } from "./evidence/evidence-store.js";
 import { registerEngagementMutationRoutes } from "./engagement-mutation-routes.js";
 import { registerEngagementNotesRoutes } from "./engagement-notes-routes.js";
+import { registerEngagementResumeRoutes } from "./engagement-resume-routes.js";
 import { registerEngagementRoutes } from "./engagement-routes.js";
+import { registerEngagementSearchRoutes } from "./engagement-search-routes.js";
 import { registerExcerptRoutes } from "./excerpt-routes.js";
 import { registerFindingRoutes } from "./finding-routes.js";
 import { registerRunnerAuthHook, stripAuthorizationHeader } from "./runner-http.js";
@@ -138,6 +141,7 @@ interface BuildAppOptions {
   >;
   httpProbeRepository?: Pick<HttpProbeRepository, "listForEngagement">;
   ffufRepository?: Pick<FfufRepository, "listForEngagement">;
+  resumeRepository?: Pick<EngagementResumeRepository, "getNextStep" | "putNextStep">;
   runOutputRepository?: Pick<
     RunOutputRepository,
     | "latestTerminalRunForEngagement"
@@ -201,6 +205,7 @@ export function buildApp({
   leadRepository,
   objectiveRepository,
   secretRepository,
+  resumeRepository,
   logger = false,
   now,
 }: BuildAppOptions): FastifyInstance {
@@ -364,6 +369,24 @@ export function buildApp({
       repository: runOutputRepository,
     });
   }
+  // STONE-6 resume + search. The next-step store gates resume only; search
+  // never consumes it and registers independently. Standalone views mount
+  // via STONE-2 slots.
+  if (resumeRepository !== undefined) {
+    registerEngagementResumeRoutes(app, {
+      resume: resumeRepository,
+      engagements: engagementRepository,
+      ...(runOutputRepository === undefined ? {} : { runs: runOutputRepository }),
+      ...(nmapServiceRepository === undefined ? {} : { services: nmapServiceRepository }),
+    });
+  }
+  registerEngagementSearchRoutes(app, {
+    engagements: engagementRepository,
+    ...(nmapServiceRepository === undefined ? {} : { services: nmapServiceRepository }),
+    ...(ffufRepository === undefined ? {} : { ffuf: ffufRepository }),
+    ...(httpProbeRepository === undefined ? {} : { probes: httpProbeRepository }),
+    ...(runOutputRepository === undefined ? {} : { artifacts: runOutputRepository }),
+  });
   if (
     evidenceStore !== undefined &&
     runOutputRepository !== undefined

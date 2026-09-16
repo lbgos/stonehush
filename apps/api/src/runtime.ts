@@ -1,6 +1,7 @@
 import {
   AdvisorTurnsRepository,
   EngagementRepository,
+  EngagementResumeRepository,
   EvidenceGrantRepository,
   ExcerptRepository,
   FfufRepository,
@@ -64,6 +65,7 @@ export async function buildStorageBackedApp(
     const leadRepository = new LeadRepository(database.db);
     const objectiveRepository = new ObjectiveRepository(database.db);
     const secretRepository = new SecretRepository(database.db);
+    const resumeRepository = new EngagementResumeRepository(database.db);
 
     // Evidence publication is fail-closed: without a loadable native binding
     // or valid managed evidence roots, the upload routes are not registered.
@@ -122,6 +124,7 @@ export async function buildStorageBackedApp(
       leadRepository,
       objectiveRepository,
       secretRepository,
+      resumeRepository,
       async getDevelopmentStorageReadiness() {
         await checkDevelopmentStorage(dataDirectory);
         return "ready" as const;

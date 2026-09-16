@@ -148,6 +148,13 @@
       "when": 1789554359156,
       "tag": "0020_stone_targets_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1789555209960,
+      "tag": "0021_engagement_next_step",
+      "breakpoints": true
     }
   ]
 }
