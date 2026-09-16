@@ -37,6 +37,7 @@ function findingFixture(overrides: Partial<Finding> = {}): Finding {
     status: "open",
     body: "1. Open the login form.\n2. Try admin/admin.\n\nEvidence shows the login succeeded.",
     evidenceArtifactIds: ["nmap-xml-1"],
+    revision: 1,
     createdAt: "2026-08-12T12:00:00.000Z",
     updatedAt: "2026-08-12T12:00:00.000Z",
     ...overrides,
