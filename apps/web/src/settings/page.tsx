@@ -909,7 +909,7 @@ function AdvisorSection() {
         <button
           type="button"
           aria-expanded={advisorOpen}
-          aria-controls="advisor-endpoint-details"
+          aria-controls={advisorOpen ? "advisor-endpoint-details" : undefined}
           className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           onClick={toggleAdvisor}
         >
