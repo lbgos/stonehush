@@ -66,7 +66,7 @@ function ConsolePlaceholder({ detail, title }: { detail: string; title: string }
 
 function SidebarHeader() {
   return (
-    <div className="flex h-12 items-center gap-2 px-3 pt-[env(safe-area-inset-top)]">
+    <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-3 pt-[env(safe-area-inset-top)]">
       <Link
         to="/"
         aria-label="Stonehush home"

@@ -79,7 +79,7 @@ function SidebarFrame({
       <div className="shrink-0">{header}</div>
       {actions != null && (
         <div
-          className="shrink-0 border-y border-sidebar-border"
+          className="shrink-0 border-b border-sidebar-border"
           data-testid="sidebar-actions"
         >
           {actions}
