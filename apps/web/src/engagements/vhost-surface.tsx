@@ -69,8 +69,8 @@ function hostFromBaseUrl(baseUrl: string): string {
   }
 }
 
-function offerKey(hostname: string, artifactId: string): string {
-  return `${hostname} ${artifactId}`;
+function offerKey(hostname: string, artifactId: string, targetId: string): string {
+  return `${hostname} ${artifactId} ${targetId}`;
 }
 
 export function EngagementVhostSection({
@@ -502,18 +502,28 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
   const candidates = results.filter((entry) =>
     candidateKeys.has(`${entry.hostname} ${entry.artifactId}`),
   );
+  const candidateRowKeys = new Set(
+    candidates.map((entry) => `${entry.hostname} ${entry.artifactId}`),
+  );
+  const filtered = results.filter(
+    (entry) => candidateRowKeys.has(`${entry.hostname} ${entry.artifactId}`) === false,
+  );
   const activeTargetId = selectedTargetId ?? targetsQuery.data?.[0]?.id ?? null;
 
   const onPropose = async (result: FfufVhostProjected) => {
     if (activeTargetId === null || offerBusy) return;
+    const proposedTargetId = activeTargetId;
     setOfferBusy(true);
     setOfferError(null);
     try {
-      const association = await proposeStoneHostnameRequest(engagementId, activeTargetId, {
+      const association = await proposeStoneHostnameRequest(engagementId, proposedTargetId, {
         connectionAddress: hostFromBaseUrl(result.baseUrl),
         requestedHostname: result.hostname,
       });
-      setOffers((current) => ({ ...current, [offerKey(result.hostname, result.artifactId)]: association }));
+      setOffers((current) => ({
+        ...current,
+        [offerKey(result.hostname, result.artifactId, proposedTargetId)]: association,
+      }));
     } catch {
       setOfferError("The hostname offer was not accepted. Check the target and try again.");
     } finally {
@@ -521,8 +531,13 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
     }
   };
 
-  const onDecide = async (hostname: string, artifactId: string, decision: "associated" | "declined") => {
-    const key = offerKey(hostname, artifactId);
+  const onDecide = async (
+    hostname: string,
+    artifactId: string,
+    targetId: string,
+    decision: "associated" | "declined",
+  ) => {
+    const key = offerKey(hostname, artifactId, targetId);
     const offer = offers[key];
     if (offer === undefined || offerBusy) return;
     setOfferBusy(true);
@@ -577,12 +592,16 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
       ) : null}
       {candidates.length === 0 ? (
         <p className="m-0 text-[12px] leading-5 text-muted-foreground">
-          Every response matched the baseline. No candidates remain; raw evidence is still available below.
+          Every response matched the baseline. No candidates remain; filtered responses stay listed
+          below with raw evidence.
         </p>
       ) : null}
       <ul className="m-0 grid list-none gap-2 p-0">
         {candidates.map((result) => {
-          const offer = offers[offerKey(result.hostname, result.artifactId)];
+          const offer =
+            activeTargetId === null
+              ? undefined
+              : offers[offerKey(result.hostname, result.artifactId, activeTargetId)];
           return (
             <VhostResultRow
               key={`${result.hostname}:${result.artifactId}`}
@@ -592,10 +611,27 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
               offerBusy={offerBusy}
               canPropose={activeTargetId !== null}
               onPropose={() => void onPropose(result)}
-              onDecide={(decision) => void onDecide(result.hostname, result.artifactId, decision)}
+              onDecide={(decision) =>
+                activeTargetId === null
+                  ? undefined
+                  : void onDecide(result.hostname, result.artifactId, activeTargetId, decision)
+              }
             />
           );
         })}
+        {filtered.map((result) => (
+          <VhostResultRow
+            key={`filtered:${result.hostname}:${result.artifactId}`}
+            engagementId={engagementId}
+            result={result}
+            offer={undefined}
+            offerBusy={false}
+            canPropose={false}
+            filtered
+            onPropose={() => undefined}
+            onDecide={() => undefined}
+          />
+        ))}
       </ul>
     </div>
   );
@@ -607,6 +643,7 @@ function VhostResultRow({
   offer,
   offerBusy,
   canPropose,
+  filtered = false,
   onPropose,
   onDecide,
 }: {
@@ -615,6 +652,7 @@ function VhostResultRow({
   offer: StoneHostnameAssociation | undefined;
   offerBusy: boolean;
   canPropose: boolean;
+  filtered?: boolean;
   onPropose: () => void;
   onDecide: (decision: "associated" | "declined") => void;
 }) {
@@ -654,7 +692,11 @@ function VhostResultRow({
         >
           {copied === "copy" ? "Copied" : "Copy"}
         </button>
-        {offer === undefined ? (
+        {filtered ? (
+          <span className="inline-flex min-h-11 items-center text-[12px] text-muted-foreground md:min-h-8">
+            Filtered by baseline
+          </span>
+        ) : offer === undefined ? (
           <button
             type="button"
             disabled={!canPropose || offerBusy}

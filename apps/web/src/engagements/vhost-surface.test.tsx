@@ -131,7 +131,24 @@ describe("EngagementVhostSection", () => {
     renderSurface();
     expect(await screen.findByText(/Baseline status 200, length 512 bytes seen in 3 of 4 responses/)).toBeTruthy();
     expect(await screen.findByText("admin.internal")).toBeTruthy();
-    expect(screen.queryByText("a.internal")).toBe(null);
+    expect(await screen.findByText("Propose association")).toBeTruthy();
+    expect(await screen.findAllByText("Filtered by baseline")).toHaveLength(3);
+  });
+
+  it("keeps filtered responses listed with raw evidence when every response matches", async () => {
+    stubFetch((url) => {
+      if (url.endsWith("/vhost-results")) {
+        return response([vhostResult("a.internal", 512), vhostResult("b.internal", 512)]);
+      }
+      if (url.endsWith("/stone-targets")) return response([stoneTarget]);
+      if (url.endsWith("/settings/runner")) return response({}, 404);
+      return response(detail);
+    });
+    renderSurface();
+    expect(await screen.findByText(/no candidates remain/)).toBeTruthy();
+    expect(await screen.findByText("a.internal")).toBeTruthy();
+    expect(await screen.findAllByRole("link", { name: "Raw evidence" })).toHaveLength(2);
+    expect(screen.queryByText("Propose association")).toBe(null);
   });
 
   it("proposes a hostname association and confirms explicitly", async () => {
