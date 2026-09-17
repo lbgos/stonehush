@@ -54,7 +54,7 @@ export function calibrateVhostResultsByArtifact(
   for (const group of groups.values()) {
     const calibrated = calibrateVhostResults(group);
     candidates.push(...calibrated.candidates);
-    notes.push(calibrated.note);
+    if (notes.includes(calibrated.note) === false) notes.push(calibrated.note);
   }
   return {
     total: results.length,

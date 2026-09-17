@@ -78,4 +78,20 @@ describe("calibrateVhostResultsByArtifact", () => {
     expect(calibrated.notes).toHaveLength(1);
     expect(calibrated.notes[0]).toContain("Baseline status 200, length 512 bytes seen in 2 of 3 responses");
   });
+
+  it("dedupes identical notes across artifacts", () => {
+    const calibrated = calibrateVhostResultsByArtifact([
+      { ...entry("a.internal", 200, 512), artifactId: "artifact-1" },
+      { ...entry("b.internal", 200, 512), artifactId: "artifact-1" },
+      { ...entry("admin.internal", 200, 1024), artifactId: "artifact-1" },
+      { ...entry("c.internal", 200, 512), artifactId: "artifact-2" },
+      { ...entry("d.internal", 200, 512), artifactId: "artifact-2" },
+      { ...entry("portal.internal", 200, 1024), artifactId: "artifact-2" },
+    ]);
+    expect(calibrated.candidates.map((item) => item.hostname).sort()).toEqual([
+      "admin.internal",
+      "portal.internal",
+    ]);
+    expect(calibrated.notes).toHaveLength(1);
+  });
 });
