@@ -758,6 +758,23 @@ function advisorTestCopy(status: AdvisorStatus): string {
   }
 }
 
+function DisclosureChevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={cn("size-4 shrink-0 transition-transform", !open && "-rotate-90")}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M4 6.2 8 10l4-3.8" />
+    </svg>
+  );
+}
+
 function AdvisorSection() {
   const { advisorOpen, toggleAdvisor } = useSettingsView();
   const settingsQuery = useAdvisorSettingsQuery();
@@ -892,14 +909,16 @@ function AdvisorSection() {
         <button
           type="button"
           aria-expanded={advisorOpen}
-          className="inline-flex min-h-8 items-center rounded-lg px-3 text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          aria-controls={advisorOpen ? "advisor-endpoint-details" : undefined}
+          className="inline-flex min-h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           onClick={toggleAdvisor}
         >
+          <DisclosureChevron open={advisorOpen} />
           {advisorOpen ? "Hide details" : "Show details"}
         </button>
       </SetRow>
       {advisorOpen && (
-        <div className="mb-2 grid gap-2 pb-2">
+        <div id="advisor-endpoint-details" className="mb-2 grid gap-2 border-l border-border pb-2 pl-3">
           <SetRow
             description="OpenAI-compatible base URL. Empty means unconfigured."
             settingId="advisor-endpoint-base-url"

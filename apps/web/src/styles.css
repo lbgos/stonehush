@@ -689,7 +689,8 @@ textarea {
 }
 
 .shell-console.shell-console-collapsed {
-  height: 44px;
+  /* 44px status row plus the top border, so the row fits exactly. */
+  height: 45px;
 }
 
 .shell-resizing .shell-sidebar,
