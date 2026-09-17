@@ -263,7 +263,6 @@ function OpeningScreen() {
                   </div>
                 ) : (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <p className="m-0 text-[13px] text-muted-foreground">No engagements yet.</p>
                     <Button type="button" onClick={openCreate}>
                       New engagement
                     </Button>
