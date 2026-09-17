@@ -460,6 +460,26 @@ export const commandJsonV1CreateFfufDiscoveryDigest = digestProjection({
   body: objectProjection(CommandJsonV1CreateFfufDiscoveryBodyDigestSchema),
 });
 
+export const CommandJsonV1CreateVhostDiscoveryBodyDigestSchema = z.object({
+  expectedEngagementRevision: jsonField,
+  expectedActiveScopeRevisionId: jsonField,
+  address: jsonField,
+  port: jsonField,
+  tls: jsonField,
+  wordlistPath: jsonField,
+  rate: jsonField,
+  threads: jsonField,
+  timeoutSeconds: jsonField,
+  maxTimeSeconds: jsonField,
+  matchStatusCodes: jsonField,
+});
+
+export const commandJsonV1CreateVhostDiscoveryDigest = digestProjection({
+  path: CommandJsonV1EngagementIdPathDigestSchema,
+  query: CommandJsonV1EmptyObjectDigestSchema,
+  body: objectProjection(CommandJsonV1CreateVhostDiscoveryBodyDigestSchema),
+});
+
 export const CommandJsonV1StartEnrollmentChallengeBodyDigestSchema = z.object({
   name: jsonField,
   installationFingerprint: jsonField,

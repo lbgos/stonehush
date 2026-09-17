@@ -13,15 +13,17 @@ import {
   commandJsonV1RunnerCompleteDigest,
   type ActionSnapshot,
   type FfufActionOptions,
+  type FfufVhostActionOptions,
 } from "@stonehush/contracts";
-import { buildFfufArgv, buildNmapArgv, ffufOptionsForSnapshot, hasFfufMarker } from "@stonehush/domain";
+import { buildFfufArgv, buildNmapArgv, buildVhostArgv, ffufOptionsForSnapshot, hasFfufMarker, hasVhostMarker, vhostOptionsForSnapshot } from "@stonehush/domain";
 
 import { resolveRunnerConfig, type RunnerConfig } from "./config.js";
-import { EvidencePublicationError, publishEvidenceArtifacts, publishFfufArtifacts, publishHttpProbeArtifacts } from "./evidence-client.js";
+import { EvidencePublicationError, publishEvidenceArtifacts, publishFfufArtifacts, publishHttpProbeArtifacts, publishVhostArtifacts } from "./evidence-client.js";
 import { FFUF_DEFAULT_EXECUTABLE, runFfufDiscovery } from "./ffuf.js";
+import { runVhostDiscovery } from "./vhost.js";
 import { probeOneUrl, probeUrlsFromSnapshot, ProbeAbortedError } from "./http-probe.js";
 import { getOrCreateOutboxEntry, removeOutboxAtomically } from "./outbox.js";
-import { readFfufJsonSecurely, readNmapXmlSecurely, resolveFfufJsonPath, resolveNmapXmlPath, runSupervisedCommand, verifyExecutable, type ProcessResult } from "./process.js";
+import { readFfufJsonSecurely, readNmapXmlSecurely, readVhostJsonSecurely, resolveFfufJsonPath, resolveNmapXmlPath, resolveVhostJsonPath, runSupervisedCommand, verifyExecutable, type ProcessResult } from "./process.js";
 
 export type HandshakeResponse = ReturnType<typeof RunnerHandshakeAcceptedResponseSchema.parse>;
 export type AcquiredLease = ReturnType<typeof AcquireRunnerLeaseResponseSchema.parse>;
@@ -127,6 +129,34 @@ export function prepareFfufExecution(params: {
     const outputJsonPath = resolveFfufJsonPath(params.runRoot, params.runId, params.fence);
     const options: FfufActionOptions = { ...marker, outputJsonPath };
     const built = buildFfufArgv(options);
+    if (!built.ok) return { ok: false, reason: "invalid_action_snapshot" };
+    return { ok: true, options, argv: built.argv };
+  } catch {
+    return { ok: false, reason: "invalid_action_snapshot" };
+  }
+}
+
+/**
+ * Derive vhost discovery options plus deterministic argv from a leased
+ * snapshot. The JSON output path is runner-owned host state under the
+ * controlled run directory, never an operator option. Corrupt vhost
+ * markers fail closed so they never run as plain ffuf or HTTP probes.
+ */
+export function prepareVhostExecution(params: {
+  snapshot: ActionSnapshot;
+  runRoot: string;
+  runId: string;
+  fence: string;
+}):
+  | { ok: true; options: FfufVhostActionOptions; argv: readonly string[] }
+  | { ok: false; reason: "not_vhost_snapshot" | "invalid_action_snapshot" } {
+  try {
+    if (!hasVhostMarker(params.snapshot)) return { ok: false, reason: "not_vhost_snapshot" };
+    const marker = vhostOptionsForSnapshot(params.snapshot);
+    if (marker === null) return { ok: false, reason: "invalid_action_snapshot" };
+    const outputJsonPath = resolveVhostJsonPath(params.runRoot, params.runId, params.fence);
+    const options: FfufVhostActionOptions = { ...marker, outputJsonPath };
+    const built = buildVhostArgv(options);
     if (!built.ok) return { ok: false, reason: "invalid_action_snapshot" };
     return { ok: true, options, argv: built.argv };
   } catch {
@@ -443,6 +473,143 @@ export async function runOnce(
     cleanup();
     await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
     if (signal?.aborted) throw new RunnerShutdownError();
+    return true;
+  }
+
+  // vhost discovery runs before ffuf content discovery: the vhost marker
+  // is an IP target with Host header fuzzing, so it never collides with a
+  // URL-origin ffuf action. Corrupt markers fail closed here.
+  const vhost = prepareVhostExecution({
+    snapshot: acquired.actionSnapshot,
+    runRoot: config.runRoot,
+    runId: lease.runId,
+    fence: lease.fence,
+  });
+  if (vhost.ok || vhost.reason === "invalid_action_snapshot") {
+    if (!vhost.ok) {
+      cleanup();
+      await completeRun(config, lease, nextSequence, "failed", "invalid_ffuf_vhost_contract").catch(() => {});
+      return true;
+    }
+    try {
+      await verifyExecutable(FFUF_DEFAULT_EXECUTABLE);
+    } catch {
+      cleanup();
+      await completeRun(config, lease, nextSequence, "failed", "ffuf_missing").catch(() => {});
+      return true;
+    }
+    if (isAuthorityLost()) {
+      cleanup();
+      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+      if (signal?.aborted) throw new RunnerShutdownError();
+      return true;
+    }
+
+    let captured: ProcessResult | null = null;
+    let cancelSpawn: (() => Promise<void>) | null = null;
+    const vhostSpawn = (request: { executable: string; argv: readonly string[] }) => {
+      const handle = runSupervisedCommand({
+        runId: lease.runId,
+        leaseId: lease.leaseId,
+        fence: lease.fence,
+        runRoot: config.runRoot,
+        executable: request.executable,
+        argv: request.argv,
+        secrets: [config.secret],
+      });
+      cancelSpawn = () => handle.cancel();
+      return handle.then((result) => {
+        captured = result;
+        return { exitCode: result.exitCode };
+      });
+    };
+    const readVhostOutput = async (absolutePath: string): Promise<Buffer> => {
+      if (absolutePath !== vhost.options.outputJsonPath) throw new Error("vhost_json_unavailable");
+      return readVhostJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+    };
+    let vhostFenceCheck: ReturnType<typeof setInterval> | null = null;
+    vhostFenceCheck = setInterval(() => {
+      const nowMonotonic = globalThis.performance.now();
+      if (nowMonotonic >= authorityDeadlineMonotonic - 7000 || hbFailed || signal?.aborted || shutdownAfterStarted) {
+        void cancelSpawn?.();
+        if (vhostFenceCheck !== null) clearInterval(vhostFenceCheck);
+      }
+    }, 500);
+    if (typeof (vhostFenceCheck as unknown as { unref?: () => void }).unref === "function") {
+      (vhostFenceCheck as unknown as { unref: () => void }).unref?.();
+    }
+
+    let discovery: Awaited<ReturnType<typeof runVhostDiscovery>>;
+    try {
+      discovery = await runVhostDiscovery(
+        {
+          runContext: { runId: lease.runId, leaseId: lease.leaseId, fence: lease.fence, runRoot: config.runRoot },
+          ffufExecutable: FFUF_DEFAULT_EXECUTABLE,
+          spawn: vhostSpawn,
+          readOutputJson: readVhostOutput,
+        },
+        vhost.options,
+      );
+    } catch {
+      discovery = { ok: false, error: { code: "ffuf_parse_error" } };
+    } finally {
+      if (vhostFenceCheck !== null) clearInterval(vhostFenceCheck);
+    }
+    cleanup();
+
+    const readPartialJson = async (): Promise<Buffer | undefined> => {
+      try {
+        return await readVhostJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+      } catch {
+        return undefined;
+      }
+    };
+
+    if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
+      if (captured !== null) {
+        const partial = await readPartialJson();
+        try {
+          await publishVhostArtifacts(config, lease, captured, {
+            isCancelled: true,
+            eventSequence: nextSequence,
+            ...(partial === undefined ? {} : { vhostJson: partial }),
+            vhostExitCode: discovery.ok ? discovery.exitCode : null,
+          });
+        } catch {}
+      }
+      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+      if (signal?.aborted) throw new RunnerShutdownError();
+      return true;
+    }
+
+    if (captured !== null) {
+      const preserved = await readPartialJson();
+      try {
+        await publishVhostArtifacts(config, lease, captured, {
+          isCancelled: false,
+          eventSequence: nextSequence,
+          ...(preserved === undefined ? {} : { vhostJson: preserved }),
+          vhostExitCode: discovery.ok ? discovery.exitCode : null,
+        });
+      } catch (e) {
+        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
+        if (e instanceof EvidencePublicationError) throw e;
+        throw new EvidencePublicationError("evidence_publication_failed");
+      }
+    }
+    if (!discovery.ok) {
+      const reason =
+        discovery.error.code === "invalid_ffuf_vhost_contract"
+          ? "invalid_ffuf_vhost_contract"
+          : discovery.error.code;
+      await completeRun(config, lease, nextSequence, "failed", reason).catch(() => {});
+      return true;
+    }
+    if (discovery.exitCode === 0) {
+      await completeRun(config, lease, nextSequence, "succeeded", null);
+    } else {
+      await completeRun(config, lease, nextSequence, "failed", "process_failed");
+    }
     return true;
   }
 

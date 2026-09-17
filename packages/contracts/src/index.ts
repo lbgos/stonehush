@@ -32,6 +32,7 @@ export * from "./import-capture.js";
 export * from "./nmap.js";
 export * from "./report.js";
 export * from "./ffuf.js";
+export * from "./ffuf-vhost.js";
 export * from "./http-probe.js";
 export * from "./settings.js";
 export {

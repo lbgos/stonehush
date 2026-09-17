@@ -108,6 +108,9 @@ export type { ResumeChangeInput, StarredFocusInput, PriorAttemptInput } from "./
 export { searchCorpus, redactSecretsForSnippet, buildSnippet, findMatchOffset, SEARCH_SECRET_REDACTION } from "./engagement-search.js";
 export type { SearchCorpusEntry, SearchCorpusOptions } from "./engagement-search.js";
 export { isFfufSnapshot, ffufOptionsForSnapshot, hasFfufMarker } from "./ffuf-action.js";
+export { isVhostSnapshot, vhostOptionsForSnapshot, hasVhostMarker } from "./ffuf-vhost-action.js";
+export { buildVhostArgv, type BuildVhostArgvResult } from "./ffuf-vhost-argv.js";
+export { calibrateVhostResults, type VhostCalibration, type VhostGroupableResult } from "./ffuf-vhost-filter.js";
 export { parseFfufArtifactJson, type ParseFfufArtifactResult } from "./ffuf-json.js";
 export { parseNmapXml, type ParsedNmapService, type ParseNmapXmlResult } from "./nmap-xml.js";
 export {

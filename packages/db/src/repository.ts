@@ -12,8 +12,11 @@ import {
   FINDING_CONTRACT_VERSION,
   FindingSchema,
   FFUF_DEFAULT_MATCH_CODES,
+  FFUF_VHOST_DEFAULT_PORT,
   FfufDiscoveryLaunchRequestSchema,
   FfufDiscoveryLaunchSchema,
+  FfufVhostDiscoveryLaunchRequestSchema,
+  FfufVhostDiscoveryLaunchSchema,
   RUNNER_SETTINGS_DEFAULTS,
   RunnerSettingsSchema,
   ScopeRevisionSchema,
@@ -193,6 +196,10 @@ export interface EngagementWriteTransaction {
     input: unknown,
   ): RepositoryResult<PersistedAction, ActionRepositoryError>;
   planFfufDiscoveryAction(
+    engagementId: string,
+    input: unknown,
+  ): RepositoryResult<PersistedAction, ActionRepositoryError>;
+  planVhostDiscoveryAction(
     engagementId: string,
     input: unknown,
   ): RepositoryResult<PersistedAction, ActionRepositoryError>;
@@ -1220,6 +1227,137 @@ class TransactionRepository implements EngagementWriteTransaction {
     });
   }
 
+  planVhostDiscoveryAction(
+    engagementId: string,
+    input: unknown,
+  ): RepositoryResult<PersistedAction, ActionRepositoryError> {
+    const requested = FfufVhostDiscoveryLaunchRequestSchema.safeParse(input);
+    if (!requested.success) return failed({ code: "invalid_repository_input" });
+    // Stored runner settings are defaults under explicit request values,
+    // shared with ffuf content discovery: absent numerics and an absent or
+    // empty wordlist fall back to storage. Port and TLS stay explicit with
+    // shipped defaults because they describe the target, not the runner.
+    let stored = { ...RUNNER_SETTINGS_DEFAULTS };
+    try {
+      const row = this.client
+        .select()
+        .from(settings)
+        .where(eq(settings.scope, "runner"))
+        .get();
+      if (row !== undefined) {
+        let persisted: unknown;
+        try {
+          persisted = JSON.parse(row.valueJson);
+        } catch {
+          return failed({ code: "invalid_persisted_data" });
+        }
+        const validated = RunnerSettingsSchema.safeParse(persisted);
+        if (!validated.success) return failed({ code: "invalid_persisted_data" });
+        stored = validated.data;
+      }
+    } catch (error) {
+      return failed({
+        code: isStorageBusy(error) ? "storage_busy" : "invalid_persisted_data",
+      });
+    }
+    const request = requested.data;
+    const requestedWordlist = request.wordlistPath?.trim() ?? "";
+    const parsed = FfufVhostDiscoveryLaunchSchema.safeParse({
+      expectedEngagementRevision: request.expectedEngagementRevision,
+      expectedActiveScopeRevisionId: request.expectedActiveScopeRevisionId,
+      address: request.address,
+      port: request.port ?? FFUF_VHOST_DEFAULT_PORT,
+      tls: request.tls ?? false,
+      wordlistPath: requestedWordlist === "" ? stored.ffufWordlistPath : requestedWordlist,
+      rate: request.rate ?? stored.ffufRate,
+      threads: request.threads ?? stored.ffufThreads,
+      timeoutSeconds: request.timeoutSeconds ?? stored.ffufTimeoutSeconds,
+      maxTimeSeconds: request.maxTimeSeconds ?? stored.ffufMaxTimeSeconds,
+      ...(request.matchStatusCodes === undefined
+        ? { matchStatusCodes: [...FFUF_DEFAULT_MATCH_CODES] }
+        : { matchStatusCodes: [...request.matchStatusCodes] }),
+    });
+    if (!parsed.success) return failed({ code: "invalid_repository_input" });
+    const detail = this.getEngagement(engagementId);
+    if (!detail.ok) return detail;
+    const engagement = detail.value.engagement;
+    if (engagement.revision !== parsed.data.expectedEngagementRevision) {
+      return failed({
+        code: "revision_conflict",
+        currentRevision: engagement.revision,
+        resourceType: "engagement",
+        resourceId: engagement.id,
+      });
+    }
+    if (engagement.status === "archived") {
+      return failed({ code: "engagement_archived" });
+    }
+    if (
+      engagement.activeScopeRevisionId !==
+      parsed.data.expectedActiveScopeRevisionId
+    ) {
+      return failed({ code: "invalid_repository_input" });
+    }
+
+    const targets = normalizeOperatorTargets([parsed.data.address]);
+    if (!targets.ok) return targets;
+    const canonical = targets.value[0];
+    if (
+      targets.value.length !== 1 ||
+      canonical?.kind !== "ip" ||
+      canonical.zone !== null
+    ) {
+      return failed({ code: "invalid_repository_input" });
+    }
+    const typedOptions = {
+      declaredPorts: [parsed.data.port],
+      ffufVhost: {
+        // The warned canonical IP, not the raw operator string, so the
+        // executed argv always matches the acknowledged target context.
+        address: canonical.address,
+        port: parsed.data.port,
+        tls: parsed.data.tls,
+        wordlistPath: parsed.data.wordlistPath,
+        rate: parsed.data.rate,
+        threads: parsed.data.threads,
+        timeoutSeconds: parsed.data.timeoutSeconds,
+        maxTimeSeconds: parsed.data.maxTimeSeconds,
+        matchStatusCodes: [...parsed.data.matchStatusCodes],
+      },
+    };
+    const actionId = this.nextId();
+    const warning = derivePlanningWarningState({
+      actionId,
+      scopeRevisionId: engagement.activeScopeRevisionId,
+      rules: detail.value.activeScopeRevision?.rules ?? [],
+      targets: targets.value,
+      declaredPorts: [parsed.data.port],
+    });
+    if (!warning.ok) return warning;
+    // vhost discovery is T1 routine discovery: no tier warning by default.
+    // Saved-scope warnings (outside_scope, large_target_set) ride the shared
+    // path exactly like other discovery actions, with Continue always
+    // available.
+    const snapshot = bindPlannedSnapshot({
+      actionId,
+      snapshotId: this.nextId(),
+      version: 1,
+      scopeRevisionId: engagement.activeScopeRevisionId,
+      targets: targets.value,
+      typedOptions,
+      resolutionSnapshots: [],
+      warningState: warning.value,
+    });
+    if (!snapshot.ok) return snapshot;
+    return this.persistPlannedAction({
+      engagementId,
+      snapshot: snapshot.value,
+      representable: true,
+      capabilityErrorCode: null,
+      occurredAt: this.clock().toISOString(),
+    });
+  }
+
   addScopeAndRunOperatorAction(
     engagementId: string,
     actionId: string,
@@ -1737,6 +1875,17 @@ export class EngagementRepository {
   ): RepositoryResult<PersistedAction, ActionRepositoryError> {
     return this.runMutation(
       (repository) => repository.planFfufDiscoveryAction(engagementId, input),
+      transaction,
+    );
+  }
+
+  planVhostDiscoveryAction(
+    engagementId: string,
+    input: unknown,
+    transaction?: EngagementWriteTransaction,
+  ): RepositoryResult<PersistedAction, ActionRepositoryError> {
+    return this.runMutation(
+      (repository) => repository.planVhostDiscoveryAction(engagementId, input),
       transaction,
     );
   }

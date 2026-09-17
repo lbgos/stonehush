@@ -29,6 +29,7 @@ import type {
   SettingsRepository,
   StoneTargetRepository,
   TechniqueRepository,
+  VhostRepository,
 } from "@stonehush/db";
 
 import { registerActionMutationRoutes } from "./action-mutation-routes.js";
@@ -48,6 +49,7 @@ import { registerRunnerAuthHook, stripAuthorizationHeader } from "./runner-http.
 import { registerRunnerEnrollmentRoutes } from "./runner-enrollment-routes.js";
 import { registerRunnerControlRoutes } from "./runner-routes.js";
 import { registerFfufRoutes } from "./ffuf-routes.js";
+import { registerVhostRoutes } from "./vhost-routes.js";
 import { registerNmapServiceRoutes } from "./nmap-service-routes.js";
 import { registerRunOutputRoutes } from "./run-output-routes.js";
 import { registerRunHistoryRoutes } from "./run-history-routes.js";
@@ -151,6 +153,7 @@ interface BuildAppOptions {
   >;
   httpProbeRepository?: Pick<HttpProbeRepository, "listForEngagement">;
   ffufRepository?: Pick<FfufRepository, "listForEngagement">;
+  vhostRepository?: Pick<VhostRepository, "listForEngagement">;
   resumeRepository?: Pick<EngagementResumeRepository, "getNextStep" | "putNextStep">;
   runOutputRepository?: Pick<
     RunOutputRepository,
@@ -237,6 +240,7 @@ export function buildApp({
   advisorTurns,
   httpProbeRepository,
   ffufRepository,
+  vhostRepository,
   runOutputRepository,
   excerptRepository,
   leadRepository,
@@ -393,6 +397,12 @@ export function buildApp({
   if (ffufRepository !== undefined) {
     registerFfufRoutes(app, {
       results: ffufRepository,
+      ...(operatorCommandRepository === undefined ? {} : { commands: operatorCommandRepository }),
+    });
+  }
+  if (vhostRepository !== undefined) {
+    registerVhostRoutes(app, {
+      results: vhostRepository,
       ...(operatorCommandRepository === undefined ? {} : { commands: operatorCommandRepository }),
     });
   }

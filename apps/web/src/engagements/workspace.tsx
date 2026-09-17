@@ -22,6 +22,7 @@ import { AdvisorPanel } from "../advisor/advisor-panel.js";
 import { EngagementDeadlineSection } from "./deadline.js";
 import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
+import { EngagementVhostSection } from "./vhost-surface.js";
 import {
   EngagementLeadsSection,
   EngagementObjectivesSection,
@@ -489,6 +490,13 @@ function EngagementDetail({
               engagementId={displayed.id}
               onSelectKey={selectSurfaceItem}
               selectedKey={selectedItemKey}
+            />
+          </div>
+
+          <div className="mt-5">
+            <EngagementVhostSection
+              archived={archived}
+              engagementId={displayed.id}
             />
           </div>
 

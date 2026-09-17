@@ -109,6 +109,7 @@ export type {
 } from "./settings.js";
 export { HttpProbeRepository } from "./http-probe.js";
 export { FfufRepository } from "./ffuf.js";
+export { VhostRepository } from "./vhost.js";
 export { EngagementResumeRepository } from "./engagement-resume.js";
 export type {
   EngagementResumeRepositoryError,
@@ -155,6 +156,7 @@ export {
   evidenceExcerpts,
   evidenceGrants,
   ffufResults,
+  vhostResults,
   findings,
   httpProbeResults,
   leadAttempts,

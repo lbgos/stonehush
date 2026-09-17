@@ -18,6 +18,7 @@ import {
   SettingsRepository,
   StoneTargetRepository,
   TechniqueRepository,
+  VhostRepository,
   openEngagementDatabase,
   type EngagementDatabase,
 } from "@stonehush/db";
@@ -34,6 +35,7 @@ import { BackupLock } from "./evidence/backup-lock.js";
 import { EvidencePublicationService } from "./evidence/evidence-publication.js";
 import { EvidenceStore } from "./evidence/evidence-store.js";
 import { FfufProjectionService } from "./evidence/ffuf-projection.js";
+import { VhostProjectionService } from "./evidence/vhost-projection.js";
 import { HttpProbeProjectionService } from "./evidence/http-probe-projection.js";
 import { NmapProjectionService } from "./evidence/nmap-projection.js";
 import type { WorkspaceBundleDependencies } from "./workspace-bundle-service.js";
@@ -63,6 +65,7 @@ export async function buildStorageBackedApp(
     const nmapServiceRepository = new NmapServiceRepository(database.db);
     const httpProbeRepository = new HttpProbeRepository(database.db);
     const ffufRepository = new FfufRepository(database.db);
+    const vhostRepository = new VhostRepository(database.db);
     const settingsRepository = new SettingsRepository(database.db);
     const advisorTurnsRepository = new AdvisorTurnsRepository(database.db);
     const runOutputRepository = new RunOutputRepository(database.db);
@@ -97,6 +100,7 @@ export async function buildStorageBackedApp(
         const nmapProjection = new NmapProjectionService(storeResult.store, nmapServiceRepository);
         const httpProbeProjection = new HttpProbeProjectionService(storeResult.store, httpProbeRepository);
         const ffufProjection = new FfufProjectionService(storeResult.store, ffufRepository);
+        const vhostProjection = new VhostProjectionService(storeResult.store, vhostRepository);
         evidencePublication = new EvidencePublicationService({
           repository: evidenceGrantRepository,
           store: storeResult.store,
@@ -108,7 +112,10 @@ export async function buildStorageBackedApp(
             const probe = await httpProbeProjection.projectForArtifact(artifactId);
             if (!probe.ok) return probe;
             if (probe.skipped !== true) return probe;
-            return ffufProjection.projectForArtifact(artifactId);
+            const ffuf = await ffufProjection.projectForArtifact(artifactId);
+            if (!ffuf.ok) return ffuf;
+            if (ffuf.skipped !== true) return ffuf;
+            return vhostProjection.projectForArtifact(artifactId);
           },
         });
         evidenceStore = storeResult.store;
@@ -147,6 +154,7 @@ export async function buildStorageBackedApp(
       advisorTurnsRepository,
       httpProbeRepository,
       ffufRepository,
+      vhostRepository,
       runOutputRepository,
       excerptRepository,
       leadRepository,
