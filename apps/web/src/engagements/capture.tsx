@@ -400,7 +400,12 @@ export function CaptureView({
             disabled={busy}
             className="min-h-24 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground"
             value={importContent}
-            onChange={(event) => setImportContent(event.target.value)}
+            onChange={(event) => {
+              // Edited text is no longer the picked file, so its name must not
+              // travel with the submission.
+              setImportFileName(null);
+              setImportContent(event.target.value);
+            }}
           />
         </label>
         {importArtifact === "har" && harPreview !== null ? (

@@ -443,6 +443,37 @@ describe("stone proxy HAR import routes", () => {
     expect((listed.json() as unknown[])).toHaveLength(0);
   });
 
+  it("accepts a near-limit escape-heavy HAR inside the JSON envelope", async () => {
+    const { app, engagementId } = await fixture();
+    // 450k quotes in the HAR source travel as 900k escaped bytes on top of
+    // the source itself, so the transport payload is near 1.8MB for under
+    // 1MiB of HAR. The route limit covers that escaping.
+    const contentText = JSON.stringify({
+      log: {
+        version: "1.2",
+        entries: [
+          {
+            ...harEntry(),
+            response: {
+              status: 200,
+              statusText: "OK",
+              headers: [],
+              content: { size: 450_000, mimeType: "text/html", text: `"`.repeat(450_000) },
+            },
+          },
+        ],
+      },
+    });
+    expect(new TextEncoder().encode(contentText).length).toBeLessThan(1_048_576);
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-imports/har`,
+      payload: { targetId: null, leadId: null, contentText },
+    });
+    expect(response.statusCode).toBe(201);
+    expect((response.json() as { capture: { kind: string } }).capture.kind).toBe("har");
+  });
+
   it("rejects malformed HAR uploads with a naming error", async () => {
     const { app, engagementId } = await fixture();
     const url = `/api/v1/engagements/${engagementId}/stone-imports/har`;

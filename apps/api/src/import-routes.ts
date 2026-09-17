@@ -127,8 +127,10 @@ export function registerStoneImportRoutes(
 
   // Route body limits match the parser bounds so reachable uploads are never
   // cut off by the framework default before validation runs. The HAR limit
-  // carries envelope margin: content travels JSON-encoded, so the raw frame
-  // is larger than the validated file bytes.
+  // covers JSON escaping: content travels JSON-encoded, so escape-heavy
+  // files are larger on the wire than the validated file bytes. Content made
+  // only of control characters can still exceed it; that stays refused by
+  // the framework before unbounded memory use.
   app.post(
     "/api/v1/engagements/:engagementId/stone-imports/nmap-xml",
     { bodyLimit: NMAP_MAX_XML_BYTES },
@@ -143,7 +145,7 @@ export function registerStoneImportRoutes(
 
   app.post(
     "/api/v1/engagements/:engagementId/stone-imports/har",
-    { bodyLimit: HAR_MAX_FILE_BYTES + 262_144 },
+    { bodyLimit: HAR_MAX_FILE_BYTES * 2 + 262_144 },
     async (request, reply) => handleImport(request, reply, "har", validateHar),
   );
 }

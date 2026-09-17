@@ -263,6 +263,72 @@ describe("CaptureView", () => {
     expect(await screen.findByText(/more than 8 entries/)).toBeDefined();
   });
 
+  it("drops the picked file name once the HAR text is edited", async () => {
+    const harText = JSON.stringify({
+      log: {
+        version: "1.2",
+        entries: [
+          {
+            request: { method: "GET", url: "https://morrow.test/login" },
+            response: { status: 200 },
+          },
+        ],
+      },
+    });
+    const capture = {
+      contractVersion: 1,
+      id: "10000000-0000-4000-8000-000000000003",
+      engagementId: ENGAGEMENT_ID,
+      targetId: TARGET_ID,
+      leadId: null,
+      kind: "har",
+      originLabel: "imported",
+      title: "GET https://morrow.test/login",
+      command: null,
+      observation: null,
+      contentText: `${harText} `,
+      fileName: null,
+      contentDigest:
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      provenanceExistingId: null,
+      byteSize: harText.length + 1,
+      createdAt: "2026-08-12T12:00:00.000Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          postedBodies.push(init.body !== undefined ? JSON.parse(String(init.body)) : undefined);
+          return Promise.resolve(response({ deduplicated: false, capture }, 201));
+        }
+        if (url.endsWith("/stone-captures")) return Promise.resolve(response([]));
+        return Promise.resolve(response({ code: "invalid_request" }, 400));
+      }),
+    );
+    renderCapture();
+
+    expect(await screen.findByText("No captures yet.")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Artifact"), { target: { value: "har" } });
+    const file = new File([harText], "morrow.har", { type: "application/json" });
+    fireEvent.change(
+      screen.getByLabelText("Drop a HAR file with one request or a small selection"),
+      { target: { files: [file] } },
+    );
+    expect(await screen.findByText("Selected morrow.har.")).toBeDefined();
+
+    fireEvent.change(screen.getByLabelText("File content"), {
+      target: { value: `${harText} ` },
+    });
+    expect(screen.queryByText("Selected morrow.har.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await waitFor(() => {
+      expect(postedBodies).toHaveLength(1);
+    });
+    expect(postedBodies[0]).not.toHaveProperty("fileName");
+  });
+
   it("rejects oversized files before reading them", async () => {
     vi.stubGlobal(
       "fetch",
