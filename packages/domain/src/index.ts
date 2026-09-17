@@ -110,7 +110,7 @@ export type { SearchCorpusEntry, SearchCorpusOptions } from "./engagement-search
 export { isFfufSnapshot, ffufOptionsForSnapshot, hasFfufMarker } from "./ffuf-action.js";
 export { isVhostSnapshot, vhostOptionsForSnapshot, hasVhostMarker } from "./ffuf-vhost-action.js";
 export { buildVhostArgv, type BuildVhostArgvResult } from "./ffuf-vhost-argv.js";
-export { calibrateVhostResults, type VhostCalibration, type VhostGroupableResult } from "./ffuf-vhost-filter.js";
+export { calibrateVhostResults, calibrateVhostResultsByArtifact, type VhostArtifactCalibration, type VhostArtifactGroupableResult, type VhostCalibration, type VhostGroupableResult } from "./ffuf-vhost-filter.js";
 export { parseFfufArtifactJson, type ParseFfufArtifactResult } from "./ffuf-json.js";
 export { parseNmapXml, type ParsedNmapService, type ParseNmapXmlResult } from "./nmap-xml.js";
 export {

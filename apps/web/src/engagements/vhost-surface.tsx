@@ -9,7 +9,7 @@ import {
   type SavedScopeRule,
   type StoneHostnameAssociation,
 } from "@stonehush/contracts";
-import { calibrateVhostResults as calibrateDomain } from "@stonehush/domain";
+import { calibrateVhostResultsByArtifact as calibrateDomain } from "@stonehush/domain";
 import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -67,6 +67,10 @@ function hostFromBaseUrl(baseUrl: string): string {
   } catch {
     return baseUrl;
   }
+}
+
+function offerKey(hostname: string, artifactId: string): string {
+  return `${hostname} ${artifactId}`;
 }
 
 export function EngagementVhostSection({
@@ -384,6 +388,7 @@ function VhostDiscoveryBody({
         </label>
         <p className="m-0 text-[11px] leading-5 text-muted-foreground">
           Wordlist entries are sent verbatim as the Host header. The request URL stays the explicit IP.
+          Rate is stored for forward compatibility and is not sent to ffuf 1.1.0.
         </p>
         {runnerDefaults.isError && (
           <p className="m-0 text-[12px] leading-5 text-muted-foreground">
@@ -489,8 +494,14 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
     const host = left.hostname.localeCompare(right.hostname);
     return host !== 0 ? host : left.artifactId.localeCompare(right.artifactId);
   });
-  const candidateKeys = new Set(calibration.candidates.map((entry) => entry.hostname));
-  const candidates = results.filter((entry) => candidateKeys.has(entry.hostname));
+  // Baselines differ per run target, so calibration runs per artifact: one
+  // artifact's wildcard never hides another artifact's candidates.
+  const candidateKeys = new Set(
+    calibration.candidates.map((entry) => `${entry.hostname} ${entry.artifactId}`),
+  );
+  const candidates = results.filter((entry) =>
+    candidateKeys.has(`${entry.hostname} ${entry.artifactId}`),
+  );
   const activeTargetId = selectedTargetId ?? targetsQuery.data?.[0]?.id ?? null;
 
   const onPropose = async (result: FfufVhostProjected) => {
@@ -502,7 +513,7 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
         connectionAddress: hostFromBaseUrl(result.baseUrl),
         requestedHostname: result.hostname,
       });
-      setOffers((current) => ({ ...current, [result.hostname]: association }));
+      setOffers((current) => ({ ...current, [offerKey(result.hostname, result.artifactId)]: association }));
     } catch {
       setOfferError("The hostname offer was not accepted. Check the target and try again.");
     } finally {
@@ -510,14 +521,15 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
     }
   };
 
-  const onDecide = async (hostname: string, decision: "associated" | "declined") => {
-    const offer = offers[hostname];
+  const onDecide = async (hostname: string, artifactId: string, decision: "associated" | "declined") => {
+    const key = offerKey(hostname, artifactId);
+    const offer = offers[key];
     if (offer === undefined || offerBusy) return;
     setOfferBusy(true);
     setOfferError(null);
     try {
       const decided = await decideStoneHostnameRequest(engagementId, offer.id, decision);
-      setOffers((current) => ({ ...current, [hostname]: decided }));
+      setOffers((current) => ({ ...current, [key]: decided }));
     } catch {
       setOfferError("The decision was not recorded. Try again.");
     } finally {
@@ -538,9 +550,11 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
 
   return (
     <div className="grid gap-2">
-      <p className="m-0 text-[12px] leading-5 text-muted-foreground" role="status">
-        {calibration.note}
-      </p>
+      {calibration.notes.map((note) => (
+        <p key={note} className="m-0 text-[12px] leading-5 text-muted-foreground" role="status">
+          {note}
+        </p>
+      ))}
       <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor="vhost-target-select">
         <span>Propose associations on target</span>
         <select
@@ -568,7 +582,7 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
       ) : null}
       <ul className="m-0 grid list-none gap-2 p-0">
         {candidates.map((result) => {
-          const offer = offers[result.hostname];
+          const offer = offers[offerKey(result.hostname, result.artifactId)];
           return (
             <VhostResultRow
               key={`${result.hostname}:${result.artifactId}`}
@@ -578,7 +592,7 @@ function VhostResultsList({ engagementId }: { engagementId: string }) {
               offerBusy={offerBusy}
               canPropose={activeTargetId !== null}
               onPropose={() => void onPropose(result)}
-              onDecide={(decision) => void onDecide(result.hostname, decision)}
+              onDecide={(decision) => void onDecide(result.hostname, result.artifactId, decision)}
             />
           );
         })}

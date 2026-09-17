@@ -14,21 +14,61 @@ export interface VhostGroupableResult {
   readonly lines: number;
 }
 
-export interface VhostCalibration {
+export interface VhostCalibration<T extends VhostGroupableResult = VhostGroupableResult> {
   readonly total: number;
   readonly baselineStatus: number | null;
   readonly baselineLength: number | null;
   readonly baselineCount: number;
-  readonly candidates: readonly VhostGroupableResult[];
+  readonly candidates: readonly T[];
   readonly filteredCount: number;
   readonly note: string;
+}
+
+export interface VhostArtifactGroupableResult extends VhostGroupableResult {
+  readonly artifactId: string;
+}
+
+export interface VhostArtifactCalibration {
+  readonly total: number;
+  readonly candidates: readonly VhostArtifactGroupableResult[];
+  readonly filteredCount: number;
+  readonly notes: readonly string[];
+}
+
+/**
+ * Calibrate each artifact independently, then combine. Runs against
+ * different targets have different baselines; a global majority would let
+ * one artifact's wildcard hide another artifact's candidates.
+ */
+export function calibrateVhostResultsByArtifact(
+  results: readonly VhostArtifactGroupableResult[],
+): VhostArtifactCalibration {
+  const groups = new Map<string, VhostArtifactGroupableResult[]>();
+  for (const result of results) {
+    const group = groups.get(result.artifactId);
+    if (group === undefined) groups.set(result.artifactId, [result]);
+    else group.push(result);
+  }
+  const candidates: VhostArtifactGroupableResult[] = [];
+  const notes: string[] = [];
+  for (const group of groups.values()) {
+    const calibrated = calibrateVhostResults(group);
+    candidates.push(...calibrated.candidates);
+    notes.push(calibrated.note);
+  }
+  return {
+    total: results.length,
+    candidates,
+    filteredCount: results.length - candidates.length,
+    notes,
+  };
 }
 
 function baselineKey(result: Pick<VhostGroupableResult, "status" | "length">): string {
   return `${result.status}|${result.length}`;
 }
 
-export function calibrateVhostResults(results: readonly VhostGroupableResult[]): VhostCalibration {
+export function calibrateVhostResults<T extends VhostGroupableResult>(results: readonly T[]): VhostCalibration<T> {
   if (results.length === 0) {
     return {
       total: 0,
@@ -45,7 +85,7 @@ export function calibrateVhostResults(results: readonly VhostGroupableResult[]):
     const key = baselineKey(result);
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  let baseline = results[0] as VhostGroupableResult;
+  let baseline = results[0] as T;
   let baselineCount = 0;
   for (const result of results) {
     const count = counts.get(baselineKey(result)) ?? 0;

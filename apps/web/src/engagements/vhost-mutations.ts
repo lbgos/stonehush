@@ -84,7 +84,16 @@ export async function launchVhostDiscoveryRequest(
   idempotencyKey: string,
   signal?: AbortSignal,
 ): Promise<PersistedAction> {
-  const body = FfufVhostDiscoveryLaunchSchema.parse({
+  const body = vhostLaunchBody(input);
+  return sendActionMutation(`/api/v1/engagements/${input.engagementId}/vhost-discoveries`, {
+    body,
+    idempotencyKey,
+    ...(signal ? { signal } : {}),
+  });
+}
+
+function vhostLaunchBody(input: VhostDiscoveryInput) {
+  return FfufVhostDiscoveryLaunchSchema.parse({
     expectedEngagementRevision: input.expectedEngagementRevision,
     expectedActiveScopeRevisionId: input.expectedActiveScopeRevisionId,
     address: input.address,
@@ -97,10 +106,12 @@ export async function launchVhostDiscoveryRequest(
     maxTimeSeconds: input.maxTimeSeconds,
     matchStatusCodes: [...input.matchStatusCodes],
   });
-  return sendActionMutation(`/api/v1/engagements/${input.engagementId}/vhost-discoveries`, {
-    body,
-    idempotencyKey,
-    ...(signal ? { signal } : {}),
+}
+
+function vhostLaunchIntent(input: VhostDiscoveryInput): string {
+  return requestFingerprint({
+    engagementId: input.engagementId,
+    ...vhostLaunchBody(input),
   });
 }
 
@@ -110,42 +121,11 @@ export function useLaunchVhostDiscoveryMutation() {
 
   return useMutation({
     mutationFn: (input: VhostDiscoveryInput) => {
-      const body = FfufVhostDiscoveryLaunchSchema.parse({
-        expectedEngagementRevision: input.expectedEngagementRevision,
-        expectedActiveScopeRevisionId: input.expectedActiveScopeRevisionId,
-        address: input.address,
-        port: input.port,
-        tls: input.tls,
-        wordlistPath: input.wordlistPath,
-        rate: input.rate,
-        threads: input.threads,
-        timeoutSeconds: input.timeoutSeconds,
-        maxTimeSeconds: input.maxTimeSeconds,
-        matchStatusCodes: [...input.matchStatusCodes],
-      });
-      const intent = requestFingerprint({
-        engagementId: input.engagementId,
-        ...body,
-      });
+      const intent = vhostLaunchIntent(input);
       return launchVhostDiscoveryRequest(input, keys.current.keyFor(intent));
     },
     onSuccess: (_action, input) => {
-      keys.current.reset(
-        requestFingerprint({
-          engagementId: input.engagementId,
-          expectedEngagementRevision: input.expectedEngagementRevision,
-          expectedActiveScopeRevisionId: input.expectedActiveScopeRevisionId,
-          address: input.address,
-          port: input.port,
-          tls: input.tls,
-          wordlistPath: input.wordlistPath,
-          rate: input.rate,
-          threads: input.threads,
-          timeoutSeconds: input.timeoutSeconds,
-          maxTimeSeconds: input.maxTimeSeconds,
-          matchStatusCodes: [...input.matchStatusCodes],
-        }),
-      );
+      keys.current.reset(vhostLaunchIntent(input));
     },
     onError: async (error, input) => {
       if (isRevisionConflict(error)) {

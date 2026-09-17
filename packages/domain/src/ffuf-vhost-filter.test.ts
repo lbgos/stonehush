@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calibrateVhostResults } from "./ffuf-vhost-filter.js";
+import { calibrateVhostResults, calibrateVhostResultsByArtifact } from "./ffuf-vhost-filter.js";
 
 function entry(hostname: string, status = 200, length = 100) {
   return { hostname, status, length, words: 10, lines: 2 };
@@ -51,5 +51,31 @@ describe("calibrateVhostResults", () => {
     expect(calibrated.candidates).toHaveLength(2);
     expect(calibrated.filteredCount).toBe(0);
     expect(calibrated.note).toContain("No majority response");
+  });
+});
+
+describe("calibrateVhostResultsByArtifact", () => {
+  it("keeps candidates whose size matches another artifact's baseline", () => {
+    const calibrated = calibrateVhostResultsByArtifact([
+      { ...entry("a.internal", 200, 512), artifactId: "artifact-1" },
+      { ...entry("b.internal", 200, 512), artifactId: "artifact-1" },
+      { ...entry("c.internal", 200, 512), artifactId: "artifact-1" },
+      { ...entry("d.internal", 200, 512), artifactId: "artifact-2" },
+    ]);
+    expect(calibrated.total).toBe(4);
+    expect(calibrated.filteredCount).toBe(3);
+    expect(calibrated.candidates.map((item) => item.hostname)).toEqual(["d.internal"]);
+    expect(calibrated.notes).toHaveLength(2);
+  });
+
+  it("matches single-artifact calibration for one artifact", () => {
+    const calibrated = calibrateVhostResultsByArtifact([
+      { ...entry("a.internal", 200, 512), artifactId: "artifact-1" },
+      { ...entry("b.internal", 200, 512), artifactId: "artifact-1" },
+      { ...entry("admin.internal", 200, 1024), artifactId: "artifact-1" },
+    ]);
+    expect(calibrated.candidates.map((item) => item.hostname)).toEqual(["admin.internal"]);
+    expect(calibrated.notes).toHaveLength(1);
+    expect(calibrated.notes[0]).toContain("Baseline status 200, length 512 bytes seen in 2 of 3 responses");
   });
 });
