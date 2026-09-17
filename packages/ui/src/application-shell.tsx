@@ -420,7 +420,7 @@ export function ApplicationShell({
                 <button
                   type="button"
                   aria-label="Collapse console"
-                  className="absolute top-0 right-2 z-20 inline-flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:size-8"
+                  className="absolute top-0.5 right-2 z-20 inline-flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:size-8"
                   onClick={() => setDesktopConsoleCollapsed(true)}
                 >
                   <ChevronDown className="size-4" aria-hidden="true" />
