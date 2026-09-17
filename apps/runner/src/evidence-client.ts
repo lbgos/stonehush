@@ -75,11 +75,13 @@ async function publishSingleArtifact(input: {
       ? "nmap.xml"
       : slot === "ffuf-json"
         ? "ffuf.json"
-        : slot === "stdout"
-          ? "stdout.log"
-          : slot === "stderr"
-            ? "stderr.log"
-            : "http-probe.json";
+        : slot === "vhost-json"
+          ? "vhost.json"
+          : slot === "stdout"
+            ? "stdout.log"
+            : slot === "stderr"
+              ? "stderr.log"
+              : "http-probe.json";
   const declaredContentType =
     slot === "nmap-xml"
       ? "application/xml"
@@ -350,6 +352,8 @@ export async function publishEvidenceArtifacts(
     nmapExitCode?: number | null;
     ffufJson?: Buffer;
     ffufExitCode?: number | null;
+    vhostJson?: Buffer;
+    vhostExitCode?: number | null;
   },
 ): Promise<void> {
   const isCancelled = options.isCancelled;
@@ -374,12 +378,15 @@ export async function publishEvidenceArtifacts(
     truncated: result.stderrMeta.truncated,
     isCancelled,
   });
-  const sidecars: Array<{ slot: "nmap-xml" | "ffuf-json"; buffer: Buffer; exitCode: number | null | undefined }> = [];
+  const sidecars: Array<{ slot: "nmap-xml" | "ffuf-json" | "vhost-json"; buffer: Buffer; exitCode: number | null | undefined }> = [];
   if (options.nmapXml !== undefined) {
     sidecars.push({ slot: "nmap-xml", buffer: options.nmapXml, exitCode: options.nmapExitCode });
   }
   if (options.ffufJson !== undefined) {
     sidecars.push({ slot: "ffuf-json", buffer: options.ffufJson, exitCode: options.ffufExitCode });
+  }
+  if (options.vhostJson !== undefined) {
+    sidecars.push({ slot: "vhost-json", buffer: options.vhostJson, exitCode: options.vhostExitCode });
   }
   for (const sidecar of sidecars) {
     let toolCompleteness: "complete" | "partial" = "complete";
@@ -422,5 +429,24 @@ export async function publishFfufArtifacts(
     eventSequence: options.eventSequence,
     ...(options.ffufJson === undefined ? {} : { ffufJson: options.ffufJson }),
     ...(options.ffufExitCode === undefined ? {} : { ffufExitCode: options.ffufExitCode }),
+  });
+}
+
+/**
+ * Publish vhost discovery evidence: stdout, stderr, then the raw ffuf -of
+ * json output as tool_raw under the vhost-json slot. The control plane
+ * projects candidate hostnames from the preserved JSON bytes.
+ */
+export async function publishVhostArtifacts(
+  config: RunnerConfig,
+  lease: LeaseIdentity,
+  result: ProcessResult,
+  options: { isCancelled: boolean; eventSequence: number; vhostJson?: Buffer; vhostExitCode?: number | null },
+): Promise<void> {
+  return publishEvidenceArtifacts(config, lease, result, {
+    isCancelled: options.isCancelled,
+    eventSequence: options.eventSequence,
+    ...(options.vhostJson === undefined ? {} : { vhostJson: options.vhostJson }),
+    ...(options.vhostExitCode === undefined ? {} : { vhostExitCode: options.vhostExitCode }),
   });
 }

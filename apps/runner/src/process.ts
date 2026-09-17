@@ -54,6 +54,10 @@ export function resolveFfufJsonPath(runRoot: string, runId: string, fence: strin
   return path.join(resolveRunDirPath(runRoot, runId, fence), "ffuf.json");
 }
 
+export function resolveVhostJsonPath(runRoot: string, runId: string, fence: string): string {
+  return path.join(resolveRunDirPath(runRoot, runId, fence), "vhost.json");
+}
+
 export async function createRunDirectory(runRoot: string, runId: string, fence: string): Promise<RunDirectories> {
   const runDir = resolveRunDirPath(runRoot, runId, fence);
   await mkdir(runRoot, { recursive: true, mode: 0o700 }).catch(() => {
@@ -351,5 +355,17 @@ export async function readFfufJsonSecurely(params: {
     ...params,
     expected: resolveFfufJsonPath(params.runRoot, params.runId, params.fence),
     errorCode: "ffuf_json_unavailable",
+  });
+}
+
+export async function readVhostJsonSecurely(params: {
+  runRoot: string;
+  runId: string;
+  fence: string;
+}): Promise<Buffer> {
+  return readRunFileSecurely({
+    ...params,
+    expected: resolveVhostJsonPath(params.runRoot, params.runId, params.fence),
+    errorCode: "vhost_json_unavailable",
   });
 }

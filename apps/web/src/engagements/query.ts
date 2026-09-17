@@ -4,9 +4,11 @@ import {
   EngagementHttpProbesResponseSchema,
   EngagementListResponseSchema,
   EngagementServicesResponseSchema,
+  EngagementVhostResultsResponseSchema,
   type Engagement,
   type EngagementWithActiveScope,
   type FfufProjected,
+  type FfufVhostProjected,
   type HttpProbeProjected,
   type NmapProjectedService,
 } from "@stonehush/contracts";
@@ -17,6 +19,7 @@ import {
   EngagementFfufResultsQueryError,
   EngagementHttpProbesQueryError,
   EngagementServicesQueryError,
+  EngagementVhostResultsQueryError,
   EngagementsQueryError,
 } from "./errors.js";
 
@@ -188,6 +191,42 @@ export function engagementFfufResultsQueryOptions(engagementId: string) {
 
 export function useEngagementFfufResultsQuery(engagementId: string) {
   return useQuery(engagementFfufResultsQueryOptions(engagementId));
+}
+
+export function engagementVhostResultsQueryKey(engagementId: string) {
+  return [...ENGAGEMENTS_QUERY_KEY, engagementId, "vhost-results"] as const;
+}
+
+export async function fetchEngagementVhostResults(
+  engagementId: string,
+  signal?: AbortSignal,
+): Promise<FfufVhostProjected[]> {
+  try {
+    const response = await fetch(
+      `/api/v1/engagements/${engagementId}/vhost-results`,
+      signal ? { signal } : undefined,
+    );
+    if (response.status !== 200) throw new EngagementVhostResultsQueryError();
+
+    const payload: unknown = await response.json();
+    const result = EngagementVhostResultsResponseSchema.safeParse(payload);
+    if (!result.success) throw new EngagementVhostResultsQueryError();
+    return result.data;
+  } catch (error) {
+    if (error instanceof EngagementVhostResultsQueryError) throw error;
+    throw new EngagementVhostResultsQueryError();
+  }
+}
+
+export function engagementVhostResultsQueryOptions(engagementId: string) {
+  return queryOptions({
+    queryKey: engagementVhostResultsQueryKey(engagementId),
+    queryFn: ({ signal }) => fetchEngagementVhostResults(engagementId, signal),
+  });
+}
+
+export function useEngagementVhostResultsQuery(engagementId: string) {
+  return useQuery(engagementVhostResultsQueryOptions(engagementId));
 }
 
 export function partitionEngagements(engagements: readonly Engagement[]) {
