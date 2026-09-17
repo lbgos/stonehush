@@ -160,6 +160,175 @@ describe("CaptureView", () => {
     expect(await screen.findByText(/No duplicate facts created/)).toBeDefined();
   });
 
+  it("imports a proxy HAR selection with a result summary", async () => {
+    const harText = JSON.stringify({
+      log: {
+        version: "1.2",
+        entries: [
+          {
+            request: { method: "GET", url: "https://morrow.test/login" },
+            response: { status: 200 },
+          },
+        ],
+      },
+    });
+    const capture = {
+      contractVersion: 1,
+      id: "10000000-0000-4000-8000-000000000003",
+      engagementId: ENGAGEMENT_ID,
+      targetId: TARGET_ID,
+      leadId: null,
+      kind: "har",
+      originLabel: "imported",
+      title: "GET https://morrow.test/login",
+      command: null,
+      observation: null,
+      contentText: harText,
+      fileName: "morrow.har",
+      contentDigest:
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      provenanceExistingId: null,
+      byteSize: harText.length,
+      createdAt: "2026-08-12T12:00:00.000Z",
+    };
+    const postedUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          postedUrls.push(url);
+          postedBodies.push(init.body !== undefined ? JSON.parse(String(init.body)) : undefined);
+          return Promise.resolve(response({ deduplicated: false, capture }, 201));
+        }
+        if (url.endsWith("/stone-captures")) return Promise.resolve(response([]));
+        return Promise.resolve(response({ code: "invalid_request" }, 400));
+      }),
+    );
+    renderCapture();
+
+    expect(await screen.findByText("No captures yet.")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Artifact"), { target: { value: "har" } });
+    fireEvent.change(screen.getByLabelText("File content"), { target: { value: harText } });
+    expect(await screen.findByText(/1 entry: GET https:\/\/morrow\.test\/login/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    expect(await screen.findByText(/Labeled imported with provenance/)).toBeDefined();
+    expect(await screen.findByText(/status 200/)).toBeDefined();
+    expect(postedUrls).toHaveLength(1);
+    expect(postedUrls[0]).toContain("/stone-imports/har");
+    const body = postedBodies[0] as Record<string, unknown>;
+    expect(body["contentText"]).toBe(harText);
+    for (const invented of ["startedAt", "finishedAt", "exitCode", "executedCommand", "runnerTarget"]) {
+      expect(body).not.toHaveProperty(invented);
+    }
+  });
+
+  it("loads a HAR file through the picker and names rejection reasons", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          return Promise.resolve(response({ code: "har_too_many_entries" }, 400));
+        }
+        if (url.endsWith("/stone-captures")) return Promise.resolve(response([]));
+        return Promise.resolve(response({ code: "invalid_request" }, 400));
+      }),
+    );
+    renderCapture();
+
+    expect(await screen.findByText("No captures yet.")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Artifact"), { target: { value: "har" } });
+    const harText = JSON.stringify({
+      log: {
+        version: "1.2",
+        entries: [
+          {
+            request: { method: "GET", url: "https://morrow.test/login" },
+            response: { status: 200 },
+          },
+        ],
+      },
+    });
+    const file = new File([harText], "morrow.har", { type: "application/json" });
+    fireEvent.change(
+      screen.getByLabelText("Drop a HAR file with one request or a small selection"),
+      { target: { files: [file] } },
+    );
+    expect(await screen.findByText("Selected morrow.har.")).toBeDefined();
+    expect(await screen.findByText(/1 entry: GET https:\/\/morrow\.test\/login/)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+    expect(await screen.findByText(/more than 8 entries/)).toBeDefined();
+  });
+
+  it("drops the picked file name once the HAR text is edited", async () => {
+    const harText = JSON.stringify({
+      log: {
+        version: "1.2",
+        entries: [
+          {
+            request: { method: "GET", url: "https://morrow.test/login" },
+            response: { status: 200 },
+          },
+        ],
+      },
+    });
+    const capture = {
+      contractVersion: 1,
+      id: "10000000-0000-4000-8000-000000000003",
+      engagementId: ENGAGEMENT_ID,
+      targetId: TARGET_ID,
+      leadId: null,
+      kind: "har",
+      originLabel: "imported",
+      title: "GET https://morrow.test/login",
+      command: null,
+      observation: null,
+      contentText: `${harText} `,
+      fileName: null,
+      contentDigest:
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      provenanceExistingId: null,
+      byteSize: harText.length + 1,
+      createdAt: "2026-08-12T12:00:00.000Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (init?.method === "POST") {
+          postedBodies.push(init.body !== undefined ? JSON.parse(String(init.body)) : undefined);
+          return Promise.resolve(response({ deduplicated: false, capture }, 201));
+        }
+        if (url.endsWith("/stone-captures")) return Promise.resolve(response([]));
+        return Promise.resolve(response({ code: "invalid_request" }, 400));
+      }),
+    );
+    renderCapture();
+
+    expect(await screen.findByText("No captures yet.")).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Artifact"), { target: { value: "har" } });
+    const file = new File([harText], "morrow.har", { type: "application/json" });
+    fireEvent.change(
+      screen.getByLabelText("Drop a HAR file with one request or a small selection"),
+      { target: { files: [file] } },
+    );
+    expect(await screen.findByText("Selected morrow.har.")).toBeDefined();
+
+    fireEvent.change(screen.getByLabelText("File content"), {
+      target: { value: `${harText} ` },
+    });
+    expect(screen.queryByText("Selected morrow.har.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await waitFor(() => {
+      expect(postedBodies).toHaveLength(1);
+    });
+    expect(postedBodies[0]).not.toHaveProperty("fileName");
+  });
+
   it("rejects oversized files before reading them", async () => {
     vi.stubGlobal(
       "fetch",

@@ -278,4 +278,41 @@ describe("stone target capture repository", () => {
     expect(listed.value[0]?.contentText).toBe("terminal bytes");
     expect(listed.value[0]?.fileName).toBe("session.txt");
   });
+
+  it("persists proxy HAR captures labeled imported", () => {
+    const fixture = createFixture();
+    const engagementId = createEngagement(fixture);
+    const target = fixture.targets.createTarget({
+      engagementId,
+      label: "web01",
+      initialAddress: "10.0.0.5",
+    });
+    expect(target.ok).toBe(true);
+    if (!target.ok) return;
+    const harText = JSON.stringify({
+      log: {
+        version: "1.2",
+        entries: [
+          {
+            request: { method: "GET", url: "https://morrow.test/login" },
+            response: { status: 200 },
+          },
+        ],
+      },
+    });
+    const created = fixture.targets.createCapture({
+      engagementId,
+      targetId: target.value.id,
+      leadId: null,
+      kind: "har",
+      title: "GET https://morrow.test/login",
+      contentText: harText,
+      fileName: "morrow.har",
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.value.capture.kind).toBe("har");
+    expect(created.value.capture.originLabel).toBe("imported");
+    expect(created.value.capture.contentText).toBe(harText);
+  });
 });

@@ -90,9 +90,11 @@ export async function createStoneCaptureRequest(
   return payload as { deduplicated: boolean; capture: StoneCapture };
 }
 
+export type StoneImportArtifact = "nmap-xml" | "ffuf-json" | "har";
+
 export async function importStoneArtifactRequest(
   engagementId: string,
-  artifact: "nmap-xml" | "ffuf-json",
+  artifact: StoneImportArtifact,
   draft: Omit<StoneCaptureDraft, "kind">,
 ): Promise<{ deduplicated: boolean; capture: StoneCapture }> {
   const response = await fetch(
