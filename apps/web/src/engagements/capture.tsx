@@ -1,16 +1,48 @@
-import { proposeCaptureTitle, type StoneCaptureKind } from "@stonehush/contracts";
+import {
+  HAR_MAX_ENTRIES,
+  HAR_MAX_FILE_BYTES,
+  proposeCaptureTitle,
+  type StoneCaptureKind,
+} from "@stonehush/contracts";
+import { parseHarImport, type HarImportSummary } from "@stonehush/domain";
 import { Button } from "@stonehush/ui";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   createStoneCaptureRequest,
   importStoneArtifactRequest,
+  StoneCaptureMutationError,
   useStoneCapturesQuery,
+  type StoneImportArtifact,
 } from "./capture-query.js";
 
-// External capture: terminal paste, file or screenshot drop, and Nmap XML or
-// ffuf JSON import into the current target context. STONE-2 mounts this view
-// through the slot below after its workspace extension points merge.
+function importErrorMessage(code: string): string {
+  switch (code) {
+    case "har_too_large":
+      return `The HAR file is larger than ${HAR_MAX_FILE_BYTES} bytes. Export only the selected request from the proxy.`;
+    case "har_too_many_entries":
+      return `The HAR file holds more than ${HAR_MAX_ENTRIES} entries. Export only the selected request from the proxy.`;
+    case "har_not_json":
+      return "The file is not JSON. Export a HAR file from the proxy and try again.";
+    case "har_not_har":
+      return "The JSON is not a HAR file. It needs a log.entries array.";
+    case "har_no_entries":
+      return "The HAR file holds no entries. Select a request in the proxy and export it.";
+    case "har_bad_entry":
+      return "A HAR entry is missing a request method, an http(s) URL, or a response status.";
+    default:
+      return "The import was not accepted. Check the content and try again.";
+  }
+}
+
+function describeHarSummary(summary: HarImportSummary): string {
+  const entryWord = summary.entryCount === 1 ? "entry" : "entries";
+  return `${summary.entryCount} ${entryWord}: ${summary.first.method} ${summary.first.url}, status ${summary.first.status}`;
+}
+
+// External capture: terminal paste, file or screenshot drop, and Nmap XML,
+// ffuf JSON, or proxy HAR import into the current target context. STONE-2 mounts
+// this view through the slot below after its workspace extension points merge.
 export function CaptureView({
   engagementId,
   targetId,
@@ -29,9 +61,17 @@ export function CaptureView({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [importArtifact, setImportArtifact] = useState<"nmap-xml" | "ffuf-json">("nmap-xml");
+  const [importArtifact, setImportArtifact] = useState<StoneImportArtifact>("nmap-xml");
   const [importContent, setImportContent] = useState("");
   const [importTitle, setImportTitle] = useState("");
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+
+  const harPreview = useMemo(() => {
+    if (importArtifact !== "har" || importContent.trim().length === 0) return null;
+    const parsed = parseHarImport(new TextEncoder().encode(importContent));
+    if (!parsed.ok) return { ok: false as const, code: parsed.error.code };
+    return { ok: true as const, summary: parsed.value };
+  }, [importArtifact, importContent]);
 
   const [fileName, setFileName] = useState<string | null>(null);
 
@@ -149,34 +189,76 @@ export function CaptureView({
     }
   };
 
+  const onImportFileChange = async (file: File | undefined) => {
+    if (file === undefined || busy) return;
+    // Reject oversized HAR files before reading them: the server bound is
+    // HAR_MAX_FILE_BYTES, so larger files can never be accepted.
+    if (file.size > HAR_MAX_FILE_BYTES) {
+      setError(importErrorMessage("har_too_large"));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      setImportContent(await file.text());
+      setImportFileName(file.name);
+    } catch {
+      setError(importErrorMessage("har_not_json"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const onImportSubmit = async () => {
     if (busy) return;
     setBusy(true);
     setError(null);
     setMessage(null);
+    // The preview is parsed from the same text being submitted, so the
+    // result summary describes exactly what the server validated.
+    const preview =
+      importArtifact === "har" && importContent.trim().length > 0
+        ? parseHarImport(new TextEncoder().encode(importContent))
+        : null;
     try {
+      const kind: StoneCaptureKind =
+        importArtifact === "nmap-xml"
+          ? "nmap_xml"
+          : importArtifact === "ffuf-json"
+            ? "ffuf_json"
+            : "har";
       const result = await importStoneArtifactRequest(engagementId, importArtifact, {
         targetId,
         leadId: null,
         title:
           importTitle.trim().length > 0
             ? importTitle.trim()
-            : proposeCaptureTitle({
-                kind: importArtifact === "nmap-xml" ? "nmap_xml" : "ffuf_json",
-                targetLabel,
-              }),
+            : kind === "har" && preview !== null && preview.ok
+              ? preview.value.title
+              : proposeCaptureTitle({ kind, targetLabel }),
         contentText: importContent,
+        ...(importArtifact === "har" && importFileName !== null
+          ? { fileName: importFileName }
+          : {}),
       });
+      const importedDetail =
+        preview !== null && preview.ok ? `${describeHarSummary(preview.value)}. ` : "";
       setMessage(
         result.deduplicated
           ? `References existing capture ${result.capture.id}. No duplicate facts created.`
-          : `Imported. Labeled imported with provenance to this import.`,
+          : `Imported. ${importedDetail}Labeled imported with provenance to this import.`,
       );
       setImportContent("");
       setImportTitle("");
+      setImportFileName(null);
       await captures.refetch();
-    } catch {
-      setError("The import was not accepted. Check the content and try again.");
+    } catch (error) {
+      setError(
+        importErrorMessage(
+          error instanceof StoneCaptureMutationError ? error.code : "request_failed",
+        ),
+      );
     } finally {
       setBusy(false);
     }
@@ -187,8 +269,8 @@ export function CaptureView({
       <header className="mb-3">
         <h2 className="m-0 text-[13px] font-semibold">External capture</h2>
         <p className="mt-1 mb-0 text-[12px] leading-5 text-muted-foreground">
-          Paste terminal output, drop a file or screenshot, or import Nmap XML or ffuf JSON
-          into the current target context.
+          Paste terminal output, drop a file or screenshot, or import Nmap XML, ffuf JSON,
+          or a proxy HAR selection into the current target context.
         </p>
       </header>
       <p className="m-0 text-[12px] leading-5 text-muted-foreground">
@@ -268,7 +350,7 @@ export function CaptureView({
       </div>
 
       <div className="mt-4 grid gap-2 border-t border-border pt-4">
-        <h3 className="m-0 text-[12px] font-semibold">Import Nmap XML or ffuf JSON</h3>
+        <h3 className="m-0 text-[12px] font-semibold">Import Nmap XML, ffuf JSON, or proxy HAR</h3>
         <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor="stone-import-artifact">
           <span>Artifact</span>
           <select
@@ -277,13 +359,30 @@ export function CaptureView({
             className="min-h-11 w-full rounded-md border border-input bg-transparent px-2.5 text-[13px] text-foreground md:min-h-8"
             value={importArtifact}
             onChange={(event) =>
-              setImportArtifact(event.target.value as "nmap-xml" | "ffuf-json")
+              setImportArtifact(event.target.value as StoneImportArtifact)
             }
           >
             <option value="nmap-xml">Nmap XML</option>
             <option value="ffuf-json">ffuf JSON</option>
+            <option value="har">Proxy HAR</option>
           </select>
         </label>
+        {importArtifact === "har" ? (
+          <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor="stone-import-file">
+            <span>Drop a HAR file with one request or a small selection</span>
+            <input
+              id="stone-import-file"
+              type="file"
+              accept=".har,application/json"
+              className="min-h-11 w-full text-[13px] text-foreground md:min-h-8"
+              disabled={busy}
+              onChange={(event) => void onImportFileChange(event.target.files?.[0])}
+            />
+          </label>
+        ) : null}
+        {importArtifact === "har" && importFileName !== null ? (
+          <p className="m-0 text-[12px] text-muted-foreground">Selected {importFileName}.</p>
+        ) : null}
         <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor="stone-import-title">
           <span>Title, optional</span>
           <input
@@ -304,6 +403,17 @@ export function CaptureView({
             onChange={(event) => setImportContent(event.target.value)}
           />
         </label>
+        {importArtifact === "har" && harPreview !== null ? (
+          harPreview.ok ? (
+            <p className="m-0 text-[12px] text-muted-foreground" role="status">
+              {describeHarSummary(harPreview.summary)}
+            </p>
+          ) : (
+            <p className="m-0 text-[12px] text-destructive" role="alert">
+              {importErrorMessage(harPreview.code)}
+            </p>
+          )
+        ) : null}
         <div>
           <Button type="button" disabled={busy} onClick={() => void onImportSubmit()}>
             {busy ? "Saving" : "Import"}

@@ -320,3 +320,172 @@ describe("stone capture and import routes", () => {
     expect(body.capture.fileName).toBe("session.txt");
   });
 });
+
+function harEntry(url = "https://morrow.test/login", status = 200) {
+  return {
+    startedDateTime: "2026-09-10T12:00:00.000Z",
+    time: 42,
+    request: {
+      method: "GET",
+      url,
+      headers: [{ name: "user-agent", value: "stonehush-fixture" }],
+    },
+    response: {
+      status,
+      statusText: "OK",
+      headers: [{ name: "content-type", value: "text/html" }],
+      content: { size: 19, mimeType: "text/html", text: "<form>login</form>" },
+    },
+    cache: {},
+    timings: { send: 1, wait: 40, receive: 1 },
+  };
+}
+
+const SINGLE_ENTRY_HAR = JSON.stringify({
+  log: { version: "1.2", creator: { name: "Caido" }, entries: [harEntry()] },
+});
+
+describe("stone proxy HAR import routes", () => {
+  it("imports one proxied pair into the current target and lead with full fidelity", async () => {
+    const { app, engagementId } = await fixture();
+    const created = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-targets`,
+      payload: { label: "web01", initialAddress: "10.0.0.5" },
+    });
+    const target = created.json() as { id: string };
+    const imported = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-imports/har`,
+      payload: {
+        targetId: target.id,
+        leadId: "lead-1",
+        contentText: SINGLE_ENTRY_HAR,
+        fileName: "morrow.har",
+      },
+    });
+    expect(imported.statusCode).toBe(201);
+    const body = imported.json() as {
+      deduplicated: boolean;
+      capture: Record<string, unknown>;
+    };
+    expect(body.deduplicated).toBe(false);
+    expect(body.capture["kind"]).toBe("har");
+    expect(body.capture["originLabel"]).toBe("imported");
+    expect(body.capture["targetId"]).toBe(target.id);
+    expect(body.capture["leadId"]).toBe("lead-1");
+    expect(body.capture["contentText"]).toBe(SINGLE_ENTRY_HAR);
+    expect(body.capture["fileName"]).toBe("morrow.har");
+    expect(String(body.capture["title"])).toContain("GET");
+    expect(String(body.capture["title"])).toContain("https://morrow.test/login");
+    for (const invented of [
+      "startedAt",
+      "finishedAt",
+      "exitCode",
+      "exitStatus",
+      "executedCommand",
+      "runnerTarget",
+    ]) {
+      expect(body.capture).not.toHaveProperty(invented);
+    }
+  });
+
+  it("points a second identical HAR import at the existing capture", async () => {
+    const { app, engagementId } = await fixture();
+    const url = `/api/v1/engagements/${engagementId}/stone-imports/har`;
+    const payload = { targetId: null, leadId: null, contentText: SINGLE_ENTRY_HAR };
+    const first = await app.inject({ method: "POST", url, payload });
+    expect(first.statusCode).toBe(201);
+    const second = await app.inject({ method: "POST", url, payload });
+    expect(second.statusCode).toBe(200);
+    const secondBody = second.json() as {
+      deduplicated: boolean;
+      capture: { id: string; provenanceExistingId: string | null };
+    };
+    expect(secondBody.deduplicated).toBe(true);
+    expect(secondBody.capture.provenanceExistingId).toBe(
+      (first.json() as { capture: { id: string } }).capture.id,
+    );
+  });
+
+  it("refuses oversized HAR selections with a naming error", async () => {
+    const { app, engagementId } = await fixture();
+    const url = `/api/v1/engagements/${engagementId}/stone-imports/har`;
+    const many = await app.inject({
+      method: "POST",
+      url,
+      payload: {
+        targetId: null,
+        leadId: null,
+        contentText: JSON.stringify({
+          log: {
+            version: "1.2",
+            entries: Array.from({ length: 9 }, () => harEntry()),
+          },
+        }),
+      },
+    });
+    expect(many.statusCode).toBe(400);
+    expect(many.json()).toEqual({ code: "har_too_many_entries" });
+
+    const big = await app.inject({
+      method: "POST",
+      url,
+      payload: { targetId: null, leadId: null, contentText: `{"log":${"9".repeat(1_048_576)}}` },
+    });
+    expect(big.statusCode).toBe(400);
+    expect(big.json()).toEqual({ code: "har_too_large" });
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${engagementId}/stone-captures`,
+    });
+    expect((listed.json() as unknown[])).toHaveLength(0);
+  });
+
+  it("rejects malformed HAR uploads with a naming error", async () => {
+    const { app, engagementId } = await fixture();
+    const url = `/api/v1/engagements/${engagementId}/stone-imports/har`;
+    const cases: { contentText: string; code: string }[] = [
+      { contentText: "not json", code: "har_not_json" },
+      { contentText: JSON.stringify({ version: "1.2" }), code: "har_not_har" },
+      { contentText: JSON.stringify({ log: { version: "1.2", entries: [] } }), code: "har_no_entries" },
+      {
+        contentText: JSON.stringify({ log: { version: "1.2", entries: [harEntry("notaurl", 200)] } }),
+        code: "har_bad_entry",
+      },
+    ];
+    for (const candidate of cases) {
+      const response = await app.inject({
+        method: "POST",
+        url,
+        payload: { targetId: null, leadId: null, contentText: candidate.contentText },
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toEqual({ code: candidate.code });
+    }
+
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${engagementId}/stone-captures`,
+    });
+    expect((listed.json() as unknown[])).toHaveLength(0);
+  });
+
+  it("rejects invented execution facts on HAR import", async () => {
+    const { app, engagementId } = await fixture();
+    const response = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagementId}/stone-imports/har`,
+      payload: {
+        targetId: null,
+        leadId: null,
+        contentText: SINGLE_ENTRY_HAR,
+        exitCode: 0,
+        executedCommand: "curl https://morrow.test/login",
+      },
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ code: "invalid_request" });
+  });
+});

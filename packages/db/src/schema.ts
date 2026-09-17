@@ -2045,7 +2045,7 @@ export const stoneCaptures = sqliteTable(
     }),
     leadId: text("lead_id"),
     kind: text("kind", {
-      enum: ["pasted_terminal", "dropped_file", "screenshot", "nmap_xml", "ffuf_json"],
+      enum: ["pasted_terminal", "dropped_file", "screenshot", "nmap_xml", "ffuf_json", "har"],
     }).notNull(),
     originLabel: text("origin_label", { enum: ["pasted", "imported"] }).notNull(),
     title: text("title").notNull(),
@@ -2062,11 +2062,11 @@ export const stoneCaptures = sqliteTable(
     check("stone_capture_contract_version", sql`${table.contractVersion} = 1`),
     check(
       "stone_capture_kind",
-      sql`${table.kind} in ('pasted_terminal', 'dropped_file', 'screenshot', 'nmap_xml', 'ffuf_json')`,
+      sql`${table.kind} in ('pasted_terminal', 'dropped_file', 'screenshot', 'nmap_xml', 'ffuf_json', 'har')`,
     ),
     check(
       "stone_capture_origin",
-      sql`${table.originLabel} in ('pasted', 'imported') and ((${table.kind} in ('pasted_terminal', 'dropped_file', 'screenshot') and ${table.originLabel} = 'pasted') or (${table.kind} in ('nmap_xml', 'ffuf_json') and ${table.originLabel} = 'imported'))`,
+      sql`${table.originLabel} in ('pasted', 'imported') and ((${table.kind} in ('pasted_terminal', 'dropped_file', 'screenshot') and ${table.originLabel} = 'pasted') or (${table.kind} in ('nmap_xml', 'ffuf_json', 'har') and ${table.originLabel} = 'imported'))`,
     ),
     check(
       "stone_capture_title_length",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { EngagementSchema } from "./engagement.js";
+import { HAR_IMPORT_ERROR_CODES } from "./har.js";
 
 export const STONE_CAPTURE_CONTRACT_VERSION = 1 as const;
 
@@ -18,10 +19,11 @@ export const StoneCaptureKindSchema = z.enum([
   "screenshot",
   "nmap_xml",
   "ffuf_json",
+  "har",
 ]);
 
 // Ordinary operator captures (paste, file/screenshot drop). Typed parser
-// kinds (nmap_xml, ffuf_json) are excluded here by design: they are only
+// kinds (nmap_xml, ffuf_json, har) are excluded here by design: they are only
 // persisted through the guarded import routes, which parse presented content
 // before storing anything.
 export const StoneOrdinaryCaptureKindSchema = z.enum([
@@ -149,7 +151,9 @@ export function proposeCaptureTitle(input: {
       ? "Nmap import"
       : input.kind === "ffuf_json"
         ? "Ffuf import"
-        : input.kind === "screenshot"
+        : input.kind === "har"
+          ? "HAR import"
+          : input.kind === "screenshot"
           ? "Screenshot"
           : input.kind === "dropped_file"
             ? "Dropped file"
@@ -189,6 +193,7 @@ export const StoneCaptureErrorSchema = z.union([
   z.strictObject({ code: z.literal("target_not_found") }),
   z.strictObject({ code: z.literal("invalid_persisted_data") }),
   z.strictObject({ code: z.literal("storage_busy") }),
+  ...HAR_IMPORT_ERROR_CODES.map((code) => z.strictObject({ code: z.literal(code) })),
 ]);
 
 export type StoneCaptureKind = z.infer<typeof StoneCaptureKindSchema>;

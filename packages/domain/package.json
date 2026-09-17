@@ -20,6 +20,7 @@
     "tr46": "5.0.0"
   },
   "devDependencies": {
+    "@types/node": "24.13.3",
     "@types/tr46": "5.0.1",
     "typescript": "6.0.3",
     "vitest": "4.1.10"

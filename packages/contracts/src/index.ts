@@ -29,6 +29,7 @@ export * from "./saved-scope.js";
 export * from "./target-normalization.js";
 export * from "./target-identity.js";
 export * from "./import-capture.js";
+export * from "./har.js";
 export * from "./nmap.js";
 export * from "./report.js";
 export * from "./ffuf.js";

@@ -65,6 +65,11 @@ export {
   type CountFfufJsonResultsResult,
 } from "./ffuf-json-import.js";
 export {
+  parseHarImport,
+  type HarImportSummary,
+  type ParseHarImportResult,
+} from "./har-import.js";
+export {
   acceptHeartbeat,
   calculateSelfFenceDeadline,
   evaluateRunEventSequence,
