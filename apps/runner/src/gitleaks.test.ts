@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { GITLEAKS_DEFAULT_EXECUTABLE, runGitleaksScan } from "./gitleaks.js";
@@ -122,5 +125,20 @@ describe("runGitleaksScan", () => {
     fixture.deps.readReportJson = async () => Buffer.alloc(9 * 1024 * 1024, 0x5b);
     const result = await runGitleaksScan(fixture.deps, OPTIONS);
     expect(result).toEqual({ ok: false, error: { code: "gitleaks_output_too_large" } });
+  });
+
+  it("sizes the real report file before buffering it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "stonehush-gitleaks-report-"));
+    try {
+      const reportPath = path.join(dir, "report.json");
+      await writeFile(reportPath, Buffer.alloc(9 * 1024 * 1024, 0x5b), { mode: 0o600 });
+      const result = await runGitleaksScan(
+        { spawn: async () => ({ exitCode: 1 }) },
+        { sourceDir: dir, reportPath },
+      );
+      expect(result).toEqual({ ok: false, error: { code: "gitleaks_output_too_large" } });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

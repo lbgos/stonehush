@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 
 import {
@@ -69,6 +69,14 @@ function defaultSpawn(request: {
 }
 
 async function defaultReadReport(absolutePath: string): Promise<Buffer> {
+  // Size before reading: the caller rechecks length after the read as a
+  // guard against growth in between.
+  const stats = await stat(absolutePath);
+  if (stats.size > GITLEAKS_MAX_JSON_BYTES) {
+    const error = new Error("gitleaks report exceeded bound") as Error & { code: string };
+    error.code = "GITLEAKS_OUTPUT_TOO_LARGE";
+    throw error;
+  }
   return readFile(absolutePath);
 }
 
@@ -131,7 +139,10 @@ export async function runGitleaksScan(
     let buffer: Buffer;
     try {
       buffer = await readReport(reportPath);
-    } catch {
+    } catch (error) {
+      if ((error as { code?: string })?.code === "GITLEAKS_OUTPUT_TOO_LARGE") {
+        return { ok: false, error: { code: "gitleaks_output_too_large" } };
+      }
       // A missing report fails closed even on a clean detector exit: a
       // scan that cannot show its report cannot claim to be clean.
       return { ok: false, error: { code: "gitleaks_parse_error" } };

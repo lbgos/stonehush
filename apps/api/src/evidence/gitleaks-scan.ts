@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -186,6 +186,13 @@ export async function scanEngagementEvidence(
 
     let report: Buffer;
     try {
+      // Size the report before reading it: readFile would buffer an
+      // unbounded detector dump first and check second. The post-read
+      // length check stays as a guard against growth between stat and read.
+      const reportStats = await stat(reportPath);
+      if (reportStats.size > GITLEAKS_MAX_JSON_BYTES) {
+        return await fail("gitleaks_output_too_large");
+      }
       report = await readFile(reportPath);
     } catch {
       // A missing report fails closed even on a clean detector exit: a

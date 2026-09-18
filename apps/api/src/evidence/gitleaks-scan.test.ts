@@ -146,6 +146,19 @@ describe("scanEngagementEvidence", () => {
     expect(result).toEqual({ ok: false, error: { code: "gitleaks_parse_error" } });
   });
 
+  it("bounds an oversized report file before buffering it", async () => {
+    const result = await scanEngagementEvidence("eng-1", {
+      source: sourceWith([{ artifactId: "ev-000001", bytes: "clean\n" }]),
+      spawn: async (request) => {
+        const reportIndex = request.argv.indexOf("--report-path");
+        const reportPath = request.argv[reportIndex + 1] as string;
+        await writeFile(reportPath, Buffer.alloc(9 * 1024 * 1024, 0x5b), { mode: 0o600 });
+        return { exitCode: 1 };
+      },
+    });
+    expect(result).toEqual({ ok: false, error: { code: "gitleaks_output_too_large" } });
+  });
+
   it("leaves no stage directory behind after a scan", async () => {
     const before = new Set(await readdir(tmpdir()));
     const detector = stubDetector();
