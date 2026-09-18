@@ -110,6 +110,12 @@ export type {
 export { HttpProbeRepository } from "./http-probe.js";
 export { FfufRepository } from "./ffuf.js";
 export { VhostRepository } from "./vhost.js";
+export {
+  GitleaksRepository,
+  type CreateGitleaksScanResult,
+  type GitleaksRepositoryProviders,
+  type LatestGitleaksScanResult,
+} from "./gitleaks.js";
 export { EngagementResumeRepository } from "./engagement-resume.js";
 export type {
   EngagementResumeRepositoryError,

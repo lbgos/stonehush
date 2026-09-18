@@ -34,6 +34,7 @@ export * from "./nmap.js";
 export * from "./report.js";
 export * from "./ffuf.js";
 export * from "./ffuf-vhost.js";
+export * from "./gitleaks.js";
 export * from "./http-probe.js";
 export * from "./settings.js";
 export {

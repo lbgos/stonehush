@@ -121,6 +121,7 @@ function readResponse(
   if (/^\/api\/v1\/engagements\/[^/]+\/http-probes$/.test(url)) return response([]);
   if (/^\/api\/v1\/engagements\/[^/]+\/ffuf-results$/.test(url)) return response([]);
   if (/^\/api\/v1\/engagements\/[^/]+\/vhost-results$/.test(url)) return response([]);
+  if (/^\/api\/v1\/engagements\/[^/]+\/gitleaks-matches$/.test(url)) return response([]);
   if (/^\/api\/v1\/engagements\/[^/]+\/findings$/.test(url)) return response([]);
   const reportMatch = /^\/api\/v1\/engagements\/([^/]+)\/report$/.exec(url);
   if (reportMatch?.[1] !== undefined) {

@@ -102,6 +102,8 @@ export {
 } from "./saved-scope.js";
 export { buildNmapArgv } from "./nmap-argv.js";
 export { buildFfufArgv } from "./ffuf-argv.js";
+export { buildGitleaksArgv, type BuildGitleaksArgvResult } from "./gitleaks-argv.js";
+export { parseGitleaksJson, type ParseGitleaksResult } from "./gitleaks.js";
 export { groupFfufResults, hideFfufGroups, undoHideFfufGroups, restoreAllFfufGroups, visibleFfufGroups, ffufGroupBasis, labelUnusualFfufResponse } from "./ffuf-group.js";
 export type { FfufGroupableResult, FfufResultGroup, FfufHideState } from "./ffuf-group.js";
 export { resolveWordlistByName, missingWordlistRecovery, loadLastWordlistChoice, saveLastWordlistChoice, listWordlistOptions } from "./ffuf-wordlist.js";

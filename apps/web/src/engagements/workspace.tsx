@@ -22,6 +22,7 @@ import { AdvisorPanel } from "../advisor/advisor-panel.js";
 import { EngagementDeadlineSection } from "./deadline.js";
 import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
+import { EngagementGitleaksSection } from "./gitleaks.js";
 import { EngagementVhostSection } from "./vhost-surface.js";
 import {
   EngagementLeadsSection,
@@ -495,6 +496,13 @@ function EngagementDetail({
 
           <div className="mt-5">
             <EngagementVhostSection
+              archived={archived}
+              engagementId={displayed.id}
+            />
+          </div>
+
+          <div className="mt-5">
+            <EngagementGitleaksSection
               archived={archived}
               engagementId={displayed.id}
             />

@@ -183,6 +183,13 @@
       "when": 1789677501755,
       "tag": "0025_har_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1789715522917,
+      "tag": "0026_gitleaks_scans",
+      "breakpoints": true
     }
   ]
 }
