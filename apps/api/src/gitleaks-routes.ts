@@ -91,6 +91,9 @@ export function registerGitleaksRoutes(
     }
     if (!stored.ok) {
       if (stored.code === "engagement_not_found") return sendError(reply, 404, "engagement_not_found");
+      // The engagement was archived while the detector ran: the
+      // repository refused the write inside its transaction.
+      if (stored.code === "engagement_archived") return sendError(reply, 409, "engagement_archived");
       if (stored.code === "storage_busy") return sendError(reply, 503, "storage_busy");
       return sendError(reply, 500, "invalid_persisted_data");
     }

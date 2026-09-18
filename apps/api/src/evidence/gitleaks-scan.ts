@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,18 +17,23 @@ import { buildGitleaksArgv, parseGitleaksJson } from "@stonehush/domain";
  * fresh 0700 temp directory, scanned with argv-only gitleaks execution
  * (never shell strings), then the stage is removed. File names inside the
  * stage are sanitized artifact ids, so detector-reported paths map back to
- * artifact ids without ever leaking host paths to the API layer.
+ * artifact ids without ever leaking host paths to the API layer. The JSON
+ * report lands in a stage file (the ffuf output-file pattern) and is read
+ * back bounded; detector log lines never enter the parse input.
  *
  * The executable is operator-configured with a shipped default, like
  * ffuf/nmap: an absent binary reports gitleaks_missing. Secret values are
  * dropped by the domain parser before this result reaches any repository.
+ *
+ * Nothing is skipped silently: every listed artifact is staged or the scan
+ * fails. An oversized evidence set fails with evidence_too_large instead
+ * of reporting a partial clean scan, and a failed stage cleanup fails the
+ * scan instead of reporting success while secret bytes remain on disk.
  */
 
-// Per-file stage cap: detector-relevant evidence (JS, responses, challenge
-// files) fits comfortably; larger blobs are skipped rather than staged.
-export const GITLEAKS_STAGE_FILE_MAX_BYTES = 8 * 1024 * 1024;
 export const GITLEAKS_STAGE_FILES_MAX = 2_000;
 export const GITLEAKS_STAGE_TOTAL_MAX_BYTES = 256 * 1024 * 1024;
+export const GITLEAKS_STAGE_REPORT_NAME = "gitleaks-report.json";
 
 export interface GitleaksStageArtifact {
   readonly artifactId: string;
@@ -43,7 +48,6 @@ export interface GitleaksEvidenceSource {
 
 export interface GitleaksScanSpawnResult {
   exitCode: number | null;
-  stdout: Buffer;
 }
 
 export interface GitleaksScanDeps {
@@ -56,20 +60,17 @@ export interface GitleaksScanDeps {
 export type ScanEngagementEvidenceResult =
   | {
       ok: true;
-      value: { matches: GitleaksMatch[]; truncated: boolean; stagedFiles: number; skippedFiles: number };
+      value: { matches: GitleaksMatch[]; truncated: boolean; stagedFiles: number };
     }
-  | {
-      ok: false;
-      error: {
-        code:
-          | "gitleaks_missing"
-          | "gitleaks_failed"
-          | "gitleaks_output_too_large"
-          | "gitleaks_parse_error"
-          | "evidence_too_large"
-          | "invalid_persisted_data";
-      };
-    };
+  | { ok: false; error: { code: GitleaksScanErrorCode } };
+
+export type GitleaksScanErrorCode =
+  | "gitleaks_missing"
+  | "gitleaks_failed"
+  | "gitleaks_output_too_large"
+  | "gitleaks_parse_error"
+  | "evidence_too_large"
+  | "invalid_persisted_data";
 
 export interface GitleaksScanner {
   scan(engagementId: string): Promise<ScanEngagementEvidenceResult>;
@@ -93,36 +94,138 @@ function defaultSpawn(request: {
     const child = spawn(request.executable, [...request.argv], {
       shell: false,
       timeout: request.timeoutMs,
-    });
-    const chunks: Buffer[] = [];
-    let total = 0;
-    let overflow = false;
-    child.stdout.on("data", (chunk: Buffer) => {
-      if (overflow) return;
-      total += chunk.length;
-      if (total > GITLEAKS_MAX_JSON_BYTES) {
-        overflow = true;
-        child.kill("SIGKILL");
-        return;
-      }
-      chunks.push(chunk);
+      stdio: ["ignore", "ignore", "ignore"],
     });
     child.on("error", (error) => reject(error));
-    child.on("close", (code) => {
-      if (overflow) {
-        const error = new Error("gitleaks stdout exceeded bound") as Error & { code: string };
-        error.code = "GITLEAKS_OUTPUT_TOO_LARGE";
-        reject(error);
-        return;
-      }
-      resolve({ exitCode: code, stdout: Buffer.concat(chunks, total) });
-    });
+    child.on("close", (code) => resolve({ exitCode: code }));
   });
 }
 
 function stageFileName(artifactId: string, index: number): string | null {
   if (!/^[a-z0-9][a-z0-9-]{0,126}$/.test(artifactId)) return null;
   return `${String(index).padStart(6, "0")}-${artifactId}.bin`;
+}
+
+export async function scanEngagementEvidence(
+  engagementId: string,
+  deps: GitleaksScanDeps,
+): Promise<ScanEngagementEvidenceResult> {
+  const executable = deps.executable ?? "/usr/bin/gitleaks";
+  if (typeof executable !== "string" || !executable.startsWith("/") || executable.includes(NUL)) {
+    return { ok: false, error: { code: "gitleaks_failed" } };
+  }
+
+  let stageDir: string | undefined;
+  const fail = async (code: GitleaksScanErrorCode): Promise<ScanEngagementEvidenceResult> => {
+    if (stageDir !== undefined) {
+      await rm(stageDir, { recursive: true, force: true }).catch(() => {});
+      stageDir = undefined;
+    }
+    return { ok: false, error: { code } };
+  };
+
+  try {
+    let artifacts: GitleaksStageArtifact[];
+    try {
+      artifacts = await deps.source.listArtifacts(engagementId);
+    } catch {
+      return await fail("invalid_persisted_data");
+    }
+    if (artifacts.length > GITLEAKS_STAGE_FILES_MAX) {
+      return await fail("evidence_too_large");
+    }
+
+    stageDir = await mkdtemp(path.join(tmpdir(), "stonehush-gitleaks-"));
+    await chmod(stageDir, 0o700);
+    const reportPath = path.join(stageDir, GITLEAKS_STAGE_REPORT_NAME);
+    const built = buildGitleaksArgv({ sourceDir: stageDir, reportPath });
+    if (!built.ok || built.argv[0] !== "gitleaks") {
+      return await fail("gitleaks_failed");
+    }
+    const argvTail = built.argv.slice(1);
+
+    const stagedNames = new Map<string, string>();
+    let stagedBytes = 0;
+    let index = 0;
+    for (const artifact of artifacts) {
+      const name = stageFileName(artifact.artifactId, index);
+      index += 1;
+      // A row that cannot be staged truthfully fails the scan: reporting
+      // success over an unscanned artifact would look like a clean scan.
+      if (name === null) return await fail("invalid_persisted_data");
+      if (stagedBytes + artifact.sizeBytes > GITLEAKS_STAGE_TOTAL_MAX_BYTES) {
+        return await fail("evidence_too_large");
+      }
+      let bytes: Buffer;
+      try {
+        bytes = await deps.source.readArtifact(artifact);
+      } catch {
+        return await fail("invalid_persisted_data");
+      }
+      if (bytes.length !== artifact.sizeBytes) return await fail("invalid_persisted_data");
+      await writeFile(path.join(stageDir, name), bytes, { mode: 0o600 });
+      stagedNames.set(name, artifact.artifactId);
+      stagedBytes += bytes.length;
+    }
+
+    const timeoutMs = deps.timeoutMs ?? GITLEAKS_SCAN_TIMEOUT_MS;
+    const spawnFn =
+      deps.spawn ??
+      ((request: { executable: string; argv: readonly string[] }) =>
+        defaultSpawn({ ...request, timeoutMs }));
+    let spawned: GitleaksScanSpawnResult;
+    try {
+      spawned = await spawnFn({ executable, argv: argvTail });
+    } catch (error) {
+      if (isEnoent(error)) return await fail("gitleaks_missing");
+      return await fail("gitleaks_failed");
+    }
+    if (spawned.exitCode !== 0 && spawned.exitCode !== 1) {
+      return await fail("gitleaks_failed");
+    }
+
+    let report: Buffer;
+    try {
+      report = await readFile(reportPath);
+    } catch {
+      // A missing report fails closed even on a clean detector exit: a
+      // scan that cannot show its report cannot claim to be clean.
+      return await fail("gitleaks_parse_error");
+    }
+    if (report.length > GITLEAKS_MAX_JSON_BYTES) {
+      return await fail("gitleaks_output_too_large");
+    }
+    const parsed = parseGitleaksJson(new Uint8Array(report));
+    if (!parsed.ok) {
+      return await fail(parsed.error.code);
+    }
+    // Map staged file names back to artifact ids. Detector paths outside
+    // the stage fail the scan instead of persisting a host path.
+    const matches: GitleaksMatch[] = [];
+    for (const match of parsed.matches) {
+      const base = path.basename(match.file);
+      const artifactId = stagedNames.get(base) ?? stagedNames.get(match.file);
+      if (artifactId === undefined) {
+        return await fail("gitleaks_parse_error");
+      }
+      matches.push({ ...match, file: artifactId });
+    }
+
+    const stagedFiles = stagedNames.size;
+    const truncated = parsed.truncated;
+    try {
+      await rm(stageDir, { recursive: true, force: true });
+      stageDir = undefined;
+    } catch {
+      // The scan is complete but secret bytes may remain staged: report
+      // failure so the route never persists results as a clean success.
+      // fail() retries the removal once before returning.
+      return await fail("gitleaks_failed");
+    }
+    return { ok: true, value: { matches, truncated, stagedFiles } };
+  } catch {
+    return await fail("gitleaks_failed");
+  }
 }
 
 export interface EvidenceArtifactLister {
@@ -189,111 +292,4 @@ export function createEvidenceScanner(input: {
         ...(input.executable === undefined ? {} : { executable: input.executable }),
       }),
   };
-}
-
-export async function scanEngagementEvidence(
-  engagementId: string,
-  deps: GitleaksScanDeps,
-): Promise<ScanEngagementEvidenceResult> {
-  const executable = deps.executable ?? "/usr/bin/gitleaks";
-  if (typeof executable !== "string" || !executable.startsWith("/") || executable.includes(NUL)) {
-    return { ok: false, error: { code: "gitleaks_failed" } };
-  }
-
-  let stageDir: string | undefined;
-  try {
-    let artifacts: GitleaksStageArtifact[];
-    try {
-      artifacts = await deps.source.listArtifacts(engagementId);
-    } catch {
-      return { ok: false, error: { code: "invalid_persisted_data" } };
-    }
-    if (artifacts.length > GITLEAKS_STAGE_FILES_MAX) {
-      return { ok: false, error: { code: "evidence_too_large" } };
-    }
-
-    stageDir = await mkdtemp(path.join(tmpdir(), "stonehush-gitleaks-"));
-    await chmod(stageDir, 0o700);
-    const built = buildGitleaksArgv({ sourceDir: stageDir });
-    if (!built.ok || built.argv[0] !== "gitleaks") {
-      return { ok: false, error: { code: "gitleaks_failed" } };
-    }
-    const argvTail = built.argv.slice(1);
-
-    const stagedNames = new Map<string, string>();
-    let stagedBytes = 0;
-    let skippedFiles = 0;
-    let index = 0;
-    for (const artifact of artifacts) {
-      const name = stageFileName(artifact.artifactId, index);
-      index += 1;
-      if (name === null || artifact.sizeBytes > GITLEAKS_STAGE_FILE_MAX_BYTES) {
-        skippedFiles += 1;
-        continue;
-      }
-      if (stagedBytes + artifact.sizeBytes > GITLEAKS_STAGE_TOTAL_MAX_BYTES) {
-        return { ok: false, error: { code: "evidence_too_large" } };
-      }
-      let bytes: Buffer;
-      try {
-        bytes = await deps.source.readArtifact(artifact);
-      } catch {
-        return { ok: false, error: { code: "invalid_persisted_data" } };
-      }
-      if (bytes.length !== artifact.sizeBytes || bytes.length > GITLEAKS_STAGE_FILE_MAX_BYTES) {
-        skippedFiles += 1;
-        continue;
-      }
-      await writeFile(path.join(stageDir, name), bytes, { mode: 0o600 });
-      stagedNames.set(name, artifact.artifactId);
-      stagedBytes += bytes.length;
-    }
-
-    const timeoutMs = deps.timeoutMs ?? GITLEAKS_SCAN_TIMEOUT_MS;
-    const spawn =
-      deps.spawn ??
-      ((request: { executable: string; argv: readonly string[] }) =>
-        defaultSpawn({ ...request, timeoutMs }));
-    let spawned: GitleaksScanSpawnResult;
-    try {
-      spawned = await spawn({ executable, argv: argvTail });
-    } catch (error) {
-      if (isEnoent(error)) return { ok: false, error: { code: "gitleaks_missing" } };
-      if ((error as { code?: string })?.code === "GITLEAKS_OUTPUT_TOO_LARGE") {
-        return { ok: false, error: { code: "gitleaks_output_too_large" } };
-      }
-      return { ok: false, error: { code: "gitleaks_failed" } };
-    }
-    if (spawned.stdout.length > GITLEAKS_MAX_JSON_BYTES) {
-      return { ok: false, error: { code: "gitleaks_output_too_large" } };
-    }
-    if (spawned.exitCode !== 0 && spawned.exitCode !== 1) {
-      return { ok: false, error: { code: "gitleaks_failed" } };
-    }
-    const parsed = parseGitleaksJson(new Uint8Array(spawned.stdout));
-    if (!parsed.ok) {
-      return { ok: false, error: { code: parsed.error.code } };
-    }
-    // Map staged file names back to artifact ids. Detector paths outside
-    // the stage fail the scan instead of persisting a host path.
-    const matches: GitleaksMatch[] = [];
-    for (const match of parsed.matches) {
-      const base = path.basename(match.file);
-      const artifactId = stagedNames.get(base) ?? stagedNames.get(match.file);
-      if (artifactId === undefined) {
-        return { ok: false, error: { code: "gitleaks_parse_error" } };
-      }
-      matches.push({ ...match, file: artifactId });
-    }
-    return {
-      ok: true,
-      value: { matches, truncated: parsed.truncated, stagedFiles: stagedNames.size, skippedFiles },
-    };
-  } catch {
-    return { ok: false, error: { code: "gitleaks_failed" } };
-  } finally {
-    if (stageDir !== undefined) {
-      await rm(stageDir, { recursive: true, force: true }).catch(() => {});
-    }
-  }
 }

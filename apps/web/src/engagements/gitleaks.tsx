@@ -67,8 +67,8 @@ function GitleaksScanBody({
         </p>
       )}
       <p className="mt-0 mb-3 text-[12px] leading-5 text-muted-foreground">
-        Scans captured evidence for leaked keys and tokens. Only the rule, file, and line are
-        kept. Secret values never reach the database or this screen.
+        Scans captured evidence for leaked keys and tokens. Only the rule, file, line, and a
+        dedupe fingerprint are kept. Secret values never reach the database or this screen.
       </p>
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         <Button type="button" disabled={!canScan} onClick={run}>

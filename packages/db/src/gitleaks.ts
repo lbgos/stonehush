@@ -18,7 +18,7 @@ export interface GitleaksRepositoryProviders {
 
 export type CreateGitleaksScanResult =
   | { ok: true; value: { scanId: string; engagementId: string; scannedAt: string; matchCount: number; truncated: boolean; matches: GitleaksMatch[] } }
-  | { ok: false; code: "engagement_not_found" | "storage_busy" | "invalid_persisted_data" };
+  | { ok: false; code: "engagement_not_found" | "engagement_archived" | "storage_busy" | "invalid_persisted_data" };
 
 export type LatestGitleaksScanResult =
   | { ok: true; value: { scanId: string; engagementId: string; scannedAt: string; matchCount: number; truncated: boolean; matches: GitleaksMatch[] } | null }
@@ -54,37 +54,47 @@ export class GitleaksRepository {
     engagementId: string,
     input: { matches: GitleaksMatch[]; truncated: boolean },
   ): CreateGitleaksScanResult {
+    // Dedupe on the row identity before counting: the primary key drops
+    // exact duplicates on insert, so the count must describe kept rows.
+    const seen = new Set<string>();
+    const matches: GitleaksMatch[] = [];
     for (const match of input.matches) {
       if (!GitleaksMatchSchema.safeParse(match).success) {
         return { ok: false, code: "invalid_persisted_data" };
       }
+      const identity = `${match.ruleId}\0${match.file}\0${match.line}\0${match.fingerprint}`;
+      if (seen.has(identity)) continue;
+      seen.add(identity);
+      matches.push(match);
     }
-    if (input.matches.length > GITLEAKS_MAX_FINDINGS) {
+    if (matches.length > GITLEAKS_MAX_FINDINGS) {
       return { ok: false, code: "invalid_persisted_data" };
     }
     try {
-      const engagement = this.db
-        .select({ id: engagements.id })
-        .from(engagements)
-        .where(eq(engagements.id, engagementId))
-        .get();
-      if (engagement === undefined) {
-        return { ok: false, code: "engagement_not_found" };
-      }
       const scanId = this.createId();
       const scannedAt = this.now().toISOString();
-      this.db.transaction(
+      // The engagement read lives inside the write transaction: the route
+      // checks archived status before the scan runs, but an archive can
+      // land while the detector works. The write stays authoritative.
+      const outcome = this.db.transaction(
         (tx) => {
+          const engagement = tx
+            .select({ id: engagements.id, status: engagements.status })
+            .from(engagements)
+            .where(eq(engagements.id, engagementId))
+            .get();
+          if (engagement === undefined) return { ok: false as const, code: "engagement_not_found" as const };
+          if (engagement.status === "archived") return { ok: false as const, code: "engagement_archived" as const };
           tx.insert(gitleaksScans)
             .values({
               scanId,
               engagementId,
-              matchCount: input.matches.length,
+              matchCount: matches.length,
               truncated: input.truncated,
               createdAt: scannedAt,
             })
             .run();
-          for (const match of input.matches) {
+          for (const match of matches) {
             tx.insert(gitleaksMatches)
               .values({
                 scanId,
@@ -96,9 +106,11 @@ export class GitleaksRepository {
               .onConflictDoNothing()
               .run();
           }
+          return { ok: true as const };
         },
         { behavior: "immediate" },
       );
+      if (!outcome.ok) return outcome;
       const stored = this.readScan(scanId);
       if (stored === undefined) return { ok: false, code: "invalid_persisted_data" };
       return { ok: true, value: stored };

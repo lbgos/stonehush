@@ -69,6 +69,7 @@ export const GitleaksErrorCodeSchema = z.enum([
   "engagement_archived",
   "gitleaks_missing",
   "gitleaks_failed",
+  "gitleaks_parse_error",
   "gitleaks_output_too_large",
   "evidence_too_large",
   "storage_busy",

@@ -97,6 +97,31 @@ describe("GitleaksRepository", () => {
     expect(missing).toEqual({ ok: false, code: "engagement_not_found" });
   });
 
+  it("counts kept rows when duplicate matches arrive together", () => {
+    const { repository, engagementId } = fixture();
+    const created = repository.createScan(engagementId, {
+      matches: [match(), match(), match({ line: 8, fingerprint: "1111111111111111" })],
+      truncated: false,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.value.matchCount).toBe(2);
+    expect(created.value.matches).toHaveLength(2);
+  });
+
+  it("refuses the write when the engagement is archived", () => {
+    const { database, repository, engagementId } = fixture();
+    const created = repository.createScan(engagementId, { matches: [match()], truncated: false });
+    expect(created.ok).toBe(true);
+    const engagements = new EngagementRepository(database.db);
+    const current = engagements.getEngagement(engagementId);
+    if (!current.ok) throw new Error("engagement fixture failed");
+    const archived = engagements.archive(engagementId, current.value.engagement.revision);
+    expect(archived.ok).toBe(true);
+    const refused = repository.createScan(engagementId, { matches: [match()], truncated: false });
+    expect(refused).toEqual({ ok: false, code: "engagement_archived" });
+  });
+
   it("rejects matches carrying secret-shaped fields", () => {
     const { repository, engagementId } = fixture();
     const created = repository.createScan(engagementId, {

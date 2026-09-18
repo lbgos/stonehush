@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   GITLEAKS_MAX_FINDINGS,
+  GitleaksErrorSchema,
   GitleaksMatchSchema,
   GitleaksScanResponseSchema,
 } from "./gitleaks.js";
@@ -38,8 +39,7 @@ describe("gitleaks contract", () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("caps the matches array", () => {
-    const match = {
+  it("caps the matches array", () => {    const match = {
       ruleId: "r",
       file: "f",
       line: 1,
@@ -63,5 +63,17 @@ describe("gitleaks contract", () => {
       matches: Array.from({ length: GITLEAKS_MAX_FINDINGS + 1 }, () => match),
     });
     expect(over.success).toBe(false);
+  });
+
+  it("carries every scanner failure code the route can send", () => {
+    for (const code of [
+      "gitleaks_missing",
+      "gitleaks_failed",
+      "gitleaks_parse_error",
+      "gitleaks_output_too_large",
+      "evidence_too_large",
+    ]) {
+      expect(GitleaksErrorSchema.safeParse({ code }).success).toBe(true);
+    }
   });
 });

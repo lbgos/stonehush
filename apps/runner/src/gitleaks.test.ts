@@ -24,21 +24,32 @@ const FIXTURE_JSON = JSON.stringify([
   },
 ]);
 
-function fixtureSpawn(stdout: string, exitCode: number | null = 1) {
+const OPTIONS = { sourceDir: "/tmp/evidence-scan", reportPath: "/tmp/evidence-scan/report.json" };
+
+function fixtureDeps(report: string | null, exitCode: number | null = 1) {
   const calls: { executable: string; argv: readonly string[] }[] = [];
+  const reads: string[] = [];
   return {
     calls,
-    spawn: async (request: { executable: string; argv: readonly string[] }) => {
-      calls.push(request);
-      return { exitCode, stdout: Buffer.from(stdout, "utf8") };
+    reads,
+    deps: {
+      spawn: async (request: { executable: string; argv: readonly string[] }) => {
+        calls.push(request);
+        return { exitCode };
+      },
+      readReportJson: async (absolutePath: string) => {
+        reads.push(absolutePath);
+        if (report === null) throw new Error("report unavailable");
+        return Buffer.from(report, "utf8");
+      },
     },
   };
 }
 
 describe("runGitleaksScan", () => {
   it("runs the fixed detect argv and returns redacted matches only", async () => {
-    const fixture = fixtureSpawn(FIXTURE_JSON);
-    const result = await runGitleaksScan({ spawn: fixture.spawn }, { sourceDir: "/tmp/evidence-scan" });
+    const fixture = fixtureDeps(FIXTURE_JSON);
+    const result = await runGitleaksScan(fixture.deps, OPTIONS);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.exitCode).toBe(1);
@@ -53,9 +64,12 @@ describe("runGitleaksScan", () => {
       "--no-git",
       "-f",
       "json",
+      "--report-path",
+      "/tmp/evidence-scan/report.json",
       "--no-banner",
       "--redact",
     ]);
+    expect(fixture.reads).toEqual(["/tmp/evidence-scan/report.json"]);
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain(LIVE_KEY);
     expect(serialized).not.toContain("Secret");
@@ -69,39 +83,44 @@ describe("runGitleaksScan", () => {
         spawn: async () => {
           throw enoent;
         },
+        readReportJson: async () => Buffer.of(),
       },
-      { sourceDir: "/tmp/evidence-scan" },
+      OPTIONS,
     );
     expect(result).toEqual({ ok: false, error: { code: "gitleaks_missing" } });
   });
 
-  it("treats exit 0 with empty output as zero matches", async () => {
-    const fixture = fixtureSpawn("", 0);
-    const result = await runGitleaksScan({ spawn: fixture.spawn }, { sourceDir: "/tmp/evidence-scan" });
+  it("treats an empty report as zero matches", async () => {
+    const fixture = fixtureDeps("[]", 0);
+    const result = await runGitleaksScan(fixture.deps, OPTIONS);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.matches).toEqual([]);
   });
 
+  it("fails closed when the report is missing, even on a clean exit", async () => {
+    const fixture = fixtureDeps(null, 0);
+    const result = await runGitleaksScan(fixture.deps, OPTIONS);
+    expect(result).toEqual({ ok: false, error: { code: "gitleaks_parse_error" } });
+  });
+
   it("fails unexpected exits without parsing", async () => {
-    const fixture = fixtureSpawn(FIXTURE_JSON, 2);
-    const result = await runGitleaksScan({ spawn: fixture.spawn }, { sourceDir: "/tmp/evidence-scan" });
+    const fixture = fixtureDeps(FIXTURE_JSON, 2);
+    const result = await runGitleaksScan(fixture.deps, OPTIONS);
     expect(result).toEqual({ ok: false, error: { code: "gitleaks_failed" } });
   });
 
   it("rejects an invalid source contract before spawning", async () => {
-    const fixture = fixtureSpawn(FIXTURE_JSON);
-    const result = await runGitleaksScan({ spawn: fixture.spawn }, { sourceDir: "relative" });
+    const fixture = fixtureDeps(FIXTURE_JSON);
+    const result = await runGitleaksScan(fixture.deps, { sourceDir: "relative" });
     expect(result).toEqual({ ok: false, error: { code: "invalid_gitleaks_contract" } });
     expect(fixture.calls).toHaveLength(0);
   });
 
   it("bounds oversized detector output", async () => {
-    const big = { exitCode: 1 as const, stdout: Buffer.alloc(9 * 1024 * 1024, 0x5b) };
-    const result = await runGitleaksScan(
-      { spawn: async () => big },
-      { sourceDir: "/tmp/evidence-scan" },
-    );
+    const fixture = fixtureDeps(null);
+    fixture.deps.readReportJson = async () => Buffer.alloc(9 * 1024 * 1024, 0x5b);
+    const result = await runGitleaksScan(fixture.deps, OPTIONS);
     expect(result).toEqual({ ok: false, error: { code: "gitleaks_output_too_large" } });
   });
 });

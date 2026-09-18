@@ -69,7 +69,7 @@ describe("gitleaks routes", () => {
     const scanner: GitleaksScanner = {
       scan: async () => ({
         ok: true,
-        value: { matches: [redactedMatch()], truncated: false, stagedFiles: 2, skippedFiles: 0 },
+        value: { matches: [redactedMatch()], truncated: false, stagedFiles: 2 },
       }),
     };
     const { app, engagementRepository } = await fixture(scanner);
@@ -119,13 +119,34 @@ describe("gitleaks routes", () => {
     expect(scanned.json()).toEqual({ code: "gitleaks_missing" });
   });
 
+  it("returns structured errors for detector failures", async () => {
+    for (const [code, status] of [
+      ["gitleaks_failed", 502],
+      ["gitleaks_parse_error", 502],
+      ["gitleaks_output_too_large", 502],
+      ["evidence_too_large", 413],
+    ] as const) {
+      const { app, engagementRepository } = await fixture({
+        scan: async () => ({ ok: false, error: { code } }),
+      });
+      const engagement = await createEngagement(engagementRepository);
+      const scanned = await app.inject({
+        method: "POST",
+        url: `/api/v1/engagements/${engagement.id}/gitleaks-scans`,
+        payload: {},
+      });
+      expect(scanned.statusCode).toBe(status);
+      expect(scanned.json()).toEqual({ code });
+    }
+  });
+
   it("rescan after new evidence surfaces the new matches", async () => {
     let round = 0;
     const { app, engagementRepository } = await fixture({
       scan: async () => {
         round += 1;
         return round === 1
-          ? { ok: true, value: { matches: [redactedMatch()], truncated: false, stagedFiles: 1, skippedFiles: 0 } }
+          ? { ok: true, value: { matches: [redactedMatch()], truncated: false, stagedFiles: 1 } }
           : {
               ok: true,
               value: {
@@ -135,7 +156,6 @@ describe("gitleaks routes", () => {
                 ],
                 truncated: false,
                 stagedFiles: 2,
-                skippedFiles: 0,
               },
             };
       },
@@ -157,7 +177,6 @@ describe("gitleaks routes", () => {
           matches: [{ ...redactedMatch(), Secret: LIVE_KEY } as unknown as ReturnType<typeof redactedMatch>],
           truncated: false,
           stagedFiles: 1,
-          skippedFiles: 0,
         },
       }),
     });
@@ -180,7 +199,7 @@ describe("gitleaks routes", () => {
     const { app, engagementRepository } = await fixture({
       scan: async () => ({
         ok: true,
-        value: { matches: [], truncated: false, stagedFiles: 0, skippedFiles: 0 },
+        value: { matches: [], truncated: false, stagedFiles: 0 },
       }),
     });
     const engagement = await createEngagement(engagementRepository);
@@ -198,5 +217,31 @@ describe("gitleaks routes", () => {
       url: "/api/v1/engagements/10000000-0000-4000-8000-000000000099/gitleaks-matches",
     });
     expect(missing.statusCode).toBe(404);
+  });
+
+  it("refuses the write when the engagement is archived mid-scan", async () => {
+    const { app, engagementRepository } = await fixture({
+      scan: async (engagementId: string) => {
+        const current = engagementRepository.getEngagement(engagementId);
+        if (!current.ok) throw new Error("engagement fixture failed");
+        const archived = engagementRepository.archive(engagementId, current.value.engagement.revision);
+        if (!archived.ok) throw new Error("archive fixture failed");
+        return { ok: true, value: { matches: [redactedMatch()], truncated: false, stagedFiles: 1 } };
+      },
+    });
+    const engagement = await createEngagement(engagementRepository);
+    const scanned = await app.inject({
+      method: "POST",
+      url: `/api/v1/engagements/${engagement.id}/gitleaks-scans`,
+      payload: {},
+    });
+    expect(scanned.statusCode).toBe(409);
+    expect(scanned.json()).toEqual({ code: "engagement_archived" });
+    const listed = await app.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${engagement.id}/gitleaks-matches`,
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toEqual([]);
   });
 });

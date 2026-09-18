@@ -1,4 +1,6 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -22,9 +24,9 @@ function sourceWith(files: { artifactId: string; bytes: string }[]) {
   };
 }
 
-// Stub detector: reads the staged directory straight from argv, exactly
-// where the service pointed the real binary, and reports staged files
-// containing the live-looking key with full gitleaks-shaped records.
+// Stub detector: writes a gitleaks-shaped JSON report for staged files
+// containing the live-looking key, using the report path straight from
+// argv exactly where the service pointed the real binary.
 function stubDetector() {
   const calls: { executable: string; argv: readonly string[] }[] = [];
   return {
@@ -32,11 +34,14 @@ function stubDetector() {
     spawn: async (request: { executable: string; argv: readonly string[] }) => {
       calls.push(request);
       const sourceIndex = request.argv.indexOf("--source");
+      const reportIndex = request.argv.indexOf("--report-path");
       const dir = request.argv[sourceIndex + 1] as string;
+      const reportPath = request.argv[reportIndex + 1] as string;
       const names = await readdir(dir);
       const findings: unknown[] = [];
       for (const name of names) {
-        const content = await readFile(`${dir}/${name}`, "utf8");
+        if (name === path.basename(reportPath)) continue;
+        const content = await readFile(path.join(dir, name), "utf8");
         if (content.includes(LIVE_KEY)) {
           findings.push({
             Description: "GitHub Personal Access Token",
@@ -44,15 +49,13 @@ function stubDetector() {
             EndLine: 1,
             Match: content,
             Secret: LIVE_KEY,
-            File: `${dir}/${name}`,
+            File: path.join(dir, name),
             RuleID: "github-pat",
           });
         }
       }
-      return {
-        exitCode: findings.length > 0 ? 1 : 0,
-        stdout: Buffer.from(JSON.stringify(findings), "utf8"),
-      };
+      await writeFile(reportPath, JSON.stringify(findings), { mode: 0o600 });
+      return { exitCode: findings.length > 0 ? 1 : 0 };
     },
   };
 }
@@ -71,7 +74,6 @@ describe("scanEngagementEvidence", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.stagedFiles).toBe(2);
-    expect(result.value.skippedFiles).toBe(0);
     expect(result.value.truncated).toBe(false);
     expect(result.value.matches).toHaveLength(1);
     expect(result.value.matches[0]).toMatchObject({
@@ -82,8 +84,18 @@ describe("scanEngagementEvidence", () => {
     expect(result.value.matches[0]?.fingerprint).toMatch(/^[0-9a-f]{16}$/);
     expect(detector.calls).toHaveLength(1);
     expect(detector.calls[0]?.executable).toBe("/usr/bin/gitleaks");
-    expect(detector.calls[0]?.argv.slice(0, 3)).toEqual(["detect", "--source", detector.calls[0]?.argv[2]]);
-    expect(detector.calls[0]?.argv).toContain("--no-git");
+    const argv = detector.calls[0]?.argv ?? [];
+    expect(argv.slice(0, 7)).toEqual([
+      "detect",
+      "--source",
+      argv[2],
+      "--no-git",
+      "-f",
+      "json",
+      "--report-path",
+    ]);
+    expect(argv).toContain("--no-banner");
+    expect(argv).toContain("--redact");
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain(LIVE_KEY);
     expect(serialized).not.toContain("Secret");
@@ -108,8 +120,41 @@ describe("scanEngagementEvidence", () => {
     }));
     const result = await scanEngagementEvidence("eng-1", {
       source: sourceWith(files),
-      spawn: async () => ({ exitCode: 0, stdout: Buffer.of() }),
+      spawn: async () => ({ exitCode: 0 }),
     });
     expect(result).toEqual({ ok: false, error: { code: "evidence_too_large" } });
+  });
+
+  it("fails instead of silently skipping an artifact that changed mid-read", async () => {
+    const source = sourceWith([{ artifactId: "ev-000001", bytes: "stable\n" }]);
+    const tampered = {
+      ...source,
+      readArtifact: async () => Buffer.from("different length bytes here\n", "utf8"),
+    };
+    const result = await scanEngagementEvidence("eng-1", {
+      source: tampered,
+      spawn: async () => ({ exitCode: 0 }),
+    });
+    expect(result).toEqual({ ok: false, error: { code: "invalid_persisted_data" } });
+  });
+
+  it("fails closed when the detector leaves no report", async () => {
+    const result = await scanEngagementEvidence("eng-1", {
+      source: sourceWith([]),
+      spawn: async () => ({ exitCode: 0 }),
+    });
+    expect(result).toEqual({ ok: false, error: { code: "gitleaks_parse_error" } });
+  });
+
+  it("leaves no stage directory behind after a scan", async () => {
+    const before = new Set(await readdir(tmpdir()));
+    const detector = stubDetector();
+    const result = await scanEngagementEvidence("eng-1", {
+      source: sourceWith([{ artifactId: "ev-000001", bytes: "clean\n" }]),
+      spawn: detector.spawn,
+    });
+    expect(result.ok).toBe(true);
+    const after = await readdir(tmpdir());
+    expect(after.filter((name) => name.startsWith("stonehush-gitleaks-") && !before.has(name))).toEqual([]);
   });
 });
