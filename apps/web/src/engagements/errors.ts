@@ -2,10 +2,12 @@ import {
   ActionMutationErrorSchema,
   EngagementMutationErrorSchema,
   FindingMutationErrorSchema,
+  GitleaksErrorSchema,
   UpdateEngagementNotesErrorSchema,
   type ActionMutationError,
   type EngagementMutationError,
   type FindingMutationError,
+  type GitleaksError,
   type UpdateEngagementNotesError,
 } from "@stonehush/contracts";
 
@@ -15,6 +17,7 @@ export const ENGAGEMENT_SERVICES_QUERY_ERROR_MESSAGE = "The services request fai
 export const ENGAGEMENT_HTTP_PROBES_QUERY_ERROR_MESSAGE = "The probe results request failed.";
 export const ENGAGEMENT_FFUF_RESULTS_QUERY_ERROR_MESSAGE = "The ffuf results request failed.";
 export const ENGAGEMENT_VHOST_RESULTS_QUERY_ERROR_MESSAGE = "The vhost results request failed.";
+export const ENGAGEMENT_GITLEAKS_MATCHES_QUERY_ERROR_MESSAGE = "The secret scan results request failed.";
 export const FINDINGS_QUERY_ERROR_MESSAGE = "The findings request failed.";
 export const REPORT_QUERY_ERROR_MESSAGE = "The report request failed.";
 export const ENGAGEMENT_MUTATION_ERROR_MESSAGE = "The engagement request failed.";
@@ -117,6 +120,13 @@ export class EngagementVhostResultsQueryError extends Error {
   constructor() {
     super(ENGAGEMENT_VHOST_RESULTS_QUERY_ERROR_MESSAGE);
     this.name = "EngagementVhostResultsQueryError";
+  }
+}
+
+export class EngagementGitleaksMatchesQueryError extends Error {
+  constructor() {
+    super(ENGAGEMENT_GITLEAKS_MATCHES_QUERY_ERROR_MESSAGE);
+    this.name = "EngagementGitleaksMatchesQueryError";
   }
 }
 
@@ -303,6 +313,47 @@ export function findingErrorFromContract(
 export function findingMutationMessage(error: unknown): string {
   if (error instanceof FindingMutationClientError) return error.message;
   return FINDING_MUTATION_ERROR_MESSAGE;
+}
+
+export const GITLEAKS_SCAN_ERROR_COPY = {
+  invalid_request: "The request was not accepted. Try again.",
+  engagement_not_found: "That engagement is no longer available.",
+  engagement_archived: "This engagement is archived.",
+  gitleaks_missing: "gitleaks is not installed, so no scan ran.",
+  gitleaks_failed: "gitleaks did not finish. Try again.",
+  gitleaks_parse_error: "gitleaks returned output this client cannot use.",
+  gitleaks_output_too_large: "The detector output was too large to keep.",
+  evidence_too_large: "The evidence set is too large for one scan.",
+  storage_busy: "Storage is busy. Try again.",
+  invalid_persisted_data: "The server returned data this client cannot use.",
+  request_failed: "The secret scan request failed.",
+} as const;
+
+export type GitleaksScanErrorCode = keyof typeof GITLEAKS_SCAN_ERROR_COPY;
+
+export class GitleaksScanClientError extends Error {
+  readonly code: GitleaksScanErrorCode;
+
+  constructor(code: GitleaksScanErrorCode) {
+    super(GITLEAKS_SCAN_ERROR_COPY[code]);
+    this.name = "GitleaksScanClientError";
+    this.code = code;
+  }
+}
+
+export function parseGitleaksScanError(payload: unknown): GitleaksScanClientError {
+  const parsed = GitleaksErrorSchema.safeParse(payload);
+  if (parsed.success) return gitleaksScanErrorFromContract(parsed.data);
+  return new GitleaksScanClientError("request_failed");
+}
+
+export function gitleaksScanErrorFromContract(error: GitleaksError): GitleaksScanClientError {
+  return new GitleaksScanClientError(error.code);
+}
+
+export function gitleaksScanMessage(error: unknown): string {
+  if (error instanceof GitleaksScanClientError) return error.message;
+  return GITLEAKS_SCAN_ERROR_COPY.request_failed;
 }
 
 export class FindingsQueryError extends Error {

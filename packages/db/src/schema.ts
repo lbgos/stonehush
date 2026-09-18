@@ -1276,6 +1276,61 @@ export const vhostResults = sqliteTable(
   ],
 );
 
+export const gitleaksScans = sqliteTable(
+  "gitleaks_scans",
+  {
+    scanId: text("scan_id").primaryKey(),
+    engagementId: text("engagement_id")
+      .notNull()
+      .references(() => engagements.id, { onDelete: "restrict" }),
+    matchCount: integer("match_count").notNull(),
+    truncated: integer("truncated", { mode: "boolean" }).notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "gitleaks_scan_id",
+      sql`length(${table.scanId}) = 36`,
+    ),
+    check("gitleaks_scan_match_count", sql`${table.matchCount} >= 0`),
+    check("gitleaks_scan_truncated_boolean", sql`${table.truncated} in (0, 1)`),
+    check("gitleaks_scan_created_at", sql`length(${table.createdAt}) >= 20`),
+  ],
+);
+
+export const gitleaksMatches = sqliteTable(
+  "gitleaks_matches",
+  {
+    scanId: text("scan_id")
+      .notNull()
+      .references(() => gitleaksScans.scanId, { onDelete: "restrict" }),
+    ruleId: text("rule_id").notNull(),
+    file: text("file").notNull(),
+    line: integer("line").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.scanId, table.ruleId, table.file, table.line, table.fingerprint],
+    }),
+    // No secret value column exists on purpose: the redaction boundary in
+    // the domain parser drops Secret and Match before this row is written.
+    check(
+      "gitleaks_match_rule_id",
+      sql`length(${table.ruleId}) between 1 and 128`,
+    ),
+    check(
+      "gitleaks_match_file",
+      sql`length(${table.file}) between 1 and 1024`,
+    ),
+    check("gitleaks_match_line", sql`${table.line} >= 0`),
+    check(
+      "gitleaks_match_fingerprint",
+      sql`length(${table.fingerprint}) = 16 and ${table.fingerprint} not glob '*[^0-9a-f]*'`,
+    ),
+  ],
+);
+
 export const findings = sqliteTable(
   "findings",
   {
@@ -2174,6 +2229,8 @@ export type NmapServiceRow = typeof nmapServices.$inferSelect;
 export type HttpProbeResultRow = typeof httpProbeResults.$inferSelect;
 export type FfufResultRow = typeof ffufResults.$inferSelect;
 export type VhostResultRow = typeof vhostResults.$inferSelect;
+export type GitleaksScanRow = typeof gitleaksScans.$inferSelect;
+export type GitleaksMatchRow = typeof gitleaksMatches.$inferSelect;
 export type FindingRow = typeof findings.$inferSelect;
 export type TechniqueRow = typeof techniques.$inferSelect;
 export type EvidenceExcerptRow = typeof evidenceExcerpts.$inferSelect;

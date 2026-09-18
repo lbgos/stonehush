@@ -1,0 +1,39 @@
+import { describe, expect, it } from "vitest";
+
+import { buildGitleaksArgv } from "./gitleaks-argv.js";
+
+describe("buildGitleaksArgv", () => {
+  it("emits the fixed detect argv with a report file", () => {
+    const built = buildGitleaksArgv({
+      sourceDir: "/tmp/scan-01",
+      reportPath: "/tmp/scan-01/report.json",
+    });
+    expect(built).toEqual({
+      ok: true,
+      argv: [
+        "gitleaks",
+        "detect",
+        "--source",
+        "/tmp/scan-01",
+        "--no-git",
+        "-f",
+        "json",
+        "--report-path",
+        "/tmp/scan-01/report.json",
+        "--no-banner",
+        "--redact",
+      ],
+    });
+  });
+
+  it("rejects relative paths, NUL bytes, identical paths, and non-objects", () => {
+    const reportPath = "/tmp/scan-01/report.json";
+    expect(buildGitleaksArgv({ sourceDir: "relative/dir", reportPath }).ok).toBe(false);
+    expect(buildGitleaksArgv({ sourceDir: "/tmp/scan-01" }).ok).toBe(false);
+    expect(buildGitleaksArgv({ sourceDir: "/tmp/scan-01", reportPath: "/tmp/scan-01" }).ok).toBe(false);
+    expect(buildGitleaksArgv({ sourceDir: "/tmp/a\0b", reportPath }).ok).toBe(false);
+    expect(buildGitleaksArgv({}).ok).toBe(false);
+    expect(buildGitleaksArgv(null).ok).toBe(false);
+    expect(buildGitleaksArgv("/tmp/scan-01").ok).toBe(false);
+  });
+});

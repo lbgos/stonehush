@@ -6,6 +6,7 @@ import {
   EvidenceGrantRepository,
   ExcerptRepository,
   FfufRepository,
+  GitleaksRepository,
   HttpProbeRepository,
   LeadRepository,
   NmapServiceRepository,
@@ -35,6 +36,7 @@ import { BackupLock } from "./evidence/backup-lock.js";
 import { EvidencePublicationService } from "./evidence/evidence-publication.js";
 import { EvidenceStore } from "./evidence/evidence-store.js";
 import { FfufProjectionService } from "./evidence/ffuf-projection.js";
+import { createEvidenceScanner, type GitleaksScanner } from "./evidence/gitleaks-scan.js";
 import { VhostProjectionService } from "./evidence/vhost-projection.js";
 import { HttpProbeProjectionService } from "./evidence/http-probe-projection.js";
 import { NmapProjectionService } from "./evidence/nmap-projection.js";
@@ -66,6 +68,7 @@ export async function buildStorageBackedApp(
     const httpProbeRepository = new HttpProbeRepository(database.db);
     const ffufRepository = new FfufRepository(database.db);
     const vhostRepository = new VhostRepository(database.db);
+    const gitleaksRepository = new GitleaksRepository(database.db);
     const settingsRepository = new SettingsRepository(database.db);
     const advisorTurnsRepository = new AdvisorTurnsRepository(database.db);
     const runOutputRepository = new RunOutputRepository(database.db);
@@ -155,6 +158,17 @@ export async function buildStorageBackedApp(
       httpProbeRepository,
       ffufRepository,
       vhostRepository,
+      gitleaksRepository,
+      // Secret scan needs verified evidence reads: without the managed
+      // store there is nothing truthful to scan, so no scanner is wired.
+      ...(evidenceStore === undefined
+        ? {}
+        : {
+            gitleaksScanner: createEvidenceScanner({
+              artifacts: runOutputRepository,
+              store: evidenceStore,
+            }) satisfies GitleaksScanner,
+          }),
       runOutputRepository,
       excerptRepository,
       leadRepository,

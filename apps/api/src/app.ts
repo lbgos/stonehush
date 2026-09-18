@@ -17,6 +17,7 @@ import type {
   EvidenceGrantRepository,
   ExcerptRepository,
   FfufRepository,
+  GitleaksRepository,
   HttpProbeRepository,
   LeadRepository,
   NmapServiceRepository,
@@ -49,6 +50,7 @@ import { registerRunnerAuthHook, stripAuthorizationHeader } from "./runner-http.
 import { registerRunnerEnrollmentRoutes } from "./runner-enrollment-routes.js";
 import { registerRunnerControlRoutes } from "./runner-routes.js";
 import { registerFfufRoutes } from "./ffuf-routes.js";
+import { registerGitleaksRoutes, type GitleaksScanner } from "./gitleaks-routes.js";
 import { registerVhostRoutes } from "./vhost-routes.js";
 import { registerNmapServiceRoutes } from "./nmap-service-routes.js";
 import { registerRunOutputRoutes } from "./run-output-routes.js";
@@ -154,6 +156,11 @@ interface BuildAppOptions {
   httpProbeRepository?: Pick<HttpProbeRepository, "listForEngagement">;
   ffufRepository?: Pick<FfufRepository, "listForEngagement">;
   vhostRepository?: Pick<VhostRepository, "listForEngagement">;
+  // Local secret scan over captured evidence (T0, read-only). Registered
+  // only when the scan store and a scanner are both wired; without them
+  // the routes do not exist.
+  gitleaksRepository?: Pick<GitleaksRepository, "createScan" | "latestForEngagement">;
+  gitleaksScanner?: GitleaksScanner;
   resumeRepository?: Pick<EngagementResumeRepository, "getNextStep" | "putNextStep">;
   runOutputRepository?: Pick<
     RunOutputRepository,
@@ -241,6 +248,8 @@ export function buildApp({
   httpProbeRepository,
   ffufRepository,
   vhostRepository,
+  gitleaksRepository,
+  gitleaksScanner,
   runOutputRepository,
   excerptRepository,
   leadRepository,
@@ -404,6 +413,13 @@ export function buildApp({
     registerVhostRoutes(app, {
       results: vhostRepository,
       ...(operatorCommandRepository === undefined ? {} : { commands: operatorCommandRepository }),
+    });
+  }
+  if (gitleaksRepository !== undefined && gitleaksScanner !== undefined) {
+    registerGitleaksRoutes(app, {
+      engagements: engagementRepository,
+      scans: gitleaksRepository,
+      scanner: gitleaksScanner,
     });
   }
   if (leadRepository !== undefined) {
