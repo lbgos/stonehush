@@ -19,13 +19,6 @@ export interface RunOutputDependencies {
   readonly store: Pick<EvidenceStore, "verifiedExcerpt">;
 }
 
-type OutputErrorCode = Extract<
-  { code: string },
-  unknown
-> extends never
-  ? never
-  : string;
-
 function sendOutputError(reply: FastifyReply, status: number, code: string) {
   const body = RunOutputErrorSchema.parse({ code });
   return reply.code(status).type("application/json").send(body);
@@ -38,10 +31,6 @@ function isStorageBusy(error: unknown): boolean {
     "code" in error &&
     (error.code === "SQLITE_BUSY" || error.code === "SQLITE_BUSY_TIMEOUT")
   );
-}
-
-function decodeExcerpt(content: Buffer): string {
-  return content.toString("utf8");
 }
 
 async function buildStream(
@@ -58,15 +47,17 @@ async function buildStream(
   | { ok: true; value: RunOutputResponse["stdout"] }
   | { ok: false; code: "missing_artifact" | "corrupt_artifact" }
 > {
-  const matches = artifacts.filter((artifact) => artifact.kind === kind);
-  if (matches.length === 0) {
-    return { ok: true, value: { present: false, truncated: false, content: "" } };
+  let selected: (typeof artifacts)[number] | undefined;
+  for (const artifact of artifacts) {
+    if (artifact.kind !== kind) continue;
+    if (
+      selected === undefined ||
+      artifact.sizeBytes > selected.sizeBytes ||
+      (artifact.sizeBytes === selected.sizeBytes && artifact.artifactId < selected.artifactId)
+    ) {
+      selected = artifact;
+    }
   }
-  matches.sort((left, right) => {
-    if (left.sizeBytes !== right.sizeBytes) return right.sizeBytes - left.sizeBytes;
-    return left.artifactId < right.artifactId ? -1 : 1;
-  });
-  const selected = matches[0];
   if (selected === undefined) {
     return { ok: true, value: { present: false, truncated: false, content: "" } };
   }
@@ -83,7 +74,7 @@ async function buildStream(
   }
   if (excerpt.status === "missing") return { ok: false, code: "missing_artifact" };
   if (excerpt.status === "corrupt") return { ok: false, code: "corrupt_artifact" };
-  const content = decodeExcerpt(excerpt.content);
+  const content = excerpt.content.toString("utf8");
   const value = {
     present: true as const,
     artifactId: selected.artifactId,
@@ -228,5 +219,3 @@ export function registerRunOutputRoutes(
     },
   );
 }
-
-export type { OutputErrorCode };

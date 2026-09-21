@@ -79,7 +79,7 @@ export class RunOutputRepository {
         return { ok: false, code: "engagement_not_found" };
       }
       const row = this.db
-        .select()
+        .select({ run: runs })
         .from(runs)
         .innerJoin(actions, eq(actions.id, runs.actionId))
         .where(
@@ -93,7 +93,7 @@ export class RunOutputRepository {
         .limit(1)
         .get();
       if (row === undefined) return { ok: true, run: undefined };
-      const parsed = persistedRunFromRow(row.runs);
+      const parsed = persistedRunFromRow(row.run);
       if (parsed === undefined) return { ok: false, code: "invalid_persisted_data" };
       return { ok: true, run: parsed };
     } catch (error) {
@@ -112,7 +112,7 @@ export class RunOutputRepository {
         return { ok: false, code: "engagement_not_found" };
       }
       const row = this.db
-        .select()
+        .select({ run: runs })
         .from(runs)
         .innerJoin(actions, eq(actions.id, runs.actionId))
         .where(
@@ -124,7 +124,7 @@ export class RunOutputRepository {
         )
         .get();
       if (row === undefined) return { ok: true, run: undefined };
-      const parsed = persistedRunFromRow(row.runs);
+      const parsed = persistedRunFromRow(row.run);
       if (parsed === undefined) return { ok: false, code: "invalid_persisted_data" };
       return { ok: true, run: parsed };
     } catch (error) {

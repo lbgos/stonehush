@@ -93,7 +93,24 @@ function excerptFromRow(row: typeof evidenceExcerpts.$inferSelect): Excerpt | un
   return value;
 }
 
-function attachmentFromRow(row: typeof evidenceAttachments.$inferSelect): Attachment | undefined {
+const attachmentMetadataColumns = {
+  id: evidenceAttachments.id,
+  contractVersion: evidenceAttachments.contractVersion,
+  engagementId: evidenceAttachments.engagementId,
+  filename: evidenceAttachments.filename,
+  mime: evidenceAttachments.mime,
+  sizeBytes: evidenceAttachments.sizeBytes,
+  digest: evidenceAttachments.digest,
+  caption: evidenceAttachments.caption,
+  targetLabel: evidenceAttachments.targetLabel,
+  parentAttachmentId: evidenceAttachments.parentAttachmentId,
+  cropRectJson: evidenceAttachments.cropRectJson,
+  createdAt: evidenceAttachments.createdAt,
+};
+
+function attachmentFromRow(
+  row: Omit<typeof evidenceAttachments.$inferSelect, "contentBase64">,
+): Attachment | undefined {
   if (
     row.mime !== "image/png" &&
     row.mime !== "image/jpeg" &&
@@ -344,7 +361,7 @@ export class ExcerptRepository {
         return { ok: false, error: { code: "engagement_not_found" } };
       }
       const rows = this.db
-        .select()
+        .select(attachmentMetadataColumns)
         .from(evidenceAttachments)
         .where(eq(evidenceAttachments.engagementId, engagementId))
         .orderBy(asc(evidenceAttachments.createdAt), asc(evidenceAttachments.id))
@@ -369,7 +386,7 @@ export class ExcerptRepository {
         return { ok: false, error: { code: "engagement_not_found" } };
       }
       const row = this.db
-        .select()
+        .select(attachmentMetadataColumns)
         .from(evidenceAttachments)
         .where(
           and(
