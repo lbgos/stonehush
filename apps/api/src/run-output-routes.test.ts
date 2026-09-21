@@ -19,9 +19,11 @@ import {
   RunnerRepository,
 } from "@stonehush/db";
 import { loadEvidenceNative } from "@stonehush/evidence-native";
-import { afterEach, describe, expect, it } from "vitest";
+import Fastify from "fastify";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildApp } from "./app.js";
+import { registerRunOutputRoutes } from "./run-output-routes.js";
 import { EvidencePublicationService } from "./evidence/evidence-publication.js";
 import { EvidenceStore } from "./evidence/evidence-store.js";
 
@@ -468,6 +470,75 @@ describe("operator run output routes", () => {
       });
       expect(withRange.statusCode).toBe(400);
       expect(withRange.json()).toEqual({ code: "invalid_request" });
+    }
+  });
+});
+
+describe("output artifact selection", () => {
+  it.each([false, true])("selects the largest stream with an id tie-break, reversed=%s", async (reverse) => {
+    const engagementId = "10000000-0000-4000-8000-000000000001";
+    const run = {
+      contractVersion: 1 as const,
+      id: "run-selection",
+      actionId: "action-selection",
+      engagementId,
+      attempt: 1,
+      state: "succeeded" as const,
+      currentLeaseId: null,
+      currentFence: "0",
+      terminalKind: "succeeded" as const,
+      terminalReason: null,
+      createdAt: "2026-08-09T12:00:00.000Z",
+      updatedAt: "2026-08-09T12:00:10.000Z",
+    };
+    const artifacts = ([
+      { artifactId: "out-small", kind: "stdout", sizeBytes: 1 },
+      { artifactId: "out-z", kind: "stdout", sizeBytes: 10 },
+      { artifactId: "out-a", kind: "stdout", sizeBytes: 10 },
+      { artifactId: "err-small", kind: "stderr", sizeBytes: 1 },
+      { artifactId: "err-large", kind: "stderr", sizeBytes: 20 },
+      { artifactId: "raw-largest", kind: "tool_raw", sizeBytes: 100 },
+    ] as const).map((artifact) => ({
+      ...artifact,
+      contractVersion: 1,
+      profile: "d3-v1" as const,
+      runId: run.id,
+      fence: "1",
+      eventSequence: 2,
+      artifactSlot: artifact.artifactId,
+      digest: sha256(artifact.artifactId),
+      relativePath: `artifacts/${artifact.artifactId}`,
+      completeness: "complete" as const,
+      redactionApplied: false,
+      redactionBoundary: "none" as const,
+      rawBytesPreserved: true,
+      createdAt: run.createdAt,
+    }));
+    const verifiedExcerpt = vi.fn(async () => ({
+      status: "ready" as const,
+      content: Buffer.from("selected output"),
+      totalBytes: 15,
+      truncated: false,
+    }));
+    const app = Fastify();
+    registerRunOutputRoutes(app, {
+      repository: {
+        latestTerminalRunForEngagement: () => ({ ok: true, run }),
+        runForEngagement: () => ({ ok: true, run }),
+        artifactsForRun: () => ({ ok: true, artifacts: reverse ? artifacts.reverse() : artifacts }),
+      },
+      store: { verifiedExcerpt },
+    });
+    try {
+      const response = await app.inject(`/api/v1/engagements/${engagementId}/runs/latest/output`);
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        stdout: { artifactId: "out-a", sizeBytes: 10 },
+        stderr: { artifactId: "err-large", sizeBytes: 20 },
+      });
+      expect(verifiedExcerpt).toHaveBeenCalledTimes(2);
+    } finally {
+      await app.close();
     }
   });
 });
