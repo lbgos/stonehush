@@ -457,6 +457,32 @@ export class LeadRepository {
     }
   }
 
+  listAttemptsForEngagement(engagementId: string): LeadResult<LeadAttempt[]> {
+    const status = this.engagementStatus(engagementId);
+    if (!status.ok) return status;
+    try {
+      const rows = this.db
+        .select({ attempt: leadAttempts })
+        .from(leads)
+        .innerJoin(leadAttempts, eq(leadAttempts.leadId, leads.id))
+        .where(eq(leads.engagementId, engagementId))
+        .orderBy(asc(leads.createdAt), asc(leads.id), asc(leadAttempts.sequence))
+        .all();
+      const values: LeadAttempt[] = [];
+      for (const { attempt } of rows) {
+        if (attempt.engagementId !== engagementId) {
+          return failed({ code: "invalid_persisted_data" });
+        }
+        const parsed = attemptFromRow(attempt);
+        if (!parsed.ok) return parsed;
+        values.push(parsed.value);
+      }
+      return { ok: true, value: values };
+    } catch (error) {
+      return failed({ code: isStorageBusy(error) ? "storage_busy" : "invalid_persisted_data" });
+    }
+  }
+
   listAttempts(engagementId: string, leadId: string): LeadResult<LeadAttempt[]> {
     const status = this.engagementStatus(engagementId);
     if (!status.ok) return status;

@@ -76,7 +76,7 @@ interface BundleRepositories {
   >;
   readonly leads: Pick<
     LeadRepository,
-    "listLeads" | "listAttempts" | "createLead" | "parkLead" | "closeLead" | "recordAttempt"
+    "listLeads" | "listAttemptsForEngagement" | "createLead" | "parkLead" | "closeLead" | "recordAttempt"
   >;
   readonly excerpts: Pick<
     ExcerptRepository,
@@ -173,12 +173,9 @@ export async function exportWorkspaceBundle(
 
   // Attempts follow their lead order with per-lead sequence order, so import
   // re-records them in the same order and sequence numbers line up.
-  const attempts: WorkspaceBundle["attempts"] = [];
-  for (const lead of leadRows.value) {
-    const listed = deps.leads.listAttempts(engagementId, lead.id);
-    if (!listed.ok) return failed(mapRepositoryError(listed.error.code));
-    attempts.push(...listed.value);
-  }
+  const attemptRows = deps.leads.listAttemptsForEngagement(engagementId);
+  if (!attemptRows.ok) return failed(mapRepositoryError(attemptRows.error.code));
+  const attempts = attemptRows.value;
 
   // Raw totals first: an engagement over the transport cap is refused before
   // a single content byte is read.
