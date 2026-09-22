@@ -475,7 +475,12 @@ describe("operator run output routes", () => {
 });
 
 describe("output artifact selection", () => {
-  it.each([false, true])("verifies both largest streams concurrently with an id tie-break, reversed=%s", async (reverse) => {
+  it.each([
+    { reverse: false, status: "ready" },
+    { reverse: true, status: "ready" },
+    { reverse: false, status: "missing" },
+    { reverse: false, status: "corrupt" },
+  ] as const)("verifies streams concurrently, reversed=$reverse, stdout=$status", async ({ reverse, status }) => {
     const engagementId = "10000000-0000-4000-8000-000000000001";
     const run = {
       contractVersion: 1 as const,
@@ -515,7 +520,8 @@ describe("output artifact selection", () => {
       createdAt: run.createdAt,
     }));
     let finishFirst: (() => void) | undefined;
-    const verifiedExcerpt = vi.fn(async () => {
+    const pendingStderr = Promise.withResolvers<void>();
+    const verifiedExcerpt = vi.fn<EvidenceStore["verifiedExcerpt"]>(async ({ artifactId }) => {
       // Neither read completes until both streams have started verification.
       await new Promise<void>((resolve) => {
         if (finishFirst === undefined) {
@@ -525,6 +531,10 @@ describe("output artifact selection", () => {
           resolve();
         }
       });
+      if (status !== "ready") {
+        if (artifactId === "out-a") return { status };
+        await pendingStderr.promise;
+      }
       return {
         status: "ready" as const,
         content: Buffer.from("selected output"),
@@ -541,15 +551,30 @@ describe("output artifact selection", () => {
       },
       store: { verifiedExcerpt },
     });
-    try {
-      const response = await app.inject(`/api/v1/engagements/${engagementId}/runs/latest/output`);
-      expect(response.statusCode).toBe(200);
-      expect(response.json()).toMatchObject({
-        stdout: { artifactId: "out-a", sizeBytes: 10 },
-        stderr: { artifactId: "err-large", sizeBytes: 20 },
+    let received = false;
+    const request = app.inject(`/api/v1/engagements/${engagementId}/runs/latest/output`)
+      .then((response) => {
+        received = true;
+        return response;
       });
+    try {
+      // Error responses must arrive while stderr verification is still pending.
+      await vi.waitFor(() => expect(received).toBe(true));
+      const response = await request;
+      if (status === "ready") {
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({
+          stdout: { artifactId: "out-a", sizeBytes: 10 },
+          stderr: { artifactId: "err-large", sizeBytes: 20 },
+        });
+      } else {
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({ code: `${status}_artifact` });
+      }
       expect(verifiedExcerpt).toHaveBeenCalledTimes(2);
     } finally {
+      pendingStderr.resolve();
+      await request;
       await app.close();
     }
   });
