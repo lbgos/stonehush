@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FFUF_MAX_RESULTS } from "@stonehush/contracts";
 
 import { ffufOptionsForSnapshot, hasFfufMarker, isFfufSnapshot } from "./ffuf-action.js";
 import { parseFfufArtifactJson } from "./ffuf-json.js";
@@ -124,6 +125,25 @@ describe("ffuf artifact projection", () => {
       JSON.stringify({ results: [{ ...planted, status: 99 }] }),
     );
     expect(parseFfufArtifactJson(badRecord)).toEqual({
+      ok: false,
+      error: { code: "ffuf_parse_error" },
+    });
+  });
+
+  it("caps retained results while counting and checking the discarded tail", () => {
+    const record = JSON.stringify(planted);
+    const prefix = `${record},`.repeat(FFUF_MAX_RESULTS);
+    const tail = JSON.stringify({ ...planted, input: { FUZZ: "discarded.txt" } });
+    const bytes = new TextEncoder().encode(`{"results":[${prefix}${tail}]}`);
+    const result = parseFfufArtifactJson(bytes);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.output.results).toHaveLength(FFUF_MAX_RESULTS);
+    expect(result.output.results.at(-1)?.input.FUZZ).toBe("planted.txt");
+    expect(result.output.truncated).toBe(true);
+    expect(result.rawCount).toBe(FFUF_MAX_RESULTS + 1);
+    const badTail = new TextEncoder().encode(`{"results":[${prefix}null]}`);
+    expect(parseFfufArtifactJson(badTail)).toEqual({
       ok: false,
       error: { code: "ffuf_parse_error" },
     });
