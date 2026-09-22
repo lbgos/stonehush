@@ -12,6 +12,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 
+import * as paragraphs from "./pin-citation.js";
+import * as triedChecks from "./tried-checks.js";
 import { AdvisorPanel } from "./advisor-panel.js";
 import { createAppQueryClient } from "../query-client.js";
 
@@ -242,6 +244,29 @@ afterEach(() => {
 });
 
 describe("advisor panel composer", () => {
+  it("keeps saved answers and tried checks stable while typing, then renders new answers", async () => {
+    const split = vi.spyOn(paragraphs, "splitAnswerParagraphs");
+    const extract = vi.spyOn(triedChecks, "extractSuggestedChecks");
+    await renderPanel(() => succeededTurn({
+      id: "10000000-0000-4000-8000-000000000003",
+      answer: "A fresh answer after asking.",
+    }), { history: [succeededTurn()] });
+    await screen.findByText("The banner shows HTTP.");
+    const splitCalls = split.mock.calls.length;
+    const extractCalls = extract.mock.calls.length;
+    expect(splitCalls).toBeGreaterThan(0);
+    expect(extractCalls).toBeGreaterThan(0);
+
+    fireEvent.change(questionBox(), { target: { value: "What changed?" } });
+    fireEvent.change(questionBox(), { target: { value: "What changed in this evidence?" } });
+    expect(split).toHaveBeenCalledTimes(splitCalls);
+    expect(extract).toHaveBeenCalledTimes(extractCalls);
+    fireEvent.click(askButton());
+    await screen.findByText("A fresh answer after asking.");
+    expect(split.mock.calls.length).toBeGreaterThan(splitCalls);
+    expect(extract.mock.calls.length).toBeGreaterThan(extractCalls);
+  });
+
   it("disables Ask without an excerpt and explains finding-only entry", async () => {
     await renderPanel(() => pendingTurn(), { excerpts: [], findingIds: [FINDING_ID] });
     expect(askButton().disabled).toBe(true);

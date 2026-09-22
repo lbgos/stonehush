@@ -8,7 +8,7 @@ import {
   type SavedScopeRule,
 } from "@stonehush/contracts";
 import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useRunnerSettingsQuery } from "../settings/runner-settings.js";
@@ -417,6 +417,13 @@ function FfufResultsList({
   selectedKey: string | undefined;
 }) {
   const resultsQuery = useEngagementFfufResultsQuery(engagementId);
+  const results = useMemo(
+    () => [...(resultsQuery.data ?? [])].sort((left, right) => {
+      const url = left.url.localeCompare(right.url);
+      return url !== 0 ? url : left.artifactId.localeCompare(right.artifactId);
+    }),
+    [resultsQuery.data],
+  );
   const hasData = resultsQuery.data !== undefined;
   const retry = () => void resultsQuery.refetch();
 
@@ -437,10 +444,6 @@ function FfufResultsList({
     );
   }
 
-  const results = [...resultsQuery.data].sort((left, right) => {
-    const url = left.url.localeCompare(right.url);
-    return url !== 0 ? url : left.artifactId.localeCompare(right.artifactId);
-  });
   if (results.length === 0) {
     return (
       <div className="rounded-md border border-border px-4 py-6 text-center">

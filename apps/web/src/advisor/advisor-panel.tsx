@@ -6,7 +6,7 @@ import {
 } from "@stonehush/contracts";
 import { Button } from "@stonehush/ui";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAdvisorStatusQuery } from "../advisor-status-query.js";
 import { createIdempotencyKey } from "../engagements/idempotency.js";
@@ -183,7 +183,10 @@ export function AdvisorPanel({
     };
   }, []);
 
-  const turns = history.data?.pages.flatMap((page) => page.turns) ?? [];
+  const turns = useMemo(
+    () => history.data?.pages.flatMap((page) => page.turns) ?? [],
+    [history.data],
+  );
   const visiblePending = turns.some((turn) => turn.status === "pending");
 
   // Bounded reconciliation for visible pending turns: refetch history on
@@ -334,10 +337,10 @@ export function AdvisorPanel({
     );
   }
 
-  function handleSaveTechnique(draft: SaveTechniqueInput) {
+  const handleSaveTechnique = useCallback((draft: SaveTechniqueInput) => {
     setTechniqueDraft({ ...draft, key: `${Date.now()}` });
     setTechniquesOpen(true);
-  }
+  }, []);
 
   // Context preview: exactly what Ask would send, shown before send.
   const preview = buildContextPreview({
@@ -767,7 +770,7 @@ function FindingPicker({
   );
 }
 
-function TurnCard({
+const TurnCard = memo(function TurnCard({
   turn,
   engagementId,
   archived,
@@ -862,4 +865,4 @@ function TurnCard({
       ) : null}
     </li>
   );
-}
+});
