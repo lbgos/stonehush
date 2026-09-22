@@ -1003,6 +1003,27 @@ describe("excerpt routes", () => {
     expect(created.json()).toEqual({ code: "engagement_archived" });
   });
 
+  it("keeps Unicode byte offsets across matches and resets them for each artifact", async () => {
+    const harness = await createHarness();
+    const query = "\u{10400}x";
+    addArtifact(harness, "unicode-a", "\u00e9 \u{10400}x \u{1f600} \u{10428}X\u{10400}x");
+    addArtifact(harness, "unicode-b", query);
+    const found = await harness.inject({
+      method: "GET",
+      url: `/api/v1/engagements/${ENGAGEMENT_ID}/runs/${RUN_ID}/output/search?q=${encodeURIComponent(query)}`,
+    });
+    expect(found.statusCode).toBe(200);
+    const body = found.json() as {
+      matches: { artifactId: string; byteOffset: number; byteLength: number }[];
+    };
+    expect(body.matches).toMatchObject([
+      { artifactId: "unicode-a", byteOffset: 3, byteLength: 5 },
+      { artifactId: "unicode-a", byteOffset: 14, byteLength: 5 },
+      { artifactId: "unicode-a", byteOffset: 19, byteLength: 5 },
+      { artifactId: "unicode-b", byteOffset: 0, byteLength: 5 },
+    ]);
+  });
+
   it("never returns shifted offsets for malformed UTF-8 output", async () => {
     const harness = await createHarness();
     // 0xFF decodes to U+FFFD (three bytes on re-encode) while occupying one

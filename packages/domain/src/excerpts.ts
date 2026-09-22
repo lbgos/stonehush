@@ -335,43 +335,6 @@ export function findTextMatches(
   return matches;
 }
 
-export interface TextSnippet {
-  readonly snippet: string;
-  readonly truncatedBefore: boolean;
-  readonly truncatedAfter: boolean;
-}
-
-// Bounded window centered on a match so long output is excerptable without
-// rendering the whole file. Boundaries fall on code points, never mid-char.
-export function windowSnippetFromChars(
-  text: string,
-  charOffset: number,
-  charLength: number,
-  radius: number = EXCERPT_SNIPPET_RADIUS_CHARS,
-): TextSnippet {
-  const points = Array.from(text);
-  const start = Math.max(0, charOffset - radius);
-  const end = Math.min(points.length, charOffset + charLength + radius);
-  const window = points.slice(start, end).join("");
-  const prefix = start > 0 ? "..." : "";
-  const suffix = end < points.length ? "..." : "";
-  return {
-    snippet: `${prefix}${window}${suffix}`,
-    truncatedBefore: start > 0,
-    truncatedAfter: end < points.length,
-  };
-}
-
-// Byte offset of a char offset, for reporting server-style match positions
-// from decoded scan text. Callers must only pass text decoded from bytes
-// already validated as strict UTF-8; otherwise a replacement character from
-// malformed input re-encodes to three bytes while occupying one source byte
-// and the result points at other evidence. The search route validates with
-// a fatal decoder before calling this.
-export function byteOffsetOfCharOffset(text: string, charOffset: number): number {
-  return utf8ByteLength(Array.from(text).slice(0, Math.max(0, charOffset)).join(""));
-}
-
 // Attachment filename derived from what the image proves. Lowercase slug;
 // anything unusable falls back to the neutral default so uploads never fail
 // on naming alone.

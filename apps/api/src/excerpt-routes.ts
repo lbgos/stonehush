@@ -26,7 +26,6 @@ import type {
 } from "@stonehush/db";
 import {
   ADVISOR_REDACTION_TOKEN,
-  byteOffsetOfCharOffset,
   deriveAttachmentName,
   EXCERPT_EXTENDED_CONTEXT_BYTES,
   EXCERPT_REDACTION_CONTEXT_BYTES,
@@ -41,7 +40,6 @@ import {
   selectionMayHideUrlValue,
   selectionStartsMidToken,
   validateExcerptRange,
-  windowSnippetFromChars,
 } from "@stonehush/domain";
 import type { FastifyInstance, FastifyReply } from "fastify";
 
@@ -573,7 +571,11 @@ export function registerExcerptRoutes(
         const text = utf8Decoder.decode(prefix);
         const hits = findTextMatches(text, query.data.q, query.data.limit - matches.length);
         const points = Array.from(text);
+        let charOffset = 0;
+        let byteOffset = 0;
         for (const hit of hits) {
+          byteOffset += Buffer.byteLength(points.slice(charOffset, hit.charOffset).join(""), "utf8");
+          charOffset = hit.charOffset;
           const winStart = Math.max(0, hit.charOffset - EXCERPT_SNIPPET_RADIUS_CHARS);
           const winEnd = Math.min(
             points.length,
@@ -604,7 +606,6 @@ export function registerExcerptRoutes(
             snippet = `${winStart > 0 ? "..." : ""}${ADVISOR_REDACTION_TOKEN}${winEnd < points.length ? "..." : ""}`;
             redactions = 1;
           } else {
-            const window = windowSnippetFromChars(text, hit.charOffset, hit.charLength);
             // Span discovery runs over the whole scanned prefix, not just
             // the display window: any trigger the scan saw must mask, no
             // matter how far behind the match it sits. Display still shows
@@ -617,13 +618,13 @@ export function registerExcerptRoutes(
               winEnd - winStart,
               taken < download.sizeBytes,
             );
-            snippet = `${window.truncatedBefore ? "..." : ""}${projected.text}${window.truncatedAfter ? "..." : ""}`;
+            snippet = `${winStart > 0 ? "..." : ""}${projected.text}${winEnd < points.length ? "..." : ""}`;
             redactions = projected.redactions;
           }
           matches.push({
             artifactId: candidate.artifactId,
             stream: candidate.kind as "stdout" | "stderr",
-            byteOffset: byteOffsetOfCharOffset(text, hit.charOffset),
+            byteOffset,
             byteLength: Buffer.byteLength(
               points.slice(hit.charOffset, hit.charOffset + hit.charLength).join(""),
               "utf8",

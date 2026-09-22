@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildFindingPrefillBody,
-  byteOffsetOfCharOffset,
   deriveAttachmentName,
   findTextMatches,
   formatExcerptSourceLabel,
@@ -16,7 +15,6 @@ import {
   selectionMayHideUrlValue,
   selectionStartsMidToken,
   validateExcerptRange,
-  windowSnippetFromChars,
 } from "./excerpts.js";
 import {
   containsPrivateKeyBeginMarker,
@@ -64,12 +62,6 @@ describe("excerpt ranges", () => {
       ok: false,
       code: "range_rejected",
     });
-  });
-
-  it("reports byte offsets for scan matches", () => {
-    expect(byteOffsetOfCharOffset("héllo", 1)).toBe(
-      new TextEncoder().encode("h").length,
-    );
   });
 });
 
@@ -345,17 +337,6 @@ describe("search windowing", () => {
       code: "range_rejected",
     });
     expect(selectionBytesFromText("abc � def", 0, 3).ok).toBe(true);
-  });
-
-  it("windows snippets without rendering the whole file", () => {
-    const text = `${"a".repeat(500)}login${"b".repeat(500)}`;
-    const [match] = findTextMatches(text, "login", 1);
-    if (match === undefined) throw new Error("expected a match");
-    const window = windowSnippetFromChars(text, match.charOffset, match.charLength, 10);
-    expect(window.snippet).toContain("login");
-    expect(window.snippet.length).toBeLessThan(text.length);
-    expect(window.truncatedBefore).toBe(true);
-    expect(window.truncatedAfter).toBe(true);
   });
 });
 
