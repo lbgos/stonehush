@@ -532,7 +532,9 @@ describe("output artifact selection", () => {
         }
       });
       if (status !== "ready") {
-        if (artifactId === "out-a") return { status };
+        if (artifactId === "out-a") {
+          return status === "missing" ? { status } : { status, code: "digest_mismatch" };
+        }
         await pendingStderr.promise;
       }
       return {
