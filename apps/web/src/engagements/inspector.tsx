@@ -333,74 +333,51 @@ export type BelowOrigin = (context: SurfaceOriginContext) => ReactNode;
 // Provenance-aware row selection helpers
 // ---------------------------------------------------------------------------
 
-export function isServiceRowSelected(
-  service: NmapProjectedService,
+// Legacy links omit provenance. Resolve them once per list, and only when
+// exactly one observation matches. Canonical keys retain exact string matching.
+function uniqueMatch<T>(rows: readonly T[], matches: (row: T) => boolean): T | undefined {
+  let found: T | undefined;
+  for (const row of rows) {
+    if (!matches(row)) continue;
+    if (found !== undefined) return undefined;
+    found = row;
+  }
+  return found;
+}
+
+export function resolveServiceSelectionKey(
   selectedKey: string | undefined,
-  allServices?: readonly NmapProjectedService[],
-): boolean {
-  if (selectedKey === undefined) return false;
-  const canonicalKey = serviceSelectionKey(
-    service.address,
-    service.port,
-    service.protocol,
-    service.artifactId,
+  services: readonly NmapProjectedService[],
+): string | undefined {
+  const decoded = decodeSurfaceSelection(selectedKey);
+  if (decoded?.kind !== "service" || decoded.artifactId !== undefined) return selectedKey;
+  const address = decoded.address?.replace(/^\[|\]$/g, "").toLowerCase();
+  const service = uniqueMatch(services, (row) =>
+    row.address.replace(/^\[|\]$/g, "").toLowerCase() === address && row.port === decoded.port,
   );
-  if (selectedKey === canonicalKey) return true;
-  const decoded = decodeSurfaceSelection(selectedKey);
-  if (decoded?.kind === "service" && decoded.artifactId === undefined) {
-    if (allServices !== undefined) {
-      const decodedAddr = decoded.address?.replace(/^\[|\]$/g, "").toLowerCase();
-      const matches = allServices.filter(
-        (s) =>
-          s.address.replace(/^\[|\]$/g, "").toLowerCase() === decodedAddr &&
-          s.port === decoded.port,
-      );
-      if (matches.length === 1 && matches[0]?.artifactId === service.artifactId) {
-        return true;
-      }
-    }
-  }
-  return false;
+  return service === undefined ? undefined : serviceSelectionKey(
+    service.address, service.port, service.protocol, service.artifactId,
+  );
 }
 
-export function isProbeRowSelected(
-  probe: HttpProbeProjected,
+export function resolveProbeSelectionKey(
   selectedKey: string | undefined,
-  allProbes?: readonly HttpProbeProjected[],
-): boolean {
-  if (selectedKey === undefined) return false;
-  const canonicalKey = probeSelectionKey(probe.url, probe.artifactId);
-  if (selectedKey === canonicalKey) return true;
+  probes: readonly HttpProbeProjected[],
+): string | undefined {
   const decoded = decodeSurfaceSelection(selectedKey);
-  if (decoded?.kind === "probe" && decoded.artifactId === undefined) {
-    if (allProbes !== undefined) {
-      const matches = allProbes.filter((p) => p.url === decoded.url);
-      if (matches.length === 1 && matches[0]?.artifactId === probe.artifactId) {
-        return true;
-      }
-    }
-  }
-  return false;
+  if (decoded?.kind !== "probe" || decoded.artifactId !== undefined) return selectedKey;
+  const probe = uniqueMatch(probes, (row) => row.url === decoded.url);
+  return probe === undefined ? undefined : probeSelectionKey(probe.url, probe.artifactId);
 }
 
-export function isPathRowSelected(
-  result: FfufProjected,
+export function resolvePathSelectionKey(
   selectedKey: string | undefined,
-  allResults?: readonly FfufProjected[],
-): boolean {
-  if (selectedKey === undefined) return false;
-  const canonicalKey = pathSelectionKey(result.url, result.artifactId);
-  if (selectedKey === canonicalKey) return true;
+  results: readonly FfufProjected[],
+): string | undefined {
   const decoded = decodeSurfaceSelection(selectedKey);
-  if (decoded?.kind === "path" && decoded.artifactId === undefined) {
-    if (allResults !== undefined) {
-      const matches = allResults.filter((r) => r.url === decoded.url);
-      if (matches.length === 1 && matches[0]?.artifactId === result.artifactId) {
-        return true;
-      }
-    }
-  }
-  return false;
+  if (decoded?.kind !== "path" || decoded.artifactId !== undefined) return selectedKey;
+  const result = uniqueMatch(results, (row) => row.url === decoded.url);
+  return result === undefined ? undefined : pathSelectionKey(result.url, result.artifactId);
 }
 
 // ---------------------------------------------------------------------------

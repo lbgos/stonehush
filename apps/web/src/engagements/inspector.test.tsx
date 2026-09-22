@@ -13,7 +13,11 @@ import {
   defaultSchemeForPort,
   focusSurfaceRow,
   isLauncherStoppable,
-  isServiceRowSelected,
+  resolveServiceSelectionKey,
+  resolveProbeSelectionKey,
+  resolvePathSelectionKey,
+  probeSelectionKey,
+  pathSelectionKey,
   launcherWarningKind,
   selectDisplayAction,
   serviceSelectionKey,
@@ -355,16 +359,53 @@ describe("surface selection keys", () => {
     const all = [firstScan, secondScan];
     const firstKey = serviceSelectionKey(firstScan.address, firstScan.port, firstScan.protocol, firstScan.artifactId);
     const secondKey = serviceSelectionKey(secondScan.address, secondScan.port, secondScan.protocol, secondScan.artifactId);
-    expect(isServiceRowSelected(firstScan, firstKey, all)).toBe(true);
-    expect(isServiceRowSelected(secondScan, firstKey, all)).toBe(false);
-    expect(isServiceRowSelected(firstScan, secondKey, all)).toBe(false);
-    expect(isServiceRowSelected(secondScan, secondKey, all)).toBe(true);
-    // Ambiguous old key matches multiple scans: neither is selected
-    const oldKey = "service:192.0.2.10:80";
-    expect(isServiceRowSelected(firstScan, oldKey, all)).toBe(false);
-    expect(isServiceRowSelected(secondScan, oldKey, all)).toBe(false);
-    // Unambiguous old key matches single scan: selected
-    expect(isServiceRowSelected(firstScan, oldKey, [firstScan])).toBe(true);
+    expect(resolveServiceSelectionKey(firstKey, all)).toBe(firstKey);
+    expect(resolveServiceSelectionKey(secondKey, all)).toBe(secondKey);
+    expect(resolveServiceSelectionKey("service:192.0.2.10:80", all)).toBeUndefined();
+    expect(resolveServiceSelectionKey("service:192.0.2.10:80", [firstScan])).toBe(firstKey);
+  });
+
+  it("resolves only the requested endpoint within a shared service artifact", () => {
+    const services = [webService, sshService];
+    const key = serviceSelectionKey(webService.address, webService.port, webService.protocol, webService.artifactId);
+    expect(resolveServiceSelectionKey("service:192.0.2.10:80", services)).toBe(key);
+    expect(resolveServiceSelectionKey("service:192.0.2.10:443", services)).toBeUndefined();
+  });
+
+  it("normalizes legacy IPv6 addresses while preserving exact canonical keys", () => {
+    const service = { ...webService, address: "2001:DB8::1" };
+    const key = serviceSelectionKey(service.address, service.port, service.protocol, service.artifactId);
+    expect(resolveServiceSelectionKey("service:[2001:db8::1]:80", [service])).toBe(key);
+    expect(resolveServiceSelectionKey("service:2001:db8::1:80", [service])).toBe(key);
+    const lowercaseKey = key.replace("DB8", "db8");
+    expect(resolveServiceSelectionKey(lowercaseKey, [service])).toBe(lowercaseKey);
+    expect(resolveServiceSelectionKey(undefined, [service])).toBeUndefined();
+  });
+
+  it("resolves URL observations without selecting other rows from the same artifact", () => {
+    const probes = [probe, { ...probe, url: "http://192.0.2.10/other" }];
+    const paths = [pathResult, { ...pathResult, url: "http://192.0.2.10/other" }];
+    const probeKey = probeSelectionKey(probe.url, probe.artifactId);
+    const pathKey = pathSelectionKey(pathResult.url, pathResult.artifactId);
+    expect(resolveProbeSelectionKey(probeSelectionKey(probe.url), probes)).toBe(probeKey);
+    expect(resolvePathSelectionKey(pathSelectionKey(pathResult.url), paths)).toBe(pathKey);
+    expect(resolveProbeSelectionKey(probeKey, [...probes, { ...probe, artifactId: "another" }])).toBe(probeKey);
+    expect(resolvePathSelectionKey(pathKey, [...paths, { ...pathResult, artifactId: "another" }])).toBe(pathKey);
+    expect(resolveProbeSelectionKey(probeSelectionKey(probe.url), [...probes, { ...probe, artifactId: "another" }])).toBeUndefined();
+    expect(resolvePathSelectionKey(pathSelectionKey(pathResult.url), [...paths, { ...pathResult, artifactId: "another" }])).toBeUndefined();
+    expect(resolveProbeSelectionKey("probe:http://missing.test/", probes)).toBeUndefined();
+    expect(resolvePathSelectionKey("path:http://missing.test/", paths)).toBeUndefined();
+  });
+
+  it("resolves a legacy path with one pass through a large list", () => {
+    const readUrl = vi.fn((index: number) => `http://192.0.2.10/${index}`);
+    const paths = Array.from({ length: 2_000 }, (_, index) => ({
+      ...pathResult,
+      get url() { return readUrl(index); },
+    }));
+    const key = resolvePathSelectionKey("path:http://192.0.2.10/1999", paths);
+    expect(key).toBe(pathSelectionKey("http://192.0.2.10/1999", pathResult.artifactId));
+    expect(readUrl.mock.calls.length).toBeLessThanOrEqual(paths.length + 1);
   });
 
   it("rejects unknown kinds, bad ports, and non-http targets", () => {

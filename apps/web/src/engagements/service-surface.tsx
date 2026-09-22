@@ -13,9 +13,9 @@ import {
   decodeSurfaceSelection,
   defaultSchemeForPort,
   focusSurfaceRow,
-  isPathRowSelected,
-  isProbeRowSelected,
-  isServiceRowSelected,
+  resolvePathSelectionKey,
+  resolveProbeSelectionKey,
+  resolveServiceSelectionKey,
   isWebServiceCandidate,
   pathInspectorRecord,
   pathSelectionKey,
@@ -574,6 +574,7 @@ function TargetGroup({
   setSchemes: (next: Readonly<Record<string, OriginScheme>>) => void;
   target: string;
 }) {
+  const resolvedServiceKey = resolveServiceSelectionKey(selectedKey, services);
   const hostname = services.find((service) => service.hostname !== null)?.hostname ?? null;
   // Repeated artifacts from several runs share one endpoint. Each observed
   // origin renders once so control ids and row keys stay unique; every
@@ -617,7 +618,7 @@ function TargetGroup({
                 engagementId={engagementId}
                 extraRowActions={extraRowActions}
                 onSelect={onSelectKey}
-                selected={isServiceRowSelected(service, selectedKey, services)}
+                selected={resolvedServiceKey === serviceSelectionKey(service.address, service.port, service.protocol, service.artifactId)}
                 service={service}
               />
               {originGroups.map((group) => {
@@ -979,6 +980,8 @@ function OriginBlock({
 }) {
   const formattedHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
   const origin = withOriginScheme(`${formattedHost}:${String(port)}`, scheme);
+  const resolvedProbeKey = resolveProbeSelectionKey(selectedKey, probes);
+  const resolvedPathKey = resolvePathSelectionKey(selectedKey, paths);
   const sortedPaths = [...paths].sort((left, right) => left.url.localeCompare(right.url));
   // Origin-level row identifier so launcher actions carry a defined sourceKey
   // for focus restoration. The container is not a selectable inspector row,
@@ -1061,7 +1064,7 @@ function OriginBlock({
               extraRowActions={extraRowActions}
               onSelectKey={onSelectKey}
               probe={probe}
-              selected={isProbeRowSelected(probe, selectedKey, probes)}
+              selected={resolvedProbeKey === probeSelectionKey(probe.url, probe.artifactId)}
             />
           ))}
         </ul>
@@ -1085,7 +1088,7 @@ function OriginBlock({
               }
               onSelectKey={onSelectKey}
               result={result}
-              selected={isPathRowSelected(result, selectedKey, sortedPaths)}
+              selected={resolvedPathKey === pathSelectionKey(result.url, result.artifactId)}
             />
           ))}
         </ul>

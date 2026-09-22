@@ -2,7 +2,7 @@ import type { HttpProbeProjected } from "@stonehush/contracts";
 import { LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
 
 import { formatEngagementTimestamp } from "./format.js";
-import { isProbeRowSelected, probeSelectionKey, type ExtraRowActions } from "./inspector.js";
+import { resolveProbeSelectionKey, probeSelectionKey, type ExtraRowActions } from "./inspector.js";
 import { useEngagementHttpProbesQuery } from "./query.js";
 
 function sortProbes(probes: readonly HttpProbeProjected[]): HttpProbeProjected[] {
@@ -46,6 +46,7 @@ export function EngagementHttpProbesSection({
   if (!hasData) return <ProbesLoadingState />;
 
   const probes = sortProbes(probesQuery.data);
+  const resolvedKey = resolveProbeSelectionKey(selectedKey, probes);
 
   const body =
     probes.length === 0 ? (
@@ -84,7 +85,7 @@ export function EngagementHttpProbesSection({
               extraRowActions={extraRowActions}
               onSelectKey={onSelectKey}
               probe={probe}
-              selected={isProbeRowSelected(probe, selectedKey, probes)}
+              selected={resolvedKey === probeSelectionKey(probe.url, probe.artifactId)}
             />
           ))}
         </div>

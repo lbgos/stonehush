@@ -19,7 +19,7 @@ import { latestActionSnapshot } from "./action-targets.js";
 import { engagementMutationMessage } from "./errors.js";
 import { type FfufDiscoveryInput, parseFfufPositiveInt, useLaunchFfufDiscoveryMutation, validateFfufWordlistPath } from "./ffuf-mutations.js";
 import { formatEngagementTimestamp } from "./format.js";
-import { isLauncherStoppable, isPathRowSelected, pathInspectorRecord, pathSelectionKey, PausedRunWarning, selectDisplayAction, type ExtraRowActions } from "./inspector.js";
+import { isLauncherStoppable, resolvePathSelectionKey, pathInspectorRecord, pathSelectionKey, PausedRunWarning, selectDisplayAction, type ExtraRowActions } from "./inspector.js";
 import {
   engagementFfufResultsQueryKey,
   useEngagementDetailQuery,
@@ -424,6 +424,7 @@ function FfufResultsList({
     }),
     [resultsQuery.data],
   );
+  const resolvedKey = resolvePathSelectionKey(selectedKey, results);
   const hasData = resultsQuery.data !== undefined;
   const retry = () => void resultsQuery.refetch();
 
@@ -464,7 +465,7 @@ function FfufResultsList({
           extraRowActions={extraRowActions}
           onSelectKey={onSelectKey}
           result={result}
-          selected={isPathRowSelected(result, selectedKey, results)}
+          selected={resolvedKey === pathSelectionKey(result.url, result.artifactId)}
         />
       ))}
     </ul>
