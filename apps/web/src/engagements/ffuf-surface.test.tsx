@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { PersistedActionSchema } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { ENGAGEMENT_FFUF_RESULTS_QUERY_ERROR_MESSAGE } from "./errors.js";
+import { engagementFfufResultsQueryKey } from "./query.js";
+import { pathSelectionKey } from "./inspector.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
 
 const engagementId = "10000000-0000-4000-8000-000000000001";
@@ -156,6 +158,42 @@ function renderSurface() {
 }
 
 describe("EngagementFfufSection", () => {
+  it("reuses sorted results when selection changes and sorts new query data", async () => {
+    const alpha = { ...ffufResult, url: "http://127.0.0.1:3130/alpha", fuzz: "alpha" };
+    const zeta = { ...ffufResult, url: "http://127.0.0.1:3130/zeta", fuzz: "zeta" };
+    stubFetch((url) => url.endsWith("/ffuf-results") ? response([zeta, alpha]) : response(detail));
+    const compare = vi.spyOn(String.prototype, "localeCompare");
+    const onSelectKey = vi.fn();
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <EngagementFfufSection archived={false} engagementId={engagementId} onSelectKey={onSelectKey} />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole("button", { name: alpha.url });
+    expect(compare).toHaveBeenCalled();
+    compare.mockClear();
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <EngagementFfufSection
+          archived={false}
+          engagementId={engagementId}
+          onSelectKey={onSelectKey}
+          selectedKey={pathSelectionKey(alpha.url, alpha.artifactId)}
+        />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByRole("button", { name: alpha.url }).getAttribute("aria-current")).toBe("true");
+    expect(compare).not.toHaveBeenCalled();
+
+    const beta = { ...ffufResult, url: "http://127.0.0.1:3130/beta", fuzz: "beta" };
+    act(() => queryClient.setQueryData(engagementFfufResultsQueryKey(engagementId), [zeta, beta, alpha]));
+    await screen.findByRole("button", { name: beta.url });
+    expect(compare).toHaveBeenCalled();
+    const urls = [...view.container.querySelectorAll("[data-surface-row] button[title]")]
+      .map((button) => button.getAttribute("title"));
+    expect(urls).toEqual([alpha.url, beta.url, zeta.url]);
+  });
+
   it("shows loading state", async () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
     renderSurface();

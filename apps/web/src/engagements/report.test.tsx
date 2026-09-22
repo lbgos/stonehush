@@ -5,6 +5,7 @@ import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import * as contracts from "@stonehush/contracts";
 import type { ReportBundle } from "@stonehush/contracts";
 import { engagementReportMarkdown } from "@stonehush/contracts";
 import { createAppQueryClient } from "../query-client.js";
@@ -128,6 +129,31 @@ afterEach(() => {
 });
 
 describe("engagement report", () => {
+  it("reuses Markdown on copy and refreshes it when the report changes", async () => {
+    const bundle = bundleFixture();
+    vi.stubGlobal("fetch", vi.fn(async () => response(bundle)));
+    const markdown = vi.spyOn(contracts, "engagementReportMarkdown");
+    const { queryClient } = renderSection();
+    await screen.findByRole("button", { name: "Copy Markdown" });
+    const initialCalls = markdown.mock.calls.length;
+    expect(initialCalls).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy Markdown" }));
+    await screen.findByRole("button", { name: "Copied" });
+    expect(markdown).toHaveBeenCalledTimes(initialCalls);
+
+    queryClient.setQueryData(reportQueryKey(engagementId), {
+      ...bundle,
+      notesMarkdown: "Updated report notes",
+      generatedAt: "2026-08-12T14:00:00.000Z",
+    });
+    await waitFor(() => expect(markdown.mock.calls.length).toBeGreaterThan(initialCalls));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy Markdown" }));
+    await waitFor(() => expect(window.navigator.clipboard.writeText).toHaveBeenLastCalledWith(
+      expect.stringContaining("Updated report notes"),
+    ));
+  });
+
   it("renders the preview and copies markdown with confirmation", async () => {
     const bundle = bundleFixture();
     vi.stubGlobal(

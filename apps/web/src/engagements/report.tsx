@@ -129,7 +129,7 @@ function ReportBody({
   // surface shows the same text. The stored bundle stays original.
   const shared = useMemo(() => maskReportBundle(bundle), [bundle]);
   const view = masked ? shared.bundle : bundle;
-  const markdown = engagementReportMarkdown(view);
+  const markdown = useMemo(() => engagementReportMarkdown(view), [view]);
 
   useEffect(() => {
     return () => {
@@ -162,7 +162,7 @@ function ReportBody({
       }),
     [view, outline, includeAssetLinks, masked],
   );
-  const sharingMarkdown = exportSharingMarkdown(sharing);
+  const sharingMarkdown = useMemo(() => exportSharingMarkdown(sharing), [sharing]);
   const flags = useMemo(
     () =>
       reviewOutline({
