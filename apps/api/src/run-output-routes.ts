@@ -112,11 +112,13 @@ async function respondForRun(
     }
     return sendOutputError(reply, 500, "invalid_persisted_data");
   }
-  const stdout = await buildStream(artifactsResult.artifacts, "stdout", dependencies.store);
+  const stdoutPromise = buildStream(artifactsResult.artifacts, "stdout", dependencies.store);
+  const stderrPromise = buildStream(artifactsResult.artifacts, "stderr", dependencies.store);
+  const stdout = await stdoutPromise;
   if (!stdout.ok) {
     return sendOutputError(reply, 409, stdout.code);
   }
-  const stderr = await buildStream(artifactsResult.artifacts, "stderr", dependencies.store);
+  const stderr = await stderrPromise;
   if (!stderr.ok) {
     return sendOutputError(reply, 409, stderr.code);
   }

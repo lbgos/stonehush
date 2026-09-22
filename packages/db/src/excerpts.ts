@@ -453,7 +453,7 @@ export class ExcerptRepository {
           )
           .run();
         const updated = client
-          .select()
+          .select(attachmentMetadataColumns)
           .from(evidenceAttachments)
           .where(
             and(
