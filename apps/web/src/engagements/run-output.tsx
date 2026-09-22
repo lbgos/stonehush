@@ -2,7 +2,7 @@ import type { Excerpt, RunOutputResponse } from "@stonehush/contracts";
 import { formatExcerptSourceLabel, selectionBytesFromText } from "@stonehush/domain";
 import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
 import { useRouterState } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   NoTerminalRunError,
@@ -704,6 +704,20 @@ function RawStream({
     setSelection(null);
   }, [engagementId, runId, streamArtifactId]);
 
+  const lines = useMemo(() => stream.content.split("\n"), [stream.content]);
+  const pageCount = Math.max(1, Math.ceil(lines.length / OUTPUT_WINDOW_LINES));
+  const safePage = Math.min(page, pageCount - 1);
+  const { windowText, windowCharStart } = useMemo(() => ({
+    windowText: lines.slice(
+      safePage * OUTPUT_WINDOW_LINES,
+      (safePage + 1) * OUTPUT_WINDOW_LINES,
+    ).join("\n"),
+    windowCharStart: Array.from(
+      lines.slice(0, safePage * OUTPUT_WINDOW_LINES).join("\n") +
+        (safePage === 0 ? "" : "\n"),
+    ).length,
+  }), [lines, safePage]);
+
   if (!stream.present) {
     return (
       <section aria-label={`${label} for run ${runId}`}>
@@ -716,18 +730,6 @@ function RawStream({
       </section>
     );
   }
-
-  const lines = stream.content.split("\n");
-  const pageCount = Math.max(1, Math.ceil(lines.length / OUTPUT_WINDOW_LINES));
-  const safePage = Math.min(page, pageCount - 1);
-  const windowLines = lines.slice(
-    safePage * OUTPUT_WINDOW_LINES,
-    (safePage + 1) * OUTPUT_WINDOW_LINES,
-  );
-  const windowCharStart = Array.from(
-    lines.slice(0, safePage * OUTPUT_WINDOW_LINES).join("\n") +
-      (safePage === 0 ? "" : "\n"),
-  ).length;
 
   const onSelect = (container: HTMLElement | null) => {
     if (container === null) return;
@@ -808,7 +810,7 @@ function RawStream({
         onMouseUp={(event) => onSelect(event.currentTarget)}
         onKeyUp={(event) => onSelect(event.currentTarget)}
       >
-        {windowLines.join("\n")}
+        {windowText}
       </pre>
       {pageCount > 1 ? (
         <div className="mt-1 flex flex-wrap items-center gap-2">
