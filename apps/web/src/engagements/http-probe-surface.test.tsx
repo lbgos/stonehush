@@ -88,6 +88,24 @@ describe("EngagementHttpProbesSection", () => {
     );
   });
 
+  it("selects only the linked URL and updates selection when the link changes", async () => {
+    const other = { ...probeA, url: "http://127.0.0.1:8080/other" };
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response([probeA, other]))));
+    const content = (selectedKey: string) => (
+      <QueryClientProvider client={queryClient}>
+        <EngagementHttpProbesSection engagementId={engagementId} selectedKey={selectedKey} onSelectKey={() => undefined} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(content(`probe:${probeA.url}`));
+    const first = await screen.findByRole("button", { name: probeA.url });
+    const second = screen.getByRole("button", { name: other.url });
+    expect(first.getAttribute("aria-current")).toBe("true");
+    expect(second.hasAttribute("aria-current")).toBe(false);
+    rerender(content(`probe:${other.url}`));
+    expect(first.hasAttribute("aria-current")).toBe(false);
+    expect(second.getAttribute("aria-current")).toBe("true");
+  });
+
   it("shows recoverable error without cached data", async () => {
     vi.stubGlobal(
       "fetch",
