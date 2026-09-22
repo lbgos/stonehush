@@ -150,7 +150,6 @@ export {
 } from "./advisor-citations.js";
 export {
   buildFindingPrefillBody,
-  byteOffsetOfCharOffset,
   deriveAttachmentName,
   findTextMatches,
   formatExcerptSourceLabel,
@@ -165,7 +164,6 @@ export {
   selectionStartsMidToken,
   utf8ByteLength as excerptUtf8ByteLength,
   validateExcerptRange,
-  windowSnippetFromChars,
   EXCERPT_RANGE_MAX_BYTES,
   EXCERPT_EXTENDED_CONTEXT_BYTES,
   EXCERPT_REDACTION_CONTEXT_BYTES,
@@ -175,7 +173,6 @@ export {
   type MaskedExcerptText,
   type SelectionMaskProjection,
   type TextMatch,
-  type TextSnippet,
 } from "./excerpts.js";
 export {
   extractTechniquePlaceholders,
