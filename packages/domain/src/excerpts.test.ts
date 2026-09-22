@@ -323,6 +323,22 @@ describe("search windowing", () => {
     expect(matches[0]?.charLength).toBe(5);
   });
 
+  it("counts code points across astral matches and gaps", () => {
+    const text = "\u{1f9ed}a\u{1f600}\u{1f9ed}a\u{1f600}\u{1f9ed}a";
+    expect(findTextMatches(text, "\u{1f9ed}a", 10)).toEqual([
+      { charOffset: 0, charLength: 2 },
+      { charOffset: 3, charLength: 2 },
+      { charOffset: 6, charLength: 2 },
+    ]);
+    expect(findTextMatches("\u{1f600}\u{1f600}\u{1f600}", "\u{1f600}", 2)).toEqual([
+      { charOffset: 0, charLength: 1 },
+      { charOffset: 1, charLength: 1 },
+    ]);
+    expect(selectionBytesFromText(text, 3, 5)).toEqual({
+      ok: true, byteOffset: 9, byteLength: 5,
+    });
+  });
+
   it("rejects selections that cannot be mapped exactly after malformed UTF-8", () => {
     expect(selectionBytesFromText("�foo", 1, 4)).toEqual({
       ok: false,
