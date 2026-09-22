@@ -475,7 +475,7 @@ describe("operator run output routes", () => {
 });
 
 describe("output artifact selection", () => {
-  it.each([false, true])("selects the largest stream with an id tie-break, reversed=%s", async (reverse) => {
+  it.each([false, true])("verifies both largest streams concurrently with an id tie-break, reversed=%s", async (reverse) => {
     const engagementId = "10000000-0000-4000-8000-000000000001";
     const run = {
       contractVersion: 1 as const,
@@ -514,12 +514,24 @@ describe("output artifact selection", () => {
       rawBytesPreserved: true,
       createdAt: run.createdAt,
     }));
-    const verifiedExcerpt = vi.fn(async () => ({
-      status: "ready" as const,
-      content: Buffer.from("selected output"),
-      totalBytes: 15,
-      truncated: false,
-    }));
+    let finishFirst: (() => void) | undefined;
+    const verifiedExcerpt = vi.fn(async () => {
+      // Neither read completes until both streams have started verification.
+      await new Promise<void>((resolve) => {
+        if (finishFirst === undefined) {
+          finishFirst = resolve;
+        } else {
+          finishFirst();
+          resolve();
+        }
+      });
+      return {
+        status: "ready" as const,
+        content: Buffer.from("selected output"),
+        totalBytes: 15,
+        truncated: false,
+      };
+    });
     const app = Fastify();
     registerRunOutputRoutes(app, {
       repository: {
