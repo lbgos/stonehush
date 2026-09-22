@@ -245,5 +245,68 @@ describe("lead persistence", () => {
       leads.createLead(engagementId, { title: "Another", source: SOURCE }).ok,
     ).toBe(false);
     expect(leads.listLeads(engagementId).ok).toBe(true);
+    expect(leads.listAttemptsForEngagement(engagementId)).toEqual({ ok: true, value: [] });
+  });
+
+  it("lists engagement attempts in lead order then sequence, excluding other engagements", () => {
+    const { database, leads, engagementId } = createFixture();
+    expect(leads.listAttemptsForEngagement(engagementId)).toEqual({ ok: true, value: [] });
+    const other = new EngagementRepository(database.db).createEngagement({
+      name: "Other lab", kind: "lab", description: null,
+      authorizationContext: null, autoContinueWarnings: false,
+    });
+    if (!other.ok) throw new Error("setup failed");
+    const first = leads.createLead(engagementId, { title: "First", source: SOURCE });
+    const second = leads.createLead(engagementId, { title: "Second", source: SOURCE });
+    const foreign = leads.createLead(other.value.id, { title: "Foreign", source: SOURCE });
+    if (!first.ok || !second.ok || !foreign.ok) throw new Error("setup failed");
+    // Insert attempts out of lead order and tie timestamps to exercise the lead-id tie-break.
+    database.sqlite.prepare("update leads set created_at = ? where engagement_id = ?")
+      .run("2026-08-12T12:00:00.000Z", engagementId);
+    for (const lead of [second.value, first.value, foreign.value, first.value]) {
+      const recorded = leads.recordAttempt(lead.engagementId, lead.id, {
+        summary: "Test attempt", outcome: "observed", evidenceArtifactIds: [],
+      });
+      if (!recorded.ok) throw new Error("setup failed");
+    }
+    const firstAttempts = leads.listAttempts(engagementId, first.value.id);
+    const secondAttempts = leads.listAttempts(engagementId, second.value.id);
+    if (!firstAttempts.ok || !secondAttempts.ok) throw new Error("setup failed");
+    expect(leads.listAttemptsForEngagement(engagementId)).toEqual({
+      ok: true, value: [...firstAttempts.value, ...secondAttempts.value],
+    });
+    database.sqlite.prepare("update leads set created_at = ? where id = ?")
+      .run("2026-08-11T12:00:00.000Z", second.value.id);
+    expect(leads.listAttemptsForEngagement(engagementId)).toEqual({
+      ok: true, value: [...secondAttempts.value, ...firstAttempts.value],
+    });
+    expect(leads.listAttemptsForEngagement("missing")).toEqual({
+      ok: false, error: { code: "engagement_not_found" },
+    });
+  });
+
+  it.each(["ownership", "payload"] as const)("rejects persisted attempt %s corruption", (corruption) => {
+    const { database, leads, engagementId } = createFixture();
+    const lead = leads.createLead(engagementId, { title: "Lead", source: SOURCE });
+    if (!lead.ok) throw new Error("setup failed");
+    const attempt = leads.recordAttempt(engagementId, lead.value.id, {
+      summary: "Test attempt", outcome: "observed", evidenceArtifactIds: [],
+    });
+    if (!attempt.ok) throw new Error("setup failed");
+    if (corruption === "ownership") {
+      const other = new EngagementRepository(database.db).createEngagement({
+        name: "Other lab", kind: "lab", description: null,
+        authorizationContext: null, autoContinueWarnings: false,
+      });
+      if (!other.ok) throw new Error("setup failed");
+      database.sqlite.prepare("update lead_attempts set engagement_id = ? where id = ?")
+        .run(other.value.id, attempt.value.id);
+    } else {
+      database.sqlite.prepare("update lead_attempts set evidence_artifact_ids_json = '42' where id = ?")
+        .run(attempt.value.id);
+    }
+    expect(leads.listAttemptsForEngagement(engagementId)).toEqual({
+      ok: false, error: { code: "invalid_persisted_data" },
+    });
   });
 });
