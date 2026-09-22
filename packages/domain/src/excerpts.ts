@@ -73,18 +73,18 @@ export function selectionBytesFromText(
 ):
   | { ok: true; byteOffset: number; byteLength: number }
   | { ok: false; code: "range_rejected" } {
-  const points = Array.from(fullText).length;
+  const chars = Array.from(fullText);
   if (
     !Number.isSafeInteger(charStart) ||
     !Number.isSafeInteger(charEnd) ||
     charStart < 0 ||
     charEnd <= charStart ||
-    charEnd > points
+    charEnd > chars.length
   ) {
     return { ok: false, code: "range_rejected" };
   }
-  const chars = Array.from(fullText);
-  if (chars.slice(0, charEnd).join("").includes("�")) {
+  const replacementIndex = chars.indexOf("�");
+  if (replacementIndex >= 0 && replacementIndex < charEnd) {
     return { ok: false, code: "range_rejected" };
   }
   const byteOffset = utf8ByteLength(chars.slice(0, charStart).join(""));
@@ -316,6 +316,8 @@ export function findTextMatches(
     return [];
   }
   const matches: TextMatch[] = [];
+  let utf16Offset = 0;
+  let charOffset = 0;
   for (;;) {
     if (matches.length >= maxMatches) break;
     const found = pattern.exec(haystack);
@@ -324,10 +326,11 @@ export function findTextMatches(
       pattern.lastIndex += 1;
       continue;
     }
-    matches.push({
-      charOffset: Array.from(haystack.slice(0, found.index)).length,
-      charLength: Array.from(found[0]).length,
-    });
+    charOffset += Array.from(haystack.slice(utf16Offset, found.index)).length;
+    const charLength = Array.from(found[0]).length;
+    matches.push({ charOffset, charLength });
+    charOffset += charLength;
+    utf16Offset = pattern.lastIndex;
   }
   return matches;
 }
