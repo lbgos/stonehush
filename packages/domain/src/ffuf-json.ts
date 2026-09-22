@@ -56,14 +56,14 @@ export function parseFfufArtifactJson(bytes: Uint8Array): ParseFfufArtifactResul
     for (const candidate of rawResults) {
       const item = projectRawResult(candidate);
       if (item === null) return { ok: false, error: { code: "ffuf_parse_error" } };
-      projected.push(item);
+      if (projected.length < FFUF_MAX_RESULTS) projected.push(item);
     }
     const output = FfufDiscoveryOutputSchema.safeParse({
-      results: projected.slice(0, FFUF_MAX_RESULTS),
-      truncated: projected.length > FFUF_MAX_RESULTS,
+      results: projected,
+      truncated: rawResults.length > FFUF_MAX_RESULTS,
     });
     if (!output.success) return { ok: false, error: { code: "ffuf_parse_error" } };
-    return { ok: true, output: output.data, rawCount: projected.length };
+    return { ok: true, output: output.data, rawCount: rawResults.length };
   } catch {
     return { ok: false, error: { code: "ffuf_parse_error" } };
   }
