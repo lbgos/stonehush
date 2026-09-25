@@ -488,6 +488,10 @@ export class LeadRepository {
     if (!status.ok) return status;
     const lead = this.readLead(engagementId, leadId);
     if (!lead.ok) return lead;
+    return this.readAttempts(engagementId, leadId);
+  }
+
+  private readAttempts(engagementId: string, leadId: string): LeadResult<LeadAttempt[]> {
     try {
       const rows = this.db
         .select()
@@ -554,7 +558,7 @@ export class LeadRepository {
   leadOutline(engagementId: string, leadId: string): LeadResult<{ outline: string }> {
     const lead = this.getLead(engagementId, leadId);
     if (!lead.ok) return lead;
-    const attempts = this.listAttempts(engagementId, leadId);
+    const attempts = this.readAttempts(engagementId, leadId);
     if (!attempts.ok) return attempts;
     return { ok: true, value: { outline: buildLeadOutline(lead.value, attempts.value) } };
   }
