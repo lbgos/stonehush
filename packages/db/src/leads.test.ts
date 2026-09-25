@@ -209,6 +209,26 @@ describe("lead persistence", () => {
     );
   });
 
+  it("keeps outline lookup errors scoped to the engagement", () => {
+    const { database, leads, engagementId } = createFixture();
+    const lead = leads.createLead(engagementId, { title: "Lead", source: SOURCE });
+    if (!lead.ok) throw new Error("setup failed");
+    const other = new EngagementRepository(database.db).createEngagement({
+      name: "Other lab", kind: "lab", description: null,
+      authorizationContext: null, autoContinueWarnings: false,
+    });
+    if (!other.ok) throw new Error("setup failed");
+    expect(leads.leadOutline("missing", lead.value.id)).toEqual({
+      ok: false, error: { code: "engagement_not_found" },
+    });
+    expect(leads.leadOutline(engagementId, "missing")).toEqual({
+      ok: false, error: { code: "lead_not_found" },
+    });
+    expect(leads.leadOutline(other.value.id, lead.value.id)).toEqual({
+      ok: false, error: { code: "lead_not_found" },
+    });
+  });
+
   it("supports one capture across two leads and attach-afterward", () => {
     const { leads, engagementId } = createFixture();
     const first = leads.createLead(engagementId, { title: "First lead", source: SOURCE });
@@ -306,6 +326,12 @@ describe("lead persistence", () => {
         .run(attempt.value.id);
     }
     expect(leads.listAttemptsForEngagement(engagementId)).toEqual({
+      ok: false, error: { code: "invalid_persisted_data" },
+    });
+    expect(leads.listAttempts(engagementId, lead.value.id)).toEqual({
+      ok: false, error: { code: "invalid_persisted_data" },
+    });
+    expect(leads.leadOutline(engagementId, lead.value.id)).toEqual({
       ok: false, error: { code: "invalid_persisted_data" },
     });
   });
