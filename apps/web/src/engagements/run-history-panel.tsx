@@ -8,7 +8,7 @@ import {
   Skeleton,
   StaleDataState,
 } from "@stonehush/ui";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { formatEngagementTimestamp } from "./format.js";
 import { useRunHistoryQuery } from "./run-history-query.js";
@@ -57,7 +57,7 @@ export function RunHistoryPanel({
   const historyRef = useRef(history);
   const inFlightRef = useRef<number | null>(null);
   const callSeqRef = useRef(0);
-  // Stable-order baseline: ids visible the last time the operator opted into
+  // Stable-order baseline: currentIds visible the last time the operator opted into
   // fresh results. New arrivals stay held back behind Show new results so rows
   // never shift while reading or selecting text. Updates to already visible
   // rows still render immediately. Explicit refreshes and Load more merge.
@@ -111,39 +111,40 @@ export function RunHistoryPanel({
     fetchingRef.current = history.isFetching;
     historyRef.current = history;
   });
+  const { currentIds, loadedRuns, heldBackCount } = useMemo(() => {
+    const currentRuns = history.data?.pages.flatMap((page) => page.runs) ?? [];
+    const currentIds = currentRuns.map((run) => run.id);
+    const olderPageIds = new Set(
+      history.data?.pages.slice(1).flatMap((page) => page.runs).map((run) => run.id) ?? [],
+    );
+    const baselineWithOlder =
+      held?.baseline === undefined ? undefined : [...held.baseline, ...olderPageIds];
+    const split = splitHeldBackIds(currentIds, baselineWithOlder, selectedRunId);
+    const visibleIds = new Set(split.visibleIds);
+    return {
+      currentIds,
+      loadedRuns: currentRuns.filter((run) => visibleIds.has(run.id)),
+      heldBackCount: split.heldBackCount,
+    };
+  }, [history.data, held, selectedRunId]);
   useEffect(() => {
     if (history.data === undefined) return;
-    const ids = history.data.pages.flatMap((page) => page.runs).map((run) => run.id);
     if (held === undefined || held.key !== heldKey) {
       mergeNextRef.current = false;
-      setHeld({ key: heldKey, baseline: ids });
+      setHeld({ key: heldKey, baseline: currentIds });
       return;
     }
     if (mergeNextRef.current && !history.isFetching && !history.isFetchingNextPage) {
       mergeNextRef.current = false;
-      setHeld({ key: heldKey, baseline: ids });
+      setHeld({ key: heldKey, baseline: currentIds });
     }
   });
-  const currentRuns = history.data?.pages.flatMap((page) => page.runs) ?? [];
-  const olderPageIds = new Set(
-    history.data?.pages.slice(1).flatMap((page) => page.runs).map((run) => run.id) ?? [],
-  );
-  const baselineWithOlder =
-    held?.baseline === undefined ? undefined : [...held.baseline, ...olderPageIds];
-  const split = splitHeldBackIds(
-    currentRuns.map((run) => run.id),
-    baselineWithOlder,
-    selectedRunId,
-  );
-  const visibleIds = new Set(split.visibleIds);
-  const loadedRuns = currentRuns.filter((run) => visibleIds.has(run.id));
-  const heldBackCount = split.heldBackCount;
   const showNewResults = () => {
     if (history.data === undefined) return;
     focusListAfterMergeRef.current = true;
     setHeld({
       key: heldKey,
-      baseline: history.data.pages.flatMap((page) => page.runs).map((run) => run.id),
+      baseline: currentIds,
     });
   };
   useEffect(() => {
@@ -190,6 +191,20 @@ export function RunHistoryPanel({
     }, PENDING_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [autoPollEligible, engagementId, selectedRunId, restartEpoch]);
+
+  const filterText = filters.text.trim().toLowerCase();
+  const filtersActive = filters.runState !== "all" || filterText !== "";
+  const visibleRuns = useMemo(
+    () =>
+      loadedRuns.filter(
+        (run) =>
+          (filters.runState === "all" || run.state === filters.runState) &&
+          (filterText === "" ||
+            run.id.toLowerCase().includes(filterText) ||
+            run.actionId.toLowerCase().includes(filterText)),
+      ),
+    [loadedRuns, filters.runState, filterText],
+  );
 
   if (engagementId === undefined) {
     return (
@@ -243,15 +258,6 @@ export function RunHistoryPanel({
   }
 
   const runs = loadedRuns;
-  const filterText = filters.text.trim().toLowerCase();
-  const filtersActive = filters.runState !== "all" || filterText !== "";
-  const visibleRuns = runs.filter(
-    (run) =>
-      (filters.runState === "all" || run.state === filters.runState) &&
-      (filterText === "" ||
-        run.id.toLowerCase().includes(filterText) ||
-        run.actionId.toLowerCase().includes(filterText)),
-  );
   const clearFilters = () => {
     setFilters({ engagementId, runState: "all", text: "" });
   };

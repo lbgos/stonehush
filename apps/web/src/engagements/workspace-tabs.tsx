@@ -1,5 +1,5 @@
 import { isTerminalRunState } from "@stonehush/domain";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useRunHistoryQuery } from "./run-history-query.js";
 
@@ -94,8 +94,6 @@ export function ExecutionTray({ engagementId, onOpenRun }: ExecutionTrayProps) {
   // only), so the tray pages newest-first up to MAX_TRAY_PAGES and says so
   // honestly when older history remains unchecked.
   const MAX_TRAY_PAGES = 8;
-  const runs = history.data?.pages.flatMap((page) => page.runs) ?? [];
-  const active = runs.filter((run) => !isTerminalRunState(run.state));
   const canFetchMore =
     history.data !== undefined &&
     history.hasNextPage === true &&
@@ -118,30 +116,35 @@ export function ExecutionTray({ engagementId, onOpenRun }: ExecutionTrayProps) {
   const checkOlderRuns = () => {
     void history.fetchNextPage();
   };
-  const baselineTerminal = baseline === undefined ? undefined : new Set(baseline.terminalIds);
-  // Terminals on pages appended after the baseline snapshot are history, not
-  // newly finished work: exclude them until the baseline effect folds them
-  // in, so the live region never announces an old run as new. Active runs on
-  // those pages stay tracked, so a later completion still surfaces once the
-  // baseline covers the page.
-  const watchedIds =
-    baseline === undefined || history.data === undefined
-      ? new Set<string>()
-      : new Set(
-          history.data.pages
-            .slice(0, baseline.pageCount)
-            .flatMap((page) => page.runs)
-            .map((run) => run.id),
-        );
-  const finished =
-    baselineTerminal === undefined
-      ? []
-      : runs.filter(
-          (run) =>
-            isTerminalRunState(run.state) &&
-            !baselineTerminal.has(run.id) &&
-            watchedIds.has(run.id),
-        );
+  const { runs, active, finished } = useMemo(() => {
+    const runs = history.data?.pages.flatMap((page) => page.runs) ?? [];
+    const active = runs.filter((run) => !isTerminalRunState(run.state));
+    const baselineTerminal = baseline === undefined ? undefined : new Set(baseline.terminalIds);
+    // Terminals on pages appended after the baseline snapshot are history, not
+    // newly finished work: exclude them until the baseline effect folds them
+    // in, so the live region never announces an old run as new. Active runs on
+    // those pages stay tracked, so a later completion still surfaces once the
+    // baseline covers the page.
+    const watchedIds =
+      baseline === undefined || history.data === undefined
+        ? new Set<string>()
+        : new Set(
+            history.data.pages
+              .slice(0, baseline.pageCount)
+              .flatMap((page) => page.runs)
+              .map((run) => run.id),
+          );
+    const finished =
+      baselineTerminal === undefined
+        ? []
+        : runs.filter(
+            (run) =>
+              isTerminalRunState(run.state) &&
+              !baselineTerminal.has(run.id) &&
+              watchedIds.has(run.id),
+          );
+    return { runs, active, finished };
+  }, [history.data, baseline]);
 
   const refetchRef = useRef(history.refetch);
   useEffect(() => {
