@@ -49,9 +49,14 @@ export function EngagementFindingsSection({
   const retry = () => void findings.refetch();
   const hasData = findings.data !== undefined;
 
-  const body = (
-    <FindingsBody archived={archived} engagementId={engagementId} selection={selection} />
-  );
+  const body = findings.data !== undefined ? (
+    <FindingsBody
+      archived={archived}
+      engagementId={engagementId}
+      records={findings.data}
+      selection={selection}
+    />
+  ) : null;
 
   return (
     <section aria-label="Findings" className="mt-5 border-t border-border pt-4">
@@ -93,10 +98,12 @@ export function EngagementFindingsSection({
 function FindingsBody({
   archived,
   engagementId,
+  records,
   selection,
 }: {
   archived: boolean;
   engagementId: string;
+  records: readonly Finding[];
   selection?:
     | {
         selectedIds: readonly string[];
@@ -104,7 +111,6 @@ function FindingsBody({
       }
     | undefined;
 }) {
-  const findings = useFindingsQuery(engagementId);
   const create = useCreateFindingMutation(engagementId);
   const resolve = useFindingTransitionMutation(engagementId, "resolve");
   const reopen = useFindingTransitionMutation(engagementId, "reopen");
@@ -130,7 +136,6 @@ function FindingsBody({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engagementId]);
 
-  const records = findings.data ?? [];
   const openCount = records.filter((finding) => finding.status === "open").length;
   const mutationError =
     create.isError || resolve.isError || reopen.isError
