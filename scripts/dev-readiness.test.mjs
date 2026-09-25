@@ -75,6 +75,25 @@ test("API readiness failure prevents web startup", async () => {
   assert.equal(webStarted, false);
 });
 
+test("shutdown during API readiness prevents a late web process", async () => {
+  const controller = new AbortController();
+  const ready = Promise.withResolvers();
+  const children = [];
+  const startup = startApiThenWeb({
+    signal: controller.signal,
+    apiIsRunning: () => true,
+    startApi: () => children.push("API"),
+    startWeb: () => children.push("web"),
+    waitUntilReady: () => ready.promise,
+  });
+  const stopping = [...children];
+  controller.abort();
+  ready.resolve();
+  await assert.rejects(startup, { name: "AbortError" });
+  assert.deepEqual(children, stopping);
+  assert.deepEqual(children, ["API"]);
+});
+
 test("API readiness uses a finite deadline", async () => {
   let clock = 0;
   let probes = 0;
