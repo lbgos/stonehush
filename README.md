@@ -16,6 +16,18 @@ Runs on your Linux machine with a browser UI, SQLite, and local evidence files. 
 
 **Early development.** Local, single-user use. Some screens are unfinished, and runner setup is still manual. No packaged installer yet.
 
+## Screenshots
+
+Captured from the running app with synthetic local lab data.
+
+Discover HTTP paths with ffuf and inspect the saved evidence for each result.
+
+![HTTP path discovery with status codes, response sizes, and raw evidence links](https://files.lbgos.dev/f/59f3533e54fff819b82a902d34a8d66c/stonehush-path-discovery-3bfa14ee.png)
+
+Review findings in the engagement report, then export Markdown or JSON.
+
+![Engagement report with a saved finding, Markdown preview, and export controls](https://files.lbgos.dev/f/433d3fd19a510aa3807312785019ef18/stonehush-report-f02da90c.png)
+
 ## Quick start
 
 Requires Linux with glibc 2.28+, Node.js 24, pnpm 10.24.0, a C compiler (`cc`), and Node development headers (`node_api.h`).
