@@ -63,9 +63,11 @@ export async function waitForApiReadiness({
   throw new Error("Stonehush API did not become ready before the development startup deadline.");
 }
 
-export async function startApiThenWeb({ apiIsRunning, startApi, startWeb, waitUntilReady }) {
+export async function startApiThenWeb({ apiIsRunning, signal, startApi, startWeb, waitUntilReady }) {
+  signal?.throwIfAborted();
   const api = startApi();
   await waitUntilReady(api);
+  signal?.throwIfAborted();
   if (!apiIsRunning(api)) throw new Error("Stonehush API exited before web startup.");
   const web = startWeb();
   return { api, web };

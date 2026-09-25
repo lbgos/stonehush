@@ -94,7 +94,9 @@ async function main() {
   }
 
   let shutdownPromise;
+  const startupController = new AbortController();
   function shutdown(signal, exitCode) {
+    startupController.abort();
     shutdownPromise ??= Promise.all(
       children.map(({ child, exited }) => stopChild(child, exited, signal)),
     ).then(() => {
@@ -109,6 +111,7 @@ async function main() {
   let started;
   try {
     started = await startApiThenWeb({
+      signal: startupController.signal,
       apiIsRunning: ({ child }) => processGroupExists(child),
       startApi: () => startChild("API", "@stonehush/api"),
       startWeb: () => startChild("web", "@stonehush/web"),
