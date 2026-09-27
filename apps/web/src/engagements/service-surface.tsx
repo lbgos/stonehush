@@ -23,6 +23,7 @@ import {
   probeSelectionKey,
   restoreSurfacePosition,
   serviceInspectorRecord,
+  serviceLeadContext,
   serviceSelectionKey,
   splitOriginUrl,
   withOriginScheme,
@@ -30,6 +31,7 @@ import {
   type ExtraRowActions,
   type InspectorRecord,
   type LauncherRequest,
+  type LeadStartContext,
   type OriginScheme,
 } from "./inspector.js";
 import {
@@ -88,7 +90,7 @@ export interface EngagementServicesSectionProps {
   readonly onOpenNotes?: (() => void) | undefined;
   readonly onSelectKey?: ((key: string | undefined) => void) | undefined;
   readonly onSelectTarget?: ((target: string) => void) | undefined;
-  readonly onStartLead?: ((target: string) => void) | undefined;
+  readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
   readonly selectedKey?: string | undefined;
   readonly selectedTarget?: string | undefined;
 }
@@ -566,7 +568,7 @@ function TargetGroup({
   onAskAbout: ((target: string) => void) | undefined;
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
-  onStartLead: ((target: string) => void) | undefined;
+  onStartLead: ((context: LeadStartContext) => void) | undefined;
   probes: readonly HttpProbeProjected[] | undefined;
   schemes: Readonly<Record<string, OriginScheme>>;
   selectedKey: string | undefined;
@@ -640,6 +642,7 @@ function TargetGroup({
                     probes={group.probes}
                     scheme={schemes[schemeKey] ?? group.scheme}
                     selectedKey={selectedKey}
+                    service={service}
                     setScheme={(scheme) => setSchemes({ ...schemes, [schemeKey]: scheme })}
                     target={target}
                   />
@@ -811,7 +814,7 @@ function UnmatchedOrigins({
   onAskAbout: ((target: string) => void) | undefined;
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
-  onStartLead: ((target: string) => void) | undefined;
+  onStartLead: ((context: LeadStartContext) => void) | undefined;
   probes: readonly HttpProbeProjected[] | undefined;
   schemes: Readonly<Record<string, OriginScheme>>;
   selectedKey: string | undefined;
@@ -897,7 +900,7 @@ function ObservedOriginsWithoutServices({
   onAskAbout: ((target: string) => void) | undefined;
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
-  onStartLead: ((target: string) => void) | undefined;
+  onStartLead: ((context: LeadStartContext) => void) | undefined;
   probes: readonly HttpProbeProjected[] | undefined;
   selectedKey: string | undefined;
 }) {
@@ -958,6 +961,7 @@ function OriginBlock({
   probes,
   scheme,
   selectedKey,
+  service,
   setScheme,
   target,
 }: {
@@ -969,12 +973,13 @@ function OriginBlock({
   onAskAbout: ((target: string) => void) | undefined;
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
-  onStartLead: ((target: string) => void) | undefined;
+  onStartLead: ((context: LeadStartContext) => void) | undefined;
   paths: readonly FfufProjected[];
   port: number;
   probes: readonly HttpProbeProjected[];
   scheme: OriginScheme;
   selectedKey: string | undefined;
+  service?: NmapProjectedService | undefined;
   setScheme: (scheme: OriginScheme) => void;
   target: string;
 }) {
@@ -1037,10 +1042,12 @@ function OriginBlock({
             onOpenLauncher({ kind: "ffuf", origin, sourceLabel: origin }, sourceKey)
           }
         />
-        {onStartLead !== undefined ? (
+        {/* The origin row's lead source is its Nmap service. Origins without a
+            projected service start leads from their probe and path rows. */}
+        {onStartLead !== undefined && service !== undefined ? (
           <button
             type="button"
-            onClick={() => onStartLead(origin)}
+            onClick={() => onStartLead(serviceLeadContext(service, rowKey, origin))}
             className="inline-flex min-h-8 items-center rounded-md px-2 text-[12px] font-medium text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             Start a lead
@@ -1305,7 +1312,7 @@ function SurfaceInspectorLoader({
   onDiscoverOrigin: (origin: string, scopeHint: string | undefined) => void;
   onOpenNotes: (() => void) | undefined;
   onProbeOrigin: (origin: string) => void;
-  onStartLead: ((target: string) => void) | undefined;
+  onStartLead: ((context: LeadStartContext) => void) | undefined;
   probesQuery: { data: readonly HttpProbeProjected[] | undefined; isFetching: boolean; isError?: boolean; refetch?: () => void };
   selectionKey: string;
   services: readonly NmapProjectedService[];
