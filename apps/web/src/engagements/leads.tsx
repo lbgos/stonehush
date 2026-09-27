@@ -232,6 +232,12 @@ function LeadsBody({
                             <span className="font-mono">{lead.serviceRef}</span>
                           </>
                         ) : null}
+                        {lead.source.label !== undefined ? (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="min-w-0 break-all font-mono">{lead.source.label}</span>
+                          </>
+                        ) : null}
                         <span aria-hidden="true">·</span>
                         <span className="font-mono">
                           {lead.source.kind}:{lead.source.ref}

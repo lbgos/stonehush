@@ -341,4 +341,66 @@ describe("surface target organization", () => {
     expect(screen.queryByRole("dialog", { name: "Probe web" })).toBeNull();
     expect(document.activeElement).toBe(probeButton);
   });
+
+  it("starts a lead from a service origin row with the service as source", async () => {
+    stubSurface();
+    const onStartLead = vi.fn();
+    renderSection({ onStartLead });
+
+    expect(await screen.findByText("http://192.0.2.10/admin")).toBeTruthy();
+    const origin = document.querySelector<HTMLElement>('[data-surface-row="origin:http://192.0.2.10:80"]');
+    expect(origin).not.toBeNull();
+    fireEvent.click(within(origin!).getByRole("button", { name: "Start a lead" }));
+    expect(onStartLead).toHaveBeenCalledWith({
+      sourceKey: "origin:http://192.0.2.10:80",
+      sourceKind: "nmap_service",
+      sourceRef: "artifact-1",
+      sourceText: "192.0.2.10:80/tcp nginx 1.25",
+      target: "192.0.2.10",
+      serviceRef: "http://192.0.2.10",
+    });
+    expect(screen.queryByRole("button", { name: "Ask about this" })).toBeNull();
+  });
+
+  it("offers no origin-row lead for an origin without a projected service", async () => {
+    const unmatchedProbe = {
+      ...probe,
+      url: "http://192.0.2.10:8081/",
+      finalUrl: "http://192.0.2.10:8081/",
+      artifactId: "artifact-8081",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith("/services")) return Promise.resolve(response([webService]));
+        if (url.endsWith("/http-probes")) return Promise.resolve(response([unmatchedProbe]));
+        if (url.endsWith("/ffuf-results")) return Promise.resolve(response([]));
+        if (url.endsWith("/findings") || url.endsWith("/leads")) return Promise.resolve(response([]));
+        return Promise.resolve(response({ code: "invalid_request" }, 400));
+      }),
+    );
+    const onStartLead = vi.fn();
+    renderSection({ onStartLead });
+
+    expect(await screen.findByText("Observed web origins without a projected service")).toBeTruthy();
+    const unmatched = document.querySelector<HTMLElement>(
+      '[data-surface-row="origin:http://192.0.2.10:8081"]',
+    );
+    expect(unmatched).not.toBeNull();
+    expect(within(unmatched!).queryByRole("button", { name: "Start a lead" })).toBeNull();
+
+    // The probe row inside that origin still starts a lead from the inspector.
+    fireEvent.click(within(unmatched!).getByRole("button", { name: "Inspect" }));
+    const inspector = await screen.findByRole("complementary", { name: "Selection inspector" });
+    fireEvent.click(within(inspector).getByRole("button", { name: "Start a lead" }));
+    expect(onStartLead).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKind: "http_probe",
+        sourceRef: "artifact-8081",
+        target: "192.0.2.10",
+        serviceRef: "http://192.0.2.10:8081",
+      }),
+    );
+  });
 });
