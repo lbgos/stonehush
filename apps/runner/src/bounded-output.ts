@@ -1,13 +1,10 @@
 /**
  * Bounded output handling per ADR-0002.
- * combinedRetainedOutput default 16 MiB, per-frame 64 KiB, unacked batch 32 KiB.
+ * Retains up to 16 MiB per collector by default.
  * This module implements the runner-side retention window with truncation metadata.
  */
 
 export const DEFAULT_COMBINED_RETAINED_OUTPUT = 16 * 1024 * 1024;
-export const FRAME_LIMIT = 64 * 1024;
-export const BATCH_LIMIT = 32 * 1024;
-export const UNACKED_HIGH_WATER = 256 * 1024;
 
 export interface TruncationMeta {
   inputBytesSeen: number;
@@ -48,19 +45,6 @@ export class BoundedCollector {
     }
   }
 
-  frames(): Buffer[] {
-    // Split retained bytes into 64 KiB frames preserving line terminators where possible
-    // but for simplicity split at exact boundaries (ADR allows exact 64 KiB boundaries)
-    const out: Buffer[] = [];
-    let offset = 0;
-    const concatenated = Buffer.concat(this.retained);
-    while (offset < concatenated.length) {
-      out.push(concatenated.subarray(offset, Math.min(offset + FRAME_LIMIT, concatenated.length)));
-      offset += FRAME_LIMIT;
-    }
-    return out;
-  }
-
   combined(): Buffer {
     return Buffer.concat(this.retained);
   }
@@ -75,9 +59,5 @@ export class BoundedCollector {
       firstDroppedRedactedOffset: this.firstDroppedOffset,
       truncated: bytesDropped > 0,
     };
-  }
-
-  limitBytes(): number {
-    return this.limit;
   }
 }
