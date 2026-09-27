@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, afterAll, describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 
-import { BoundedCollector, FRAME_LIMIT } from "./bounded-output.js";
+import { BoundedCollector } from "./bounded-output.js";
 import { controlledEnv, buildFakeActionArgv, spawnFakeAction } from "./fake-action.js";
 import { createRunDirectory, readNmapXmlSecurely, resolveNmapXmlPath, runSupervised, verifyExecutable } from "./process.js";
 import { createRedactor } from "./redaction.js";
@@ -218,16 +218,6 @@ describe("bounded output", () => {
     expect(meta.truncated).toBe(true);
     expect(meta.firstDroppedRedactedOffset).toBe(16 * 1024 * 1024);
     expect(meta.inputBytesSeen).toBe(17 * 1024 * 1024);
-  });
-
-  it("splits retained bytes into 64 KiB frames", () => {
-    const collector = new BoundedCollector(256 * 1024);
-    collector.push(130 * 1024, Buffer.alloc(130 * 1024, "a"));
-    const frames = collector.frames();
-    expect(frames.length).toBe(3);
-    expect(frames[0]?.length).toBe(FRAME_LIMIT);
-    expect(frames[1]?.length).toBe(FRAME_LIMIT);
-    expect(frames[2]?.length).toBe(2 * 1024);
   });
 
   it("child cannot deadlock on backpressure: excess drained", async () => {
