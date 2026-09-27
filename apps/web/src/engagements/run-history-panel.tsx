@@ -645,10 +645,18 @@ function SelectedRunContent({
   }
   const canAddToLead = !archived && runLeadEvidence(output).length > 0;
   const addToLeadRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef(false);
   const closeLeadForm = (recorded: string | undefined) => {
+    returnFocusRef.current = true;
     setLeadForm({ key: leadKey, open: false, recorded });
-    requestAnimationFrame(() => addToLeadRef.current?.focus({ preventScroll: true }));
   };
+  // Focus returns after the closed state commits, when Add to lead is
+  // enabled again. A frame callback could run before that commit.
+  useEffect(() => {
+    if (leadForm.open || !returnFocusRef.current) return;
+    returnFocusRef.current = false;
+    addToLeadRef.current?.focus({ preventScroll: true });
+  }, [leadForm.open]);
   return (
     <section aria-label="Selected run output">
       <div className="flex flex-wrap items-center justify-between gap-2">

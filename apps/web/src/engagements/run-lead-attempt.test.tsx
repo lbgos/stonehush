@@ -186,7 +186,7 @@ function renderRuns(props: { engagementId: string; selectedRunId: string; archiv
 }
 
 function leadForm() {
-  return screen.getByRole("region", { name: "Add run to lead" });
+  return screen.getByRole("dialog", { name: "Add run to lead" });
 }
 
 async function openForm() {
@@ -273,7 +273,10 @@ describe("add a finished run to a lead", () => {
       conditions: "Only checked without authentication",
       evidenceArtifactIds: ["art-out", "art-err"],
     });
-    expect(screen.queryByRole("region", { name: "Add run to lead" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add run to lead" })).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add to lead" })),
+    );
     await waitFor(() => {
       expect(queryClient.getQueryState(leadAttemptsQueryKey(ENGAGEMENT_A, LEAD_PARKED))?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(leadOutlineQueryKey(ENGAGEMENT_A, LEAD_PARKED))?.isInvalidated).toBe(true);
@@ -439,7 +442,7 @@ describe("add a finished run to a lead", () => {
     renderRuns({ engagementId: ENGAGEMENT_A, selectedRunId: "run-ok" });
     let form = await openForm();
     fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("region", { name: "Add run to lead" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add run to lead" })).toBeNull();
 
     form = await openForm();
     fireEvent.change(within(form).getByRole("textbox", { name: "Conditions, optional" }), {
@@ -453,7 +456,45 @@ describe("add a finished run to a lead", () => {
     ).toBe("Guest account only");
     fireEvent.click(within(form).getByRole("button", { name: "Cancel" }));
     fireEvent.click(within(form).getByRole("button", { name: "Discard" }));
-    expect(screen.queryByRole("region", { name: "Add run to lead" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add run to lead" })).toBeNull();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add to lead" })),
+    );
+    expect(posts).toHaveLength(0);
+  });
+
+  it("opens as a modal over the workspace and keeps the selected run underneath", async () => {
+    const { posts } = stubLab({
+      runs: { [ENGAGEMENT_A]: [runSummary("run-ok", "succeeded")] },
+      outputs: { [`${ENGAGEMENT_A}:run-ok`]: runOutput("run-ok", "succeeded", present("art-out"), absent) },
+      leads: { [ENGAGEMENT_A]: LEADS_A },
+    });
+    renderRuns({ engagementId: ENGAGEMENT_A, selectedRunId: "run-ok" });
+    const form = await openForm();
+    expect(form.getAttribute("aria-modal")).toBe("true");
+    expect(screen.getByRole("region", { name: "Run history" }).contains(form)).toBe(false);
+    expect(form.closest(".fixed")?.className).toContain("z-[70]");
+    expect(screen.getByText("run-ok · succeeded")).toBeTruthy();
+    expect(screen.getByTestId("run-history-stdout").textContent).toBe("bytes");
+
+    const summary = within(form).getByRole("textbox", { name: "Attempt summary" });
+    expect(document.activeElement).toBe(summary);
+    const cancel = within(form).getByRole("button", { name: "Cancel" });
+    cancel.focus();
+    fireEvent.keyDown(cancel, { key: "Tab" });
+    expect(document.activeElement).toBe(within(form).getByRole("combobox", { name: "Lead" }));
+
+    fireEvent.change(summary, { target: { value: "Edited summary" } });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss attempt form" }));
+    expect(within(form).getByText("Discard this attempt draft?")).toBeTruthy();
+    fireEvent.click(within(form).getByRole("button", { name: "Keep editing" }));
+    expect((summary as HTMLInputElement).value).toBe("Edited summary");
+    fireEvent.change(summary, {
+      target: { value: "Run run-ok succeeded at 12 Aug 2026, 12:00 UTC, preserved stdout attached" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss attempt form" }));
+    expect(screen.queryByRole("dialog", { name: "Add run to lead" })).toBeNull();
+    expect(screen.getByText("run-ok · succeeded")).toBeTruthy();
     expect(posts).toHaveLength(0);
   });
 
@@ -482,7 +523,7 @@ describe("add a finished run to a lead", () => {
 
     view.rerender({ engagementId: ENGAGEMENT_A, selectedRunId: "run-two" });
     await screen.findByText("run-two · succeeded");
-    expect(screen.queryByRole("region", { name: "Add run to lead" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add run to lead" })).toBeNull();
     form = await openForm();
     expect(
       (within(form).getByRole("textbox", { name: "Conditions, optional" }) as HTMLInputElement).value,
@@ -491,7 +532,7 @@ describe("add a finished run to a lead", () => {
 
     view.rerender({ engagementId: ENGAGEMENT_B, selectedRunId: "run-b" });
     await screen.findByText("run-b · succeeded");
-    expect(screen.queryByRole("region", { name: "Add run to lead" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Add run to lead" })).toBeNull();
     form = await openForm();
     const options = within(within(form).getByRole("combobox", { name: "Lead" }))
       .getAllByRole("option")
