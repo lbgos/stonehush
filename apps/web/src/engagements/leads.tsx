@@ -44,14 +44,14 @@ const LEAD_SOURCE_KINDS = [
   "manual",
 ] as const;
 
-const ATTEMPT_OUTCOMES = [
+export const ATTEMPT_OUTCOMES = [
   "observed",
   "ruled_out",
   "inconclusive",
   "interrupted",
 ] as const;
 
-const ATTEMPT_OUTCOME_LABELS: Record<(typeof ATTEMPT_OUTCOMES)[number], string> = {
+export const ATTEMPT_OUTCOME_LABELS: Record<(typeof ATTEMPT_OUTCOMES)[number], string> = {
   observed: "observed",
   ruled_out: "ruled out under conditions",
   inconclusive: "inconclusive",
@@ -70,6 +70,11 @@ function parseEvidenceInput(value: string): string[] {
     .split(/[\s,]+/)
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0);
+}
+
+// Attempt evidence may be typed by hand, so both path segments are encoded.
+function artifactContentHref(engagementId: string, artifactId: string): string {
+  return `/api/v1/engagements/${encodeURIComponent(engagementId)}/artifacts/${encodeURIComponent(artifactId)}/content`;
 }
 
 function mutationMessage(error: unknown, fallback: string): string {
@@ -522,10 +527,23 @@ function LeadDetail({
                 <p className="m-0 mt-1 text-[11px] text-muted-foreground">
                   {ATTEMPT_OUTCOME_LABELS[attempt.outcome]}
                   {attempt.conditions !== null ? ` under ${attempt.conditions}` : ""}
-                  {attempt.evidenceArtifactIds.length > 0 ? (
-                    <span className="font-mono"> · {attempt.evidenceArtifactIds.join(", ")}</span>
-                  ) : null}
                 </p>
+                {attempt.evidenceArtifactIds.length > 0 ? (
+                  <p className="m-0 mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+                    <span>Evidence</span>
+                    {attempt.evidenceArtifactIds.map((artifactId, index) => (
+                      <a
+                        key={artifactId}
+                        href={artifactContentHref(engagementId, artifactId)}
+                        title={artifactId}
+                        aria-label={`Download evidence ${index + 1} (${artifactId})`}
+                        className="text-foreground underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {index + 1}
+                      </a>
+                    ))}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
