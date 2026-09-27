@@ -6,7 +6,6 @@ import {
   HTTP_PROBE_ARTIFACT_SLOT,
   HTTP_PROBE_MAX_RAW_BYTES,
   HTTP_PROBE_PARSER_VERSION,
-  HttpProbeHopSchema,
 } from "@stonehush/contracts";
 import { parseProbeRawBytes } from "@stonehush/domain";
 import * as schema from "./schema.js";
@@ -191,10 +190,7 @@ export class HttpProbeRepository {
 
       const withSource = [];
       for (const row of rows) {
-        const hops = HttpProbeHopSchema.array().safeParse(JSON.parse(row.hopsJson));
-        if (!hops.success) {
-          return { ok: false, code: "invalid_persisted_data" };
-        }
+        const hops: unknown = JSON.parse(row.hopsJson);
         withSource.push({
           source: "http-probe" as const,
           parserVersion: row.parserVersion,
@@ -208,7 +204,7 @@ export class HttpProbeRepository {
             server: row.server,
             poweredBy: row.poweredBy,
           },
-          hops: hops.data,
+          hops,
           error: row.error,
           runId: row.runId,
           artifactId: row.artifactId,

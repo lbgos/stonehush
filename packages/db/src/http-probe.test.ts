@@ -128,6 +128,34 @@ describe("HttpProbeRepository", () => {
     ).toEqual({ ok: false, code: "invalid_persisted_data" });
   });
 
+  it.each([
+    ["non-array", "42"],
+    ["invalid status", '[{"url":"http://example.test/","status":99,"location":null}]'],
+    ["unknown field", '[{"url":"http://example.test/","status":200,"location":null,"extra":true}]'],
+    ["too many hops", JSON.stringify(Array.from({ length: 7 }, () => ({
+      url: "http://example.test/", status: 200, location: null,
+    })))],
+  ])("rejects persisted redirect chain with %s", (_case, hopsJson) => {
+    const database = fixture();
+    const created = new EngagementRepository(database.db).createEngagement({
+      name: "Lab", kind: "lab", autoContinueWarnings: false,
+    });
+    if (!created.ok) throw new Error("engagement");
+    const repo = new HttpProbeRepository(database.db);
+    addRun(database, created.value.id, "act-1", "run-1");
+    const raw = rawBytes("http://example.test/");
+    const artifactId = "00000000-0000-4000-8000-000000000023";
+    addArtifact(database, artifactId, "run-1", raw, `sha256:${"0".repeat(64)}`);
+    expect(repo.project({
+      artifactId, observedAt: "2026-09-03T00:00:00.000Z", rawBytes: raw,
+    })).toEqual({ ok: true });
+    database.sqlite.prepare("update http_probe_results set hops_json = ? where artifact_id = ?")
+      .run(hopsJson, artifactId);
+    expect(repo.listForEngagement(created.value.id)).toEqual({
+      ok: false, code: "invalid_persisted_data",
+    });
+  });
+
   it("returns engagement_not_found for unknown engagements", () => {
     const database = fixture();
     const repo = new HttpProbeRepository(database.db);
