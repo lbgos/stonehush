@@ -162,6 +162,58 @@ describe("lead quick create", () => {
     expect(scrollTo).toHaveBeenLastCalledWith(0, 640);
   });
 
+  it("skips the return restore when a save lands after the dialog unmounts", async () => {
+    let resolvePost: (value: Response) => void = () => undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/leads") && init?.method === "POST") {
+        return new Promise<Response>((resolve) => {
+          resolvePost = resolve;
+        });
+      }
+      return Promise.resolve(response([savedLead]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    // Stands in for the workspace dropping the dialog on an engagement switch.
+    function SwitchHarness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(false)}>
+            Switch engagement
+          </button>
+          {open ? (
+            <LeadQuickCreate
+              archived={false}
+              context={pathContext}
+              engagementId={engagementId}
+              onClose={() => setOpen(false)}
+            />
+          ) : null}
+        </>
+      );
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SwitchHarness />
+      </QueryClientProvider>,
+    );
+    const switchButton = screen.getByRole("button", { name: "Switch engagement" });
+    const dialog = screen.getByRole("dialog", { name: "Start a lead" });
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Admin panel" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save lead" }));
+    await waitFor(() => expect(postBodies(fetchMock)).toHaveLength(1));
+
+    fireEvent.click(switchButton);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    resolvePost(response(savedLead, 201));
+
+    await waitFor(() =>
+      expect(queryClient.getQueryData<Lead[]>(leadsQueryKey(engagementId))).toContainEqual(savedLead),
+    );
+    // The per-call onSuccess (close) must not run once the observer unmounted.
+    expect(scrollTo).not.toHaveBeenCalled();
+  });
+
   it("keeps the title and shows the reason when saving fails", async () => {
     let failure = response({ code: "storage_busy" }, 503);
     const fetchMock = stubLeads(() => failure);
