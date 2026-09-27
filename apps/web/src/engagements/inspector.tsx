@@ -633,7 +633,7 @@ export function leadFieldFits(value: string | null): value is string {
   return value !== null && LeadTargetSchema.safeParse(value).success;
 }
 
-export function boundLeadLabel(text: string): string {
+function boundLeadLabel(text: string): string {
   const codePoints = Array.from(text);
   if (codePoints.length <= LEAD_SOURCE_LABEL_MAX) return text;
   return `${codePoints.slice(0, LEAD_SOURCE_LABEL_MAX - 1).join("")}…`;
