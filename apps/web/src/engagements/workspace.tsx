@@ -9,7 +9,7 @@ import {
   StaleDataState,
 } from "@stonehush/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 import {
   ENGAGEMENT_KIND_LABELS,
@@ -23,6 +23,8 @@ import { EngagementDeadlineSection } from "./deadline.js";
 import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
 import { EngagementGitleaksSection } from "./gitleaks.js";
+import type { LeadStartContext } from "./inspector.js";
+import { LeadQuickCreate } from "./lead-quick-create.js";
 import { EngagementVhostSection } from "./vhost-surface.js";
 import {
   EngagementLeadsSection,
@@ -286,6 +288,15 @@ function EngagementDetail({
     setAdvisorFindingIds([]);
   }, [displayed.id, closeAdvisor, setAdvisorExcerpts, setAdvisorFindingIds]);
 
+  // A lead draft belongs to the engagement that opened it. The render guard
+  // below hides it at once on a switch; the effect drops it for good.
+  const [leadStart, setLeadStart] = useState<
+    { engagementId: string; context: LeadStartContext } | null
+  >(null);
+  useEffect(() => {
+    setLeadStart(null);
+  }, [displayed.id]);
+
   const toggleAdvisorFinding = (findingId: string) => {
     if (archived) return;
     if (advisorDraft.findingIds.includes(findingId)) {
@@ -472,6 +483,7 @@ function EngagementDetail({
               onOpenNotes={openNotesFromSurface}
               onSelectKey={selectSurfaceItem}
               onSelectTarget={selectTarget}
+              onStartLead={(context) => setLeadStart({ engagementId: displayed.id, context })}
               selectedKey={selectedItemKey}
               selectedTarget={selectedTargetId}
             />
@@ -582,6 +594,16 @@ function EngagementDetail({
         <EngagementReportSection
           key={`report-${displayed.id}`}
           engagementId={displayed.id}
+        />
+      ) : null}
+
+      {leadStart !== null && leadStart.engagementId === displayed.id ? (
+        <LeadQuickCreate
+          key={`${leadStart.engagementId}:${leadStart.context.sourceKey}`}
+          archived={archived}
+          context={leadStart.context}
+          engagementId={leadStart.engagementId}
+          onClose={() => setLeadStart(null)}
         />
       ) : null}
 

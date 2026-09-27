@@ -458,6 +458,88 @@ describe("engagement workspace", () => {
     expect(screen.getByTestId("workspace-notice").textContent).toBe("");
   });
 
+  it("keeps a lead draft inside the engagement that opened it", async () => {
+    const secondEngagement = {
+      ...activeEngagement,
+      id: "10000000-0000-4000-8000-000000000003",
+      name: "Second lab",
+    };
+    const webService = {
+      address: "192.0.2.10",
+      port: 80,
+      protocol: "tcp",
+      hostname: null,
+      serviceName: "http",
+      product: null,
+      version: null,
+      source: "nmap",
+      parserVersion: "nmap-xml-v1",
+      runId: "run-1",
+      artifactId: "artifact-1",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+      observedAt: "2026-08-13T12:00:00.000Z",
+    };
+    const list = [activeEngagement, secondEngagement];
+    const fetchMock = stubFetch((url, init) => {
+      if (!isReadRequest(init)) return response({ code: "invalid_request" }, 400);
+      return (
+        readEngagementResponse(url, list, {}, {
+          [activeEngagement.id]: [webService],
+          [secondEngagement.id]: [webService],
+        }) ?? response([])
+      );
+    });
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start a lead" }));
+    const dialog = screen.getByRole("dialog", { name: "Start a lead" });
+    fireEvent.change(within(dialog).getByLabelText("Title"), { target: { value: "Draft for A" } });
+
+    await router.navigate({ to: "/engagements/$engagementId", params: { engagementId: secondEngagement.id } });
+    expect(await screen.findByRole("heading", { level: 1, name: "Second lab" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Start a lead" })).toBeNull();
+    expect(screen.queryByDisplayValue("Draft for A")).toBeNull();
+
+    await router.navigate({ to: "/engagements/$engagementId", params: { engagementId: activeEngagement.id } });
+    expect(await screen.findByRole("heading", { level: 1, name: "Target lab" })).toBeTruthy();
+    expect(screen.queryByRole("dialog", { name: "Start a lead" })).toBeNull();
+    expect(fetchMock.mock.calls.some(([, init]) => !isReadRequest(init))).toBe(false);
+  });
+
+  it("opens Start a lead read-only for an archived engagement", async () => {
+    const webService = {
+      address: "192.0.2.10",
+      port: 80,
+      protocol: "tcp",
+      hostname: null,
+      serviceName: "http",
+      product: null,
+      version: null,
+      source: "nmap",
+      parserVersion: "nmap-xml-v1",
+      runId: "run-1",
+      artifactId: "artifact-1",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+      observedAt: "2026-08-13T12:00:00.000Z",
+    };
+    const fetchMock = stubFetch((url, init) => {
+      if (!isReadRequest(init)) return response({ code: "invalid_request" }, 400);
+      return (
+        readEngagementResponse(url, [archivedEngagement], {}, { [archivedEngagement.id]: [webService] }) ??
+        response([])
+      );
+    });
+    await renderWorkspace(`/engagements/${archivedEngagement.id}`);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start a lead" }));
+    const dialog = screen.getByRole("dialog", { name: "Start a lead" });
+    expect(within(dialog).getByText(/This engagement is archived/)).toBeTruthy();
+    const save = within(dialog).getByRole<HTMLButtonElement>("button", { name: "Save lead" });
+    expect(save.disabled).toBe(true);
+    fireEvent.submit(save.closest("form")!);
+    expect(fetchMock.mock.calls.some(([, init]) => !isReadRequest(init))).toBe(false);
+  });
+
   it("keeps hook order stable when the engagement list resolves from pending", async () => {
     let resolveEngagements: (value: Response) => void = () => undefined;
     const pendingEngagements = new Promise<Response>((resolve) => {

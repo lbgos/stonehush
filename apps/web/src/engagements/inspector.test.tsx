@@ -22,6 +22,7 @@ import {
   selectDisplayAction,
   serviceSelectionKey,
   isWebServiceCandidate,
+  leadCreateInput,
   parseOriginScheme,
   pathInspectorRecord,
   probeInspectorRecord,
@@ -900,7 +901,7 @@ describe("surface inspector", () => {
     expect(screen.queryByRole("button", { name: "Open Notes" })).toBeNull();
   });
 
-  it("calls stub callbacks with the exact target when provided", async () => {
+  it("calls action callbacks with the exact target and typed lead context", async () => {
     stubFindings([]);
     const onStartLead = vi.fn();
     const onAskAbout = vi.fn();
@@ -911,7 +912,8 @@ describe("surface inspector", () => {
     renderInspector(record, { onStartLead, onAskAbout, onProbeOrigin, onDiscoverOrigin, onOpenNotes });
 
     fireEvent.click(await screen.findByRole("button", { name: "Start a lead" }));
-    expect(onStartLead).toHaveBeenCalledWith("http://192.0.2.10/admin");
+    expect(onStartLead).toHaveBeenCalledWith(record.lead);
+    expect(record.lead.sourceKey).toBe(record.key);
     fireEvent.click(screen.getByRole("button", { name: "Ask about this" }));
     expect(onAskAbout).toHaveBeenCalledWith("http://192.0.2.10/admin");
     fireEvent.click(screen.getByRole("button", { name: "Probe web" }));
@@ -978,5 +980,124 @@ describe("surface inspector", () => {
     const aside = await screen.findByRole("complementary", { name: "Selection inspector" });
     fireEvent.keyDown(aside, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("start a lead source mapping", () => {
+  it("maps a service row to its Nmap artifact, address, and endpoint", () => {
+    const record = serviceInspectorRecord(webService, engagementId);
+    expect(record.lead).toEqual({
+      sourceKey: record.key,
+      sourceKind: "nmap_service",
+      sourceRef: "artifact-1",
+      sourceText: "192.0.2.10:80/tcp nginx 1.25",
+      target: "192.0.2.10",
+      serviceRef: "192.0.2.10:80/tcp",
+    });
+    expect(leadCreateInput(record.lead, "Check nginx")).toEqual({
+      title: "Check nginx",
+      target: "192.0.2.10",
+      serviceRef: "192.0.2.10:80/tcp",
+      source: { kind: "nmap_service", ref: "artifact-1", label: "192.0.2.10:80/tcp nginx 1.25" },
+    });
+  });
+
+  it("brackets an IPv6 service endpoint and keeps the bare address as target", () => {
+    const record = serviceInspectorRecord({ ...webService, address: "2001:db8::10" }, engagementId);
+    expect(record.lead.target).toBe("2001:db8::10");
+    expect(record.lead.serviceRef).toBe("[2001:db8::10]:80/tcp");
+  });
+
+  it("maps probe and path rows to their own artifacts, host, and origin", () => {
+    const probeLead = leadCreateInput(probeInspectorRecord(probe, engagementId).lead, "Lab Box login");
+    expect(probeLead).toEqual({
+      title: "Lab Box login",
+      target: "192.0.2.10",
+      serviceRef: "http://192.0.2.10",
+      source: { kind: "http_probe", ref: "artifact-2", label: "http://192.0.2.10/" },
+    });
+    const pathLead = leadCreateInput(
+      pathInspectorRecord({ ...pathResult, url: "https://lab.test:8443/admin" }, engagementId).lead,
+      "Admin panel",
+    );
+    expect(pathLead).toEqual({
+      title: "Admin panel",
+      target: "lab.test",
+      serviceRef: "https://lab.test:8443",
+      source: { kind: "ffuf_result", ref: "artifact-3", label: "https://lab.test:8443/admin" },
+    });
+  });
+
+  it("bounds only the label for a long path URL and keeps the exact artifact ref", () => {
+    const url = `http://192.0.2.10/${"a".repeat(3000)}`;
+    const record = pathInspectorRecord({ ...pathResult, url }, engagementId);
+    expect(record.lead.sourceText).toBe(url);
+    const input = leadCreateInput(record.lead, "Long path");
+    expect(input.target).toBe("192.0.2.10");
+    expect(input.serviceRef).toBe("http://192.0.2.10");
+    expect(input.source.ref).toBe("artifact-3");
+    const label = input.source.label ?? "";
+    expect(Array.from(label)).toHaveLength(120);
+    expect(label.endsWith("…")).toBe(true);
+    expect(url.startsWith(label.slice(0, -1))).toBe(true);
+  });
+
+  it("omits a target or service the lead cannot hold instead of truncating it", () => {
+    const host = `${Array.from({ length: 5 }, () => "h".repeat(60)).join(".")}.test`;
+    const record = probeInspectorRecord({ ...probe, url: `http://${host}/` }, engagementId);
+    expect(record.lead.target).toBe(host);
+    expect(host.length).toBeGreaterThan(253);
+    const input = leadCreateInput(record.lead, "Long host");
+    expect("target" in input).toBe(false);
+    expect("serviceRef" in input).toBe(false);
+    expect(input.source.kind).toBe("http_probe");
+    expect(input.source.ref).toBe("artifact-2");
+  });
+
+  it("leaves target and service out when the observed URL cannot be parsed", () => {
+    const record = pathInspectorRecord({ ...pathResult, url: "http://192.0.2.10:/x" }, engagementId);
+    expect(record.lead.target).toBeNull();
+    expect(record.lead.serviceRef).toBeNull();
+    const input = leadCreateInput(record.lead, "Odd URL");
+    expect(input).toEqual({
+      title: "Odd URL",
+      source: { kind: "ffuf_result", ref: "artifact-3", label: "http://192.0.2.10:/x" },
+    });
+  });
+
+  it("lists leads that reference the evidence only when leads are wired", async () => {
+    const lead = {
+      contractVersion: 1,
+      id: "30000000-0000-4000-8000-000000000001",
+      engagementId,
+      title: "Admin panel",
+      target: "192.0.2.10",
+      serviceRef: "http://192.0.2.10",
+      source: { kind: "ffuf_result", ref: "artifact-3", label: "http://192.0.2.10/admin" },
+      nextStep: null,
+      disposition: "open",
+      parkReason: null,
+      testedConditions: null,
+      closedNote: null,
+      revisitSuggestion: null,
+      createdAt: "2026-09-03T02:00:00.000Z",
+      updatedAt: "2026-09-03T02:00:00.000Z",
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/findings")) return Promise.resolve(response([]));
+      if (url.endsWith("/leads")) return Promise.resolve(response([lead, { ...lead, id: "30000000-0000-4000-8000-000000000002", title: "Other", source: { kind: "http_probe", ref: "artifact-2" } }]));
+      return Promise.resolve(response({ code: "invalid_request" }, 400));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderInspector(pathInspectorRecord(pathResult, engagementId), { onStartLead: vi.fn() });
+    expect(await screen.findByText("1 linked lead: Admin panel")).toBeTruthy();
+    cleanup();
+
+    fetchMock.mockClear();
+    renderInspector(pathInspectorRecord(pathResult, engagementId));
+    expect(await screen.findByText("No findings reference this evidence yet.")).toBeTruthy();
+    expect(screen.queryByText(/linked lead/)).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/leads"))).toBe(false);
   });
 });

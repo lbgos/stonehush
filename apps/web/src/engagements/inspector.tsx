@@ -11,6 +11,7 @@ import {
   FFUF_RATE_DEFAULT,
   FFUF_THREADS_DEFAULT,
   FFUF_TIMEOUT_SECONDS_DEFAULT,
+  LeadTargetSchema,
 } from "@stonehush/contracts";
 import { Button, LoadingRegion, Skeleton } from "@stonehush/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -43,6 +44,7 @@ import { EngagementMutationClientError, engagementMutationMessage } from "./erro
 import { parseFfufPositiveInt, useLaunchFfufDiscoveryMutation, validateFfufWordlistPath } from "./ffuf-mutations.js";
 import { useFindingsQuery } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
+import { useLeadsQuery, type CreateLeadInput } from "./leads-query.js";
 import {
   engagementFfufResultsQueryKey,
   engagementHttpProbesQueryKey,
@@ -428,6 +430,7 @@ export interface InspectorRecord {
   readonly openUrl?: string | undefined;
   readonly origin?: string | undefined;
   readonly noteReference: string;
+  readonly lead: LeadStartContext;
 }
 
 function artifactUrl(engagementId: string, artifactId: string): string {
@@ -471,6 +474,10 @@ export function serviceInspectorRecord(
     evidenceDownloadUrl: artifactUrl(engagementId, service.artifactId),
     evidenceDownloadName: `nmap-${service.artifactId}.xml`,
     noteReference: `- ${service.address}:${String(service.port)} (${identity}) · evidence ${service.artifactId}`,
+    lead: serviceLeadContext(
+      service,
+      serviceSelectionKey(service.address, service.port, service.protocol, service.artifactId),
+    ),
   };
 }
 
@@ -510,6 +517,12 @@ export function probeInspectorRecord(
     openUrl: probe.url,
     ...(parts === undefined ? {} : { origin: parts.origin }),
     noteReference: `- ${probe.url} (${probeStatus(probe)}) · evidence ${probe.artifactId}`,
+    lead: webLeadContext(
+      "http_probe",
+      probe.url,
+      probe.artifactId,
+      probeSelectionKey(probe.url, probe.artifactId),
+    ),
   };
 }
 
@@ -546,6 +559,96 @@ export function pathInspectorRecord(
     openUrl: result.url,
     ...(parts === undefined ? {} : { origin: parts.origin }),
     noteReference: `- ${result.url} (${String(result.status)}) · evidence ${result.artifactId}`,
+    lead: webLeadContext(
+      "ffuf_result",
+      result.url,
+      result.artifactId,
+      pathSelectionKey(result.url, result.artifactId),
+    ),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Lead start context
+// ---------------------------------------------------------------------------
+
+export type SurfaceLeadSourceKind = "nmap_service" | "http_probe" | "ffuf_result";
+
+// What Start a lead carries from a surface row. sourceRef is the exact
+// evidence artifact id. target and serviceRef keep the full observed values;
+// leadCreateInput leaves out a value the lead contract cannot hold rather
+// than shortening it. Only the display label is bounded.
+export interface LeadStartContext {
+  readonly sourceKey: string;
+  readonly sourceKind: SurfaceLeadSourceKind;
+  readonly sourceRef: string;
+  readonly sourceText: string;
+  readonly target: string | null;
+  readonly serviceRef: string | null;
+}
+
+const LEAD_SOURCE_LABEL_MAX = 120;
+
+function serviceEndpoint(service: NmapProjectedService): string {
+  const address = service.address.includes(":") && !service.address.startsWith("[")
+    ? `[${service.address}]`
+    : service.address;
+  return `${address}:${String(service.port)}/${service.protocol}`;
+}
+
+export function serviceLeadContext(
+  service: NmapProjectedService,
+  sourceKey: string,
+  serviceRef?: string,
+): LeadStartContext {
+  const endpoint = serviceEndpoint(service);
+  return {
+    sourceKey,
+    sourceKind: "nmap_service",
+    sourceRef: service.artifactId,
+    sourceText: `${endpoint} ${serviceIdentity(service)}`,
+    target: service.address,
+    serviceRef: serviceRef ?? endpoint,
+  };
+}
+
+function webLeadContext(
+  sourceKind: "http_probe" | "ffuf_result",
+  url: string,
+  artifactId: string,
+  sourceKey: string,
+): LeadStartContext {
+  const parts = splitOriginUrl(url);
+  return {
+    sourceKey,
+    sourceKind,
+    sourceRef: artifactId,
+    sourceText: url,
+    target: parts === undefined ? null : parts.host.replace(/^\[|\]$/g, ""),
+    serviceRef: parts?.origin ?? null,
+  };
+}
+
+export function leadFieldFits(value: string | null): value is string {
+  return value !== null && LeadTargetSchema.safeParse(value).success;
+}
+
+function boundLeadLabel(text: string): string {
+  const codePoints = Array.from(text);
+  if (codePoints.length <= LEAD_SOURCE_LABEL_MAX) return text;
+  return `${codePoints.slice(0, LEAD_SOURCE_LABEL_MAX - 1).join("")}…`;
+}
+
+export function leadCreateInput(context: LeadStartContext, title: string): CreateLeadInput {
+  return {
+    title,
+    ...(leadFieldFits(context.target) ? { target: context.target } : {}),
+    ...(leadFieldFits(context.serviceRef) ? { serviceRef: context.serviceRef } : {}),
+    source: {
+      kind: context.sourceKind,
+      ref: context.sourceRef,
+      label: boundLeadLabel(context.sourceText),
+    },
   };
 }
 
@@ -563,7 +666,7 @@ export interface SurfaceInspectorProps {
   readonly onDiscoverOrigin?: ((origin: string, scopeHint: string | undefined) => void) | undefined;
   readonly onOpenNotes?: (() => void) | undefined;
   readonly onProbeOrigin?: ((origin: string) => void) | undefined;
-  readonly onStartLead?: ((target: string) => void) | undefined;
+  readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
   readonly record: InspectorRecord | undefined;
   readonly selectionKey: string;
 }
@@ -706,7 +809,7 @@ function InspectorRecordBody({
   onDiscoverOrigin: ((origin: string, scopeHint: string | undefined) => void) | undefined;
   onOpenNotes: (() => void) | undefined;
   onProbeOrigin: ((origin: string) => void) | undefined;
-  onStartLead: ((target: string) => void) | undefined;
+  onStartLead: ((context: LeadStartContext) => void) | undefined;
   record: InspectorRecord;
 }) {
   const findings = useFindingsQuery(engagementId);
@@ -780,7 +883,7 @@ function InspectorRecordBody({
             <Button
               type="button"
               variant="quiet"
-              onClick={() => onStartLead(record.target)}
+              onClick={() => onStartLead(record.lead)}
             >
               Start a lead
             </Button>
@@ -821,6 +924,9 @@ function InspectorRecordBody({
               ? "No findings reference this evidence yet."
               : `${String(linkedFindings.length)} linked finding${linkedFindings.length === 1 ? "" : "s"}: ${linkedFindings.map((finding) => finding.title).join(", ")}`}
           </p>
+        ) : null}
+        {onStartLead !== undefined ? (
+          <LinkedLeadsLine artifactId={record.artifactId} engagementId={engagementId} />
         ) : null}
         <details className="group mt-2 rounded-md border border-border">
           <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between px-2.5 text-[11px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -865,6 +971,19 @@ function InspectorRecordBody({
         </p>
       </InspectorSection>
     </div>
+  );
+}
+
+function LinkedLeadsLine({ artifactId, engagementId }: { artifactId: string; engagementId: string }) {
+  const leads = useLeadsQuery(engagementId);
+  if (leads.data === undefined) return null;
+  const linked = leads.data.filter((lead) => lead.source.ref === artifactId);
+  return (
+    <p className="mt-1 mb-0 text-[12px] text-muted-foreground">
+      {linked.length === 0
+        ? "No leads reference this evidence yet."
+        : `${String(linked.length)} linked lead${linked.length === 1 ? "" : "s"}: ${linked.map((lead) => lead.title).join(", ")}`}
+    </p>
   );
 }
 
