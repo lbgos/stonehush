@@ -121,9 +121,8 @@ export function RunLeadAttemptForm({
   const [initialSummary] = useState(() => defaultRunAttemptSummary(output.run, evidence));
   const [leadId, setLeadId] = useState("");
   const [summary, setSummary] = useState(initialSummary);
-  const [outcome, setOutcome] = useState<AttemptOutcome>(() =>
-    defaultRunAttemptOutcome(output.run.state),
-  );
+  const [initialOutcome] = useState(() => defaultRunAttemptOutcome(output.run.state));
+  const [outcome, setOutcome] = useState<AttemptOutcome>(initialOutcome);
   const [conditions, setConditions] = useState("");
   const [fieldError, setFieldError] = useState<string | undefined>(undefined);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -134,9 +133,13 @@ export function RunLeadAttemptForm({
   }, []);
 
   const candidates = (leads.data ?? []).filter((lead) => lead.disposition !== "closed");
-  const dirty = summary.trim() !== initialSummary || conditions.trim().length > 0;
+  const dirty =
+    leadId !== "" ||
+    outcome !== initialOutcome ||
+    summary.trim() !== initialSummary ||
+    conditions.trim().length > 0;
 
-  // Typed text only goes away through the Discard button.
+  // Any choice or typed text only goes away through the Discard button.
   const attemptClose = () => {
     if (record.isPending) return;
     if (dirty) {

@@ -463,6 +463,53 @@ describe("add a finished run to a lead", () => {
     expect(posts).toHaveLength(0);
   });
 
+  it("treats a chosen lead or a changed outcome as a draft on every close path", async () => {
+    const { posts } = stubLab({
+      runs: { [ENGAGEMENT_A]: [runSummary("run-ok", "succeeded")] },
+      outputs: { [`${ENGAGEMENT_A}:run-ok`]: runOutput("run-ok", "succeeded", present("art-out"), absent) },
+      leads: { [ENGAGEMENT_A]: LEADS_A },
+    });
+    renderRuns({ engagementId: ENGAGEMENT_A, selectedRunId: "run-ok" });
+    const closePaths: [string, (form: HTMLElement) => void][] = [
+      ["Cancel", (form) => fireEvent.click(within(form).getByRole("button", { name: "Cancel" }))],
+      ["Escape", (form) => fireEvent.keyDown(within(form).getByRole("textbox", { name: "Attempt summary" }), { key: "Escape" })],
+      ["backdrop", () => fireEvent.click(screen.getByRole("button", { name: "Dismiss attempt form" }))],
+    ];
+    const edits: [string, (form: HTMLElement) => void, (form: HTMLElement) => void][] = [
+      ["lead", (form) => chooseLead(form, LEAD_PARKED), (form) => chooseLead(form, "")],
+      [
+        "outcome",
+        (form) =>
+          fireEvent.change(within(form).getByRole("combobox", { name: "Outcome" }), {
+            target: { value: "observed" },
+          }),
+        (form) =>
+          fireEvent.change(within(form).getByRole("combobox", { name: "Outcome" }), {
+            target: { value: "inconclusive" },
+          }),
+      ],
+    ];
+    for (const [editName, change, revert] of edits) {
+      for (const [pathName, close] of closePaths) {
+        const form = await openForm();
+        change(form);
+        close(form);
+        expect(
+          within(form).queryByText("Discard this attempt draft?"),
+          `${editName} change then ${pathName}`,
+        ).toBeTruthy();
+        fireEvent.click(within(form).getByRole("button", { name: "Keep editing" }));
+        revert(form);
+        close(form);
+        expect(
+          screen.queryByRole("dialog", { name: "Add run to lead" }),
+          `${editName} reverted then ${pathName}`,
+        ).toBeNull();
+      }
+    }
+    expect(posts).toHaveLength(0);
+  });
+
   it("opens as a modal over the workspace and keeps the selected run underneath", async () => {
     const { posts } = stubLab({
       runs: { [ENGAGEMENT_A]: [runSummary("run-ok", "succeeded")] },
