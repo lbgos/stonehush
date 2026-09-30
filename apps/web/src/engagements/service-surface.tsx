@@ -4,9 +4,9 @@ import type {
   NmapProjectedService,
 } from "@stonehush/contracts";
 import { Button, LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
-import { PathGroups } from "./path-groups.js";
+import { EMPTY_PATH_FILTERS, PathGroups, type PathFilters } from "./path-groups.js";
 import { formatEngagementTimestamp } from "./format.js";
 import {
   ActionLauncher,
@@ -18,6 +18,7 @@ import {
   resolveProbeSelectionKey,
   resolveServiceSelectionKey,
   isWebServiceCandidate,
+  pathGroupRowKey,
   pathInspectorRecord,
   pathSelectionKey,
   probeInspectorRecord,
@@ -119,15 +120,39 @@ export function EngagementServicesSection({
   const [internalTarget, setInternalTarget] = useState<string | undefined>(undefined);
   const [internalKey, setInternalKey] = useState<string | undefined>(undefined);
   const [schemes, setSchemes] = useState<Readonly<Record<string, OriginScheme>>>({});
+  // Lives here, not in OriginBlock, so it survives target switches and
+  // refetches. Keys carry the engagement, so switching engagements starts clean.
+  const [pathFilters, setPathFilters] = useState<PathFilters>(EMPTY_PATH_FILTERS);
   const [launcher, setLauncher] = useState<LauncherRequest | null>(null);
   const scrollRestoreRef = useRef(0);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const returnKeyRef = useRef<string | undefined>(undefined);
+  const pendingPathFocusRef = useRef<{ key: string; engagementId: string } | undefined>(undefined);
 
   const effectiveTarget = selectedTarget ?? internalTarget;
   const effectiveKey = selectedKey ?? internalKey;
   const selectTarget = onSelectTarget ?? setInternalTarget;
   const selectKey = onSelectKey ?? setInternalKey;
+
+  useEffect(() => {
+    const pending = pendingPathFocusRef.current;
+    if (pending === undefined) return;
+    if (pending.engagementId !== engagementId || (effectiveKey !== undefined && effectiveKey !== pending.key)) {
+      pendingPathFocusRef.current = undefined;
+      return;
+    }
+    if (effectiveKey !== undefined) return;
+    const key = pending.key;
+    // Wait for the route to clear the inspector and its pinned row. A close
+    // animation frame can run before that commit on controlled selections.
+    const frame = requestAnimationFrame(() => {
+      const resolved = resolvePathSelectionKey(key, ffufQuery.data ?? []) ?? key;
+      const result = ffufQuery.data?.find((entry) => pathSelectionKey(entry.url, entry.artifactId) === resolved);
+      focusSurfaceRow(resolved, result === undefined ? undefined : pathGroupRowKey(result));
+      pendingPathFocusRef.current = undefined;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [effectiveKey, engagementId, ffufQuery.data]);
 
   const hasData = servicesQuery.data !== undefined;
   const retry = () => void servicesQuery.refetch();
@@ -158,6 +183,15 @@ export function EngagementServicesSection({
       ? effectiveTarget
       : targets[0]?.target;
 
+  // A path row folded into a collapsed or hidden group is not rendered, so
+  // focus falls back to that group's header, derived from the exact record.
+  const focusReturnRow = (key: string) => {
+    const resolved = resolvePathSelectionKey(key, ffufResults ?? []) ?? key;
+    const result = ffufResults?.find(
+      (entry) => pathSelectionKey(entry.url, entry.artifactId) === resolved,
+    );
+    focusSurfaceRow(resolved, result === undefined ? undefined : pathGroupRowKey(result));
+  };
   const openSelection = (key: string) => {
     scrollRestoreRef.current = window.scrollY;
     returnKeyRef.current = key;
@@ -169,15 +203,18 @@ export function EngagementServicesSection({
     // position instead of resetting to the top with no focus target.
     const key = returnKeyRef.current ?? effectiveKey;
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const isPath = decodeSurfaceSelection(key)?.kind === "path";
+    if (isPath && key !== undefined) pendingPathFocusRef.current = { key, engagementId };
     selectKey(undefined);
     const savedY = returnKeyRef.current === undefined ? window.scrollY : scrollRestoreRef.current;
     returnKeyRef.current = undefined;
     requestAnimationFrame(() => {
       restoreSurfacePosition(savedY, undefined);
+      if (isPath) return;
       if (active !== null && active !== document.body && document.contains(active)) {
         active.focus({ preventScroll: true });
       } else if (key !== undefined) {
-        focusSurfaceRow(key);
+        focusReturnRow(key);
       }
     });
   };
@@ -203,7 +240,7 @@ export function EngagementServicesSection({
       if (returnElement !== null && document.contains(returnElement)) {
         returnElement.focus({ preventScroll: true });
       } else if (key !== undefined) {
-        focusSurfaceRow(key);
+        focusReturnRow(key);
       }
     });
   };
@@ -289,8 +326,10 @@ export function EngagementServicesSection({
           onOpenLauncher={openLauncher}
           onSelectKey={openSelection}
           onStartLead={onStartLead}
+          pathFilters={pathFilters}
           probes={probes}
           selectedKey={effectiveKey}
+          setPathFilters={setPathFilters}
         />
       </section>
     ) : (
@@ -315,10 +354,12 @@ export function EngagementServicesSection({
             onOpenLauncher={openLauncher}
             onSelectKey={openSelection}
             onStartLead={onStartLead}
+            pathFilters={pathFilters}
             probes={probes}
             schemes={schemes}
             selectedKey={effectiveKey}
             services={sorted.filter((service) => service.address === activeTarget)}
+            setPathFilters={setPathFilters}
             setSchemes={setSchemes}
             target={activeTarget}
           />
@@ -550,10 +591,12 @@ function TargetGroup({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   probes,
   schemes,
   selectedKey,
   services,
+  setPathFilters,
   setSchemes,
   target,
 }: {
@@ -566,10 +609,12 @@ function TargetGroup({
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   probes: readonly HttpProbeProjected[] | undefined;
   schemes: Readonly<Record<string, OriginScheme>>;
   selectedKey: string | undefined;
   services: readonly NmapProjectedService[];
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
   setSchemes: (next: Readonly<Record<string, OriginScheme>>) => void;
   target: string;
 }) {
@@ -634,12 +679,14 @@ function TargetGroup({
                     onOpenLauncher={onOpenLauncher}
                     onSelectKey={onSelectKey}
                     onStartLead={onStartLead}
+                    pathFilters={pathFilters}
                     paths={group.paths}
                     port={group.port}
                     probes={group.probes}
                     scheme={schemes[schemeKey] ?? group.scheme}
                     selectedKey={selectedKey}
                     service={service}
+                    setPathFilters={setPathFilters}
                     setScheme={(scheme) => setSchemes({ ...schemes, [schemeKey]: scheme })}
                     target={target}
                   />
@@ -659,9 +706,11 @@ function TargetGroup({
         onOpenLauncher={onOpenLauncher}
         onSelectKey={onSelectKey}
         onStartLead={onStartLead}
+        pathFilters={pathFilters}
         probes={probes}
         schemes={schemes}
         selectedKey={selectedKey}
+        setPathFilters={setPathFilters}
         setSchemes={setSchemes}
         target={target}
       />
@@ -797,9 +846,11 @@ function UnmatchedOrigins({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   probes,
   schemes,
   selectedKey,
+  setPathFilters,
   setSchemes,
   target,
 }: {
@@ -812,9 +863,11 @@ function UnmatchedOrigins({
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   probes: readonly HttpProbeProjected[] | undefined;
   schemes: Readonly<Record<string, OriginScheme>>;
   selectedKey: string | undefined;
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
   setSchemes: (next: Readonly<Record<string, OriginScheme>>) => void;
   target: string;
 }) {
@@ -863,11 +916,13 @@ function UnmatchedOrigins({
               onOpenLauncher={onOpenLauncher}
               onSelectKey={onSelectKey}
               onStartLead={onStartLead}
+              pathFilters={pathFilters}
               paths={entry.paths}
               port={entry.port}
               probes={entry.probes}
               scheme={schemes[key] ?? entry.scheme}
               selectedKey={selectedKey}
+              setPathFilters={setPathFilters}
               setScheme={(next) => setSchemes({ ...schemes, [key]: next })}
               target={target}
             />
@@ -887,8 +942,10 @@ function ObservedOriginsWithoutServices({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   probes,
   selectedKey,
+  setPathFilters,
 }: {
   belowOrigin: BelowOrigin | undefined;
   engagementId: string;
@@ -898,8 +955,10 @@ function ObservedOriginsWithoutServices({
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   probes: readonly HttpProbeProjected[] | undefined;
   selectedKey: string | undefined;
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
 }) {
   const [schemes, setSchemes] = useState<Readonly<Record<string, OriginScheme>>>({});
   const entries = groupObservationsByOrigin(probes ?? [], ffufResults ?? []).sort((left, right) => {
@@ -928,11 +987,13 @@ function ObservedOriginsWithoutServices({
               onOpenLauncher={onOpenLauncher}
               onSelectKey={onSelectKey}
               onStartLead={onStartLead}
+              pathFilters={pathFilters}
               paths={entry.paths}
               port={entry.port}
               probes={entry.probes}
               scheme={schemes[key] ?? entry.scheme}
               selectedKey={selectedKey}
+              setPathFilters={setPathFilters}
               setScheme={(next) => setSchemes({ ...schemes, [key]: next })}
               target={entry.host}
             />
@@ -953,12 +1014,14 @@ function OriginBlock({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   paths,
   port,
   probes,
   scheme,
   selectedKey,
   service,
+  setPathFilters,
   setScheme,
   target,
 }: {
@@ -971,12 +1034,14 @@ function OriginBlock({
   onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
   onSelectKey: ((key: string) => void) | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   paths: readonly FfufProjected[];
   port: number;
   probes: readonly HttpProbeProjected[];
   scheme: OriginScheme;
   selectedKey: string | undefined;
   service?: NmapProjectedService | undefined;
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
   setScheme: (scheme: OriginScheme) => void;
   target: string;
 }) {
@@ -984,7 +1049,6 @@ function OriginBlock({
   const origin = withOriginScheme(`${formattedHost}:${String(port)}`, scheme);
   const resolvedProbeKey = resolveProbeSelectionKey(selectedKey, probes);
   const resolvedPathKey = resolvePathSelectionKey(selectedKey, paths);
-  const sortedPaths = [...paths].sort((left, right) => left.url.localeCompare(right.url));
   // Origin-level row identifier so launcher actions carry a defined sourceKey
   // for focus restoration. The container is not a selectable inspector row,
   // so the key uses an origin namespace that never collides with selection keys.
@@ -1077,8 +1141,13 @@ function OriginBlock({
           Not probed yet. Probe web records status, title, and headers here.
         </p>
       )}
-      {sortedPaths.length > 0 ? (
-        <PathGroups key={JSON.stringify([engagementId, identityKey])} paths={sortedPaths} renderPath={(result) => (
+      {paths.length > 0 ? (
+        <PathGroups
+          engagementId={engagementId}
+          filters={pathFilters}
+          label={origin}
+          paths={paths}
+          renderPath={(result) => (
             <PathRow
               key={`${result.url}:${result.artifactId}`}
               engagementId={engagementId}
@@ -1093,7 +1162,10 @@ function OriginBlock({
               result={result}
               selected={resolvedPathKey === pathSelectionKey(result.url, result.artifactId)}
             />
-          )} />
+          )}
+          selectedKey={resolvedPathKey}
+          setFilters={setPathFilters}
+        />
       ) : null}
       {belowOrigin === undefined ? null : (
         <div className="border-t border-border px-2.5 py-1.5">
@@ -1187,6 +1259,9 @@ function ProbeEnrichmentRow({
   );
 }
 
+const PATH_ACTION =
+  "inline-flex min-h-11 items-center text-[11px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:pointer-fine:min-h-8";
+
 function PathRow({
   engagementId,
   extraRowActions,
@@ -1211,10 +1286,15 @@ function PathRow({
     });
   };
   return (
-    <li data-surface-row={key} className="min-w-0 rounded-md border border-border px-2 py-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+    <li
+      data-surface-row={key}
+      className={`min-w-0 px-2.5 py-0.5 ${selected ? "bg-accent" : ""}`}
+    >
+      {/* One line when the origin block is wide; actions wrap below the URL
+          when it is not. */}
+      <div className="flex flex-wrap items-center gap-x-3">
         {onSelectKey === undefined ? (
-          <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold" title={result.url}>
+          <span className="min-w-0 flex-1 basis-64 truncate font-mono text-[12px] font-semibold" title={result.url}>
             {result.url}
           </span>
         ) : (
@@ -1222,9 +1302,7 @@ function PathRow({
             type="button"
             aria-current={selected ? "true" : undefined}
             onClick={() => onSelectKey(key)}
-            className={`min-w-0 flex-1 truncate text-left font-mono text-[12px] font-semibold outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring ${
-              selected ? "text-foreground" : "text-foreground"
-            }`}
+            className="min-h-11 min-w-0 flex-1 basis-64 truncate text-left font-mono text-[12px] font-semibold text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:pointer-fine:min-h-8"
             title={result.url}
           >
             {result.url}
@@ -1233,52 +1311,52 @@ function PathRow({
         <span className="font-mono text-[11px] text-muted-foreground" title={meta}>
           {meta}
         </span>
-      </div>
-      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-        {onSelectKey === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-x-3">
+          {onSelectKey === undefined ? null : (
+            <button
+              type="button"
+              onClick={() => onSelectKey(key)}
+              className={`${PATH_ACTION} font-semibold text-primary`}
+            >
+              Inspect
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => onSelectKey(key)}
-            className="inline-flex min-h-8 items-center text-[11px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => copyValue("copy", result.url)}
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
           >
-            Inspect
+            {copied === "copy" ? "Copied" : "Copy"}
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => copyValue("copy", result.url)}
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {copied === "copy" ? "Copied" : "Copy"}
-        </button>
-        <button
-          type="button"
-          onClick={() => copyValue("note", pathInspectorRecord(result, engagementId).noteReference)}
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {copied === "note" ? "Copied" : "Copy note reference"}
-        </button>
-        <button
-          type="button"
-          onClick={(event) => {
-            const row = event.currentTarget.closest("[data-surface-row]");
-            onDiscover(
-              row instanceof HTMLElement
-                ? (row.getAttribute("data-surface-row") ?? undefined)
-                : undefined,
-            );
-          }}
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Discover paths
-        </button>
-        <a
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-          href={artifactContentUrl(engagementId, result.artifactId)}
-          download
-        >
-          Raw evidence
-        </a>
+          <button
+            type="button"
+            onClick={() => copyValue("note", pathInspectorRecord(result, engagementId).noteReference)}
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
+          >
+            {copied === "note" ? "Copied" : "Copy note reference"}
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              const row = event.currentTarget.closest("[data-surface-row]");
+              onDiscover(
+                row instanceof HTMLElement
+                  ? (row.getAttribute("data-surface-row") ?? undefined)
+                  : undefined,
+              );
+            }}
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
+          >
+            Discover paths
+          </button>
+          <a
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
+            href={artifactContentUrl(engagementId, result.artifactId)}
+            download
+          >
+            Raw evidence
+          </a>
+        </div>
       </div>
       {extraRowActions === undefined ? null : (
         <div>{extraRowActions({ kind: "path", key, title: result.url, target: result.url })}</div>

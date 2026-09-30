@@ -72,7 +72,7 @@ export function LeadQuickCreate({ archived, context, engagementId, onClose }: Le
       if (returnTo.element !== null && document.contains(returnTo.element)) {
         returnTo.element.focus({ preventScroll: true });
       } else {
-        focusSurfaceRow(context.sourceKey);
+        focusSurfaceRow(context.sourceKey, context.fallbackKey);
       }
     });
   };

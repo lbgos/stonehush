@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { ENGAGEMENT_SERVICES_QUERY_ERROR_MESSAGE } from "./errors.js";
-import { pathSelectionKey, probeSelectionKey, serviceSelectionKey } from "./inspector.js";
+import { pathGroupRowKey, pathSelectionKey, probeSelectionKey, serviceSelectionKey } from "./inspector.js";
 import { engagementFfufResultsQueryKey } from "./query.js";
 import { EngagementServicesSection } from "./service-surface.js";
 
@@ -121,6 +121,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const BASIS = "status 200, length 1234, words 10, lines 5";
+
+function pathList(origin: string) {
+  return screen.getByRole("region", { name: `Path results for ${origin}` });
+}
+
+function findPathList(origin: string) {
+  return screen.findByRole("region", { name: `Path results for ${origin}` });
+}
+
+// Text of the count line's live hidden total; empty when nothing is hidden.
+function hiddenTotal(list: HTMLElement) {
+  return list.querySelector('[aria-live="polite"]')?.textContent;
+}
+
+function rowKeys(root: HTMLElement) {
+  return [...root.querySelectorAll("[data-surface-row]")].map((node) => node.getAttribute("data-surface-row"));
+}
+
 function renderSurface() {
   return render(
     <QueryClientProvider client={queryClient}>
@@ -130,22 +149,7 @@ function renderSurface() {
 }
 
 describe("EngagementServicesSection", () => {
-  it("isolates ephemeral filtering when switching engagements", async () => {
-    const paths = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
-    vi.stubGlobal("fetch", routeSurfaceResponses([], [], paths));
-    const surface = (id: string) => <QueryClientProvider client={queryClient}>
-      <EngagementServicesSection engagementId={id} />
-    </QueryClientProvider>;
-    const { rerender } = render(surface(engagementId));
-    const first = await screen.findByRole("region", { name: "Path responses from run run-1, artifact artifact-9" });
-    fireEvent.click(within(first).getByRole("button", { name: "Hide" }));
-    expect(within(first).getByText("2 results · 2 hidden")).toBeTruthy();
-    rerender(surface("20000000-0000-4000-8000-000000000002"));
-    const next = await screen.findByRole("region", { name: "Path responses from run run-1, artifact artifact-9" });
-    expect(within(next).getByText("2 results · 0 hidden")).toBeTruthy();
-  });
-
-  it("keeps status, length, words and lines differences as separate results", async () => {
+  it("folds exact metadata into one collapsed group after unique responses", async () => {
     const base = ffufPath("http://192.0.2.10/admin");
     const paths = [base, { ...base, url: "http://192.0.2.10/login" },
       { ...base, url: "http://192.0.2.10/status", status: 404 },
@@ -153,90 +157,200 @@ describe("EngagementServicesSection", () => {
       { ...base, url: "http://192.0.2.10/words", words: 11 },
       { ...base, url: "http://192.0.2.10/lines", lines: 6 }];
     vi.stubGlobal("fetch", routeSurfaceResponses([], [], paths)); renderSurface();
-    const context = await screen.findByRole("region", { name: "Path responses from run run-1, artifact artifact-9" });
-    expect(within(context).getAllByRole("button", { name: "Expand" })).toHaveLength(1);
-    for (const path of paths.slice(2)) expect(within(context).getByRole("button", { name: path.url })).toBeTruthy();
+    const list = await findPathList("http://192.0.2.10");
+    expect(within(list).getByText("6 paths · 1 group")).toBeTruthy();
+    expect(within(list).getByRole("button", { name: BASIS }).getAttribute("aria-expanded")).toBe("false");
+    expect(within(list).queryByRole("button", { name: base.url })).toBeNull();
+    // A single run context needs no run label.
+    expect(within(list).queryByRole("heading")).toBeNull();
+    expect(rowKeys(list)).toEqual([
+      ...["length", "lines", "status", "words"].map((name) => pathSelectionKey(`http://192.0.2.10/${name}`, "artifact-9")),
+      pathGroupRowKey(base),
+    ]);
   });
 
-  it("groups exact metadata, retains singleton actions, and restores hidden rows without network calls", async () => {
+  it("expands, hides and restores a group in place without requests", async () => {
     const paths = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login"),
       { ...ffufPath("http://192.0.2.10/secret"), status: 403 }];
     const fetchMock = routeSurfaceResponses([], [], paths);
     vi.stubGlobal("fetch", fetchMock); renderSurface();
-    const context = await screen.findByRole("region", { name: "Path responses from run run-1, artifact artifact-9" });
-    expect(within(context).getByText("2 results · status 200, length 1234, words 10, lines 5")).toBeTruthy();
-    expect(within(context).queryByText(paths[0]!.url)).toBeNull();
-    expect(within(context).getByRole("button", { name: paths[2]!.url })).toBeTruthy();
+    const list = await findPathList("http://192.0.2.10");
     const calls = fetchMock.mock.calls.length;
-    fireEvent.click(within(context).getByRole("button", { name: "Expand" }));
-    expect(within(context).getByRole("button", { name: paths[0]!.url })).toBeTruthy();
-    const hide = within(context).getByRole("button", { name: "Hide" });
+    fireEvent.click(within(list).getByRole("button", { name: BASIS }));
+    expect(within(list).getAllByRole("link", { name: "Raw evidence" })).toHaveLength(3);
+    const hide = within(list).getByRole("button", { name: `Hide ${BASIS}` });
     hide.focus(); fireEvent.click(hide);
-    expect(within(context).getByText("3 results · 2 hidden")).toBeTruthy();
-    expect(within(context).queryByText(paths[0]!.url)).toBeNull();
-    expect(document.activeElement).toBe(within(context).getByRole("button", { name: "Restore" }));
-    fireEvent.click(within(context).getByRole("button", { name: "Restore" }));
-    expect(within(context).getByRole("button", { name: paths[0]!.url })).toBeTruthy();
-    fireEvent.click(within(context).getByRole("button", { name: "Hide" }));
-    fireEvent.click(within(context).getByRole("button", { name: "Show all results" }));
-    expect(within(context).getByText("3 results · 0 hidden")).toBeTruthy();
-    expect(within(context).getAllByRole("link", { name: "Raw evidence" })).toHaveLength(3);
+    // The same node turns into Restore, so focus and pointer position hold.
+    expect(within(list).getByRole("button", { name: `Restore ${BASIS}` })).toBe(hide);
+    expect(document.activeElement).toBe(hide);
+    expect(hiddenTotal(list)).toBe("2 hidden");
+    expect(within(list).queryByRole("button", { name: BASIS })).toBeNull();
+    expect(within(list).getAllByRole("link", { name: "Raw evidence" })).toHaveLength(1);
+    fireEvent.click(hide);
+    expect(within(list).getByRole("button", { name: BASIS }).getAttribute("aria-expanded")).toBe("true");
+    expect(within(list).getAllByRole("link", { name: "Raw evidence" })).toHaveLength(3);
+    expect(hiddenTotal(list)).toBe("");
     expect(fetchMock).toHaveBeenCalledTimes(calls);
   });
 
-  it("keeps a hidden selected result in the inspector with exact evidence and selection", async () => {
-    const paths = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
-    vi.stubGlobal("fetch", routeSurfaceResponses([], [], paths)); renderSurface();
-    const context = await screen.findByRole("region", { name: "Path responses from run run-1, artifact artifact-9" });
-    fireEvent.click(within(context).getByRole("button", { name: "Expand" }));
-    const row = within(context).getByRole("button", { name: paths[0]!.url }).closest("[data-surface-row]");
-    expect(row?.getAttribute("data-surface-row")).toBe(pathSelectionKey(paths[0]!.url, paths[0]!.artifactId));
-    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: "Inspect" }));
-    const inspector = await screen.findByRole("complementary", { name: "Selection inspector" });
-    expect(within(inspector).getByRole("link", { name: "Raw evidence" }).getAttribute("href"))
-      .toBe(`/api/v1/engagements/${engagementId}/artifacts/artifact-9/content`);
-    fireEvent.click(within(context).getByRole("button", { name: "Hide" }));
-    expect(screen.getByRole("complementary", { name: "Selection inspector" })).toBe(inspector);
-    expect(within(inspector).getAllByText(paths[0]!.url)).toBeTruthy();
-  });
-
-  it("isolates matching metadata by run and artifact, preserving duplicate-URL evidence", async () => {
-    const a = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
-    const b = a.map((path) => ({ ...path, artifactId: "artifact-10" }));
-    const c = a.map((path) => ({ ...path, runId: "run-2", artifactId: "artifact-11" }));
-    vi.stubGlobal("fetch", routeSurfaceResponses([], [], [...a, ...b])); renderSurface();
-    const first = await screen.findByRole("region", { name: "Path responses from run run-1, artifact artifact-9" });
-    const second = screen.getByRole("region", { name: "Path responses from run run-1, artifact artifact-10" });
-    fireEvent.click(within(first).getByRole("button", { name: "Hide" }));
-    expect(within(first).getByText("All results hidden.")).toBeTruthy();
-    expect(within(second).getByText("2 results · 0 hidden")).toBeTruthy();
-    fireEvent.click(within(second).getByRole("button", { name: "Expand" }));
-    expect(within(second).getAllByRole("link", { name: "Raw evidence" })[0]?.getAttribute("href"))
-      .toBe(`/api/v1/engagements/${engagementId}/artifacts/artifact-10/content`);
-    queryClient.setQueryData(engagementFfufResultsQueryKey(engagementId), [...a, ...b, ...c]);
-    const third = await screen.findByRole("region", { name: "Path responses from run run-2, artifact artifact-11" });
-    expect(within(third).getByText("2 results · 0 hidden")).toBeTruthy();
-    expect(within(third).getByRole("button", { name: "Expand" }).getAttribute("aria-expanded")).toBe("false");
-    expect(within(first).getByText("2 results · 2 hidden")).toBeTruthy();
-  });
-
-  it("isolates filters by observed scheme and allows archived presentation filtering", async () => {
+  it("restores only its own origin on Show all, keeping expansion and focus", async () => {
     const http = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
     const https = http.map((path) => ({ ...path, url: path.url.replace("http:", "https:") }));
     const fetchMock = routeSurfaceResponses([], [], [...http, ...https]);
     vi.stubGlobal("fetch", fetchMock);
-    const { container } = render(<QueryClientProvider client={queryClient}>
+    render(<QueryClientProvider client={queryClient}>
       <EngagementServicesSection archived engagementId={engagementId} />
     </QueryClientProvider>);
-    await screen.findAllByRole("region", { name: "Path responses from run run-1, artifact artifact-9" });
-    const httpBlock = container.querySelector('[data-surface-origin="http://192.0.2.10"]');
-    const httpsBlock = container.querySelector('[data-surface-origin="https://192.0.2.10"]');
-    expect(httpBlock).toBeTruthy(); expect(httpsBlock).toBeTruthy();
+    const httpList = await findPathList("http://192.0.2.10");
+    const httpsList = pathList("https://192.0.2.10");
     const calls = fetchMock.mock.calls.length;
-    fireEvent.click(within(httpBlock as HTMLElement).getByRole("button", { name: "Hide" }));
-    expect(within(httpBlock as HTMLElement).getByText("2 results · 2 hidden")).toBeTruthy();
-    expect(within(httpsBlock as HTMLElement).getByText("2 results · 0 hidden")).toBeTruthy();
+    fireEvent.click(within(httpList).getByRole("button", { name: BASIS }));
+    fireEvent.click(within(httpList).getByRole("button", { name: `Hide ${BASIS}` }));
+    fireEvent.click(within(httpsList).getByRole("button", { name: `Hide ${BASIS}` }));
+    expect(hiddenTotal(httpList)).toBe("2 hidden");
+    expect(hiddenTotal(httpsList)).toBe("2 hidden");
+    fireEvent.click(within(httpList).getByRole("button", { name: "Show all" }));
+    expect(document.activeElement).toBe(within(httpList).getByText("2 paths · 1 group").parentElement);
+    expect(within(httpList).queryByRole("button", { name: "Show all" })).toBeNull();
+    expect(within(httpList).getByRole("button", { name: BASIS }).getAttribute("aria-expanded")).toBe("true");
+    expect(within(httpsList).getByRole("button", { name: `Restore ${BASIS}` })).toBeTruthy();
+    expect(hiddenTotal(httpsList)).toBe("2 hidden");
     expect(fetchMock).toHaveBeenCalledTimes(calls);
+  });
+
+  it("keeps filters across target switches and refetches, counting only current results", async () => {
+    const web80 = { ...serviceA, port: 80, serviceName: "http", hostname: null };
+    const old = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
+    const next = old.map((path) => ({
+      ...path, runId: "run-2", artifactId: "artifact-12", observedAt: "2026-08-13T13:00:00.000Z",
+    }));
+    vi.stubGlobal("fetch", routeSurfaceResponses([web80, serviceB], [], old)); renderSurface();
+    const targets = await screen.findByRole("group", { name: "Targets" });
+    fireEvent.click(within(targets).getByRole("button", { name: /192\.0\.2\.10/ }));
+    fireEvent.click(within(await findPathList("http://192.0.2.10")).getByRole("button", { name: `Hide ${BASIS}` }));
+    fireEvent.click(within(targets).getByRole("button", { name: /192\.0\.2\.2/ }));
+    expect(screen.queryByRole("region", { name: "Path results for http://192.0.2.10" })).toBeNull();
+    fireEvent.click(within(targets).getByRole("button", { name: /192\.0\.2\.10/ }));
+    expect(within(pathList("http://192.0.2.10")).getByRole("button", { name: `Restore ${BASIS}` })).toBeTruthy();
+
+    queryClient.setQueryData(engagementFfufResultsQueryKey(engagementId), [...old, ...next]);
+    const list = pathList("http://192.0.2.10");
+    await waitFor(() => expect(within(list).getByText("4 paths · 2 groups")).toBeTruthy());
+    expect(within(list).getAllByRole("heading").map((heading) => heading.textContent))
+      .toEqual(["Run 13 Aug 2026, 13:00 UTC", "Run 13 Aug 2026, 12:00 UTC"]);
+    // The new run starts visible even though its basis matches the hidden one.
+    expect(rowKeys(list)).toEqual([pathGroupRowKey(next[0]!), pathGroupRowKey(old[0]!)]);
+    expect(within(list).getAllByRole("button", { name: `Hide ${BASIS}` })).toHaveLength(1);
+    expect(within(list).getAllByRole("button", { name: `Restore ${BASIS}` })).toHaveLength(1);
+    expect(hiddenTotal(list)).toBe("2 hidden");
+
+    queryClient.setQueryData(engagementFfufResultsQueryKey(engagementId), next);
+    await waitFor(() => expect(within(list).getByText("2 paths · 1 group")).toBeTruthy());
+    expect(hiddenTotal(list)).toBe("");
+    expect(within(list).queryByRole("button", { name: "Show all" })).toBeNull();
+  });
+
+  it("isolates filters by engagement", async () => {
+    const paths = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
+    vi.stubGlobal("fetch", routeSurfaceResponses([], [], paths));
+    const surface = (id: string) => <QueryClientProvider client={queryClient}>
+      <EngagementServicesSection engagementId={id} />
+    </QueryClientProvider>;
+    const { rerender } = render(surface(engagementId));
+    fireEvent.click(within(await findPathList("http://192.0.2.10")).getByRole("button", { name: `Hide ${BASIS}` }));
+    expect(hiddenTotal(pathList("http://192.0.2.10"))).toBe("2 hidden");
+    rerender(surface("20000000-0000-4000-8000-000000000002"));
+    const next = await findPathList("http://192.0.2.10");
+    await waitFor(() => expect(within(next).getByRole("button", { name: `Hide ${BASIS}` })).toBeTruthy());
+    expect(hiddenTotal(next)).toBe("");
+  });
+
+  it("keeps duplicate URLs from separate artifacts as separate groups and rows", async () => {
+    const a = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
+    const b = a.map((path) => ({ ...path, artifactId: "artifact-10" }));
+    vi.stubGlobal("fetch", routeSurfaceResponses([], [], [...a, ...b])); renderSurface();
+    const list = await findPathList("http://192.0.2.10");
+    expect(within(list).getByText("4 paths · 2 groups")).toBeTruthy();
+    expect(within(list).getAllByRole("heading").map((heading) => heading.textContent))
+      .toEqual(["Run 13 Aug 2026, 12:00 UTC · result 1", "Run 13 Aug 2026, 12:00 UTC · result 2"]);
+    // Equal observedAt, so artifact id orders the contexts.
+    const [first, second] = within(list).getAllByRole("button", { name: `Hide ${BASIS}` });
+    fireEvent.click(first!);
+    expect(second!.textContent).toBe("Hide");
+    fireEvent.click(within(list).getByRole("button", { name: BASIS }));
+    expect(within(list).getAllByRole("link", { name: "Raw evidence" }).map((link) => link.getAttribute("href")))
+      .toEqual(a.map(() => `/api/v1/engagements/${engagementId}/artifacts/artifact-9/content`));
+    fireEvent.click(first!);
+    fireEvent.click(within(list).getAllByRole("button", { name: BASIS })[0]!);
+    const admin = rowKeys(list).filter((key) => key?.endsWith("/admin"));
+    expect(new Set(admin)).toEqual(new Set([a, b].map((set) => pathSelectionKey(set[0]!.url, set[0]!.artifactId))));
+  });
+
+  it("pins a selected row under a collapsed group and keeps a hidden selection inspectable", async () => {
+    const paths = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
+    vi.stubGlobal("fetch", routeSurfaceResponses([], [], paths)); renderSurface();
+    const list = await findPathList("http://192.0.2.10");
+    const disclosure = within(list).getByRole("button", { name: BASIS });
+    fireEvent.click(disclosure);
+    const row = within(list).getByRole("button", { name: paths[0]!.url }).closest("li") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Inspect" }));
+    const inspector = await screen.findByRole("complementary", { name: "Selection inspector" });
+    fireEvent.click(disclosure);
+    expect(within(list).getByRole("button", { name: paths[0]!.url }).getAttribute("aria-current")).toBe("true");
+    expect(within(list).queryByRole("button", { name: paths[1]!.url })).toBeNull();
+    fireEvent.click(within(list).getByRole("button", { name: `Hide ${BASIS}` }));
+    expect(within(list).queryByRole("button", { name: paths[0]!.url })).toBeNull();
+    expect(screen.getByRole("complementary", { name: "Selection inspector" })).toBe(inspector);
+    expect(within(inspector).getByRole("link", { name: "Raw evidence" }).getAttribute("href"))
+      .toBe(`/api/v1/engagements/${engagementId}/artifacts/artifact-9/content`);
+    const close = screen.getByRole("button", { name: "Close inspector" });
+    close.focus(); fireEvent.click(close);
+    await waitFor(() => expect(document.activeElement)
+      .toBe(within(list).getByRole("button", { name: `Restore ${BASIS}` })));
+  });
+
+  it.each([false, true])("returns focus after a delayed route update even if the close frame ran first, hidden=%s", async (hidden) => {
+    const paths = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
+    const selected = pathSelectionKey(paths[0]!.url, paths[0]!.artifactId);
+    vi.stubGlobal("fetch", routeSurfaceResponses([], [], paths));
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => { frames.push(callback); return frames.length; });
+    const onSelectKey = vi.fn();
+    const surface = (selectedKey: string | undefined) => <QueryClientProvider client={queryClient}>
+      <EngagementServicesSection engagementId={engagementId} onSelectKey={onSelectKey} selectedKey={selectedKey} />
+    </QueryClientProvider>;
+    const { rerender } = render(surface(selected));
+    const list = await findPathList("http://192.0.2.10");
+    if (hidden) fireEvent.click(within(list).getByRole("button", { name: `Hide ${BASIS}` }));
+    const close = screen.getByRole("button", { name: "Close inspector" });
+    close.focus(); fireEvent.click(close);
+    for (const frame of frames.splice(0)) frame(0);
+    expect(onSelectKey).toHaveBeenCalledWith(undefined);
+    rerender(surface(undefined));
+    for (const frame of frames.splice(0)) frame(1);
+    await waitFor(() => expect(document.activeElement)
+      .toBe(within(list).getByRole("button", { name: hidden ? `Restore ${BASIS}` : BASIS })));
+  });
+
+  it("returns focus to the collapsed group header once the route clears a pinned selection", async () => {
+    const paths = [ffufPath("http://192.0.2.10/admin"), ffufPath("http://192.0.2.10/login")];
+    const selected = pathSelectionKey(paths[0]!.url, paths[0]!.artifactId);
+    vi.stubGlobal("fetch", routeSurfaceResponses([], [], paths));
+    const onSelectKey = vi.fn();
+    const surface = (selectedKey: string | undefined) => <QueryClientProvider client={queryClient}>
+      <EngagementServicesSection engagementId={engagementId} onSelectKey={onSelectKey} selectedKey={selectedKey} />
+    </QueryClientProvider>;
+    const { rerender } = render(surface(selected));
+    const list = await findPathList("http://192.0.2.10");
+    expect(within(list).getByRole("button", { name: paths[0]!.url }).getAttribute("aria-current")).toBe("true");
+    const close = screen.getByRole("button", { name: "Close inspector" });
+    close.focus(); fireEvent.click(close);
+    expect(onSelectKey).toHaveBeenCalledWith(undefined);
+    rerender(surface(undefined));
+    expect(within(list).queryByRole("button", { name: paths[0]!.url })).toBeNull();
+    const disclosure = within(list).getByRole("button", { name: BASIS });
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() => expect(document.activeElement).toBe(disclosure));
   });
 
   it("shows compact loading without fake counters", async () => {

@@ -251,6 +251,44 @@ describe("lead quick create", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("returns to the path group header when the source row is folded away", () => {
+    stubLeads(() => response(savedLead, 201));
+    // The opener unmounts while the dialog is open, as when its group is
+    // hidden, and no row carries the source key.
+    function FoldedHarness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <div data-surface-row={pathContext.fallbackKey}>
+            <button type="button">Restore</button>
+          </div>
+          {open ? (
+            <LeadQuickCreate
+              archived={false}
+              context={pathContext}
+              engagementId={engagementId}
+              onClose={() => setOpen(false)}
+            />
+          ) : (
+            <button type="button" onClick={() => setOpen(true)}>
+              Start a lead
+            </button>
+          )}
+        </>
+      );
+    }
+    render(
+      <QueryClientProvider client={queryClient}>
+        <FoldedHarness />
+      </QueryClientProvider>,
+    );
+    const opener = screen.getByRole("button", { name: "Start a lead" });
+    opener.focus();
+    fireEvent.click(opener);
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Start a lead" }), { key: "Escape" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Restore" }));
+  });
+
   it("rejects an empty title on save without a request", () => {
     const fetchMock = stubLeads(() => response(savedLead, 201));
     const { dialog } = openDialog();

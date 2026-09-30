@@ -387,17 +387,39 @@ export function resolvePathSelectionKey(
 // Focus and scroll restoration
 // ---------------------------------------------------------------------------
 
-export function focusSurfaceRow(key: string): boolean {
-  const nodes = document.querySelectorAll("[data-surface-row]");
-  for (const node of nodes) {
-    if (!(node instanceof HTMLElement)) continue;
-    if (node.getAttribute("data-surface-row") !== key) continue;
-    const target =
-      node instanceof HTMLButtonElement ? node : node.querySelector<HTMLElement>("button");
-    (target ?? node).focus({ preventScroll: true });
-    return true;
+function findSurfaceRow(key: string): HTMLElement | undefined {
+  for (const node of document.querySelectorAll("[data-surface-row]")) {
+    if (node instanceof HTMLElement && node.getAttribute("data-surface-row") === key) return node;
   }
-  return false;
+  return undefined;
+}
+
+// Focuses the row that opened an overlay, or fallbackKey when that row is no
+// longer rendered, such as a path row folded into a collapsed or hidden group.
+export function focusSurfaceRow(key: string, fallbackKey?: string): boolean {
+  const node =
+    findSurfaceRow(key) ?? (fallbackKey === undefined ? undefined : findSurfaceRow(fallbackKey));
+  if (node === undefined) return false;
+  const target =
+    node instanceof HTMLButtonElement ? node : node.querySelector<HTMLElement>("button");
+  (target ?? node).focus({ preventScroll: true });
+  return true;
+}
+
+// Row key of the group header for results that share exact status, length,
+// words and lines within one observed origin, run and artifact. Path rows
+// folded into a collapsed or hidden group return focus here.
+export function pathGroupRowKey(result: FfufProjected): string {
+  const origin = splitOriginUrl(result.url)?.origin ?? result.url;
+  return `pathgroup:${JSON.stringify([
+    origin,
+    result.runId,
+    result.artifactId,
+    result.status,
+    result.length,
+    result.words,
+    result.lines,
+  ])}`;
 }
 
 export function restoreSurfacePosition(scrollY: number, key: string | undefined): void {
@@ -560,12 +582,15 @@ export function pathInspectorRecord(
     openUrl: result.url,
     ...(parts === undefined ? {} : { origin: parts.origin }),
     noteReference: `- ${result.url} (${String(result.status)}) · evidence ${result.artifactId}`,
-    lead: webLeadContext(
-      "ffuf_result",
-      result.url,
-      result.artifactId,
-      pathSelectionKey(result.url, result.artifactId),
-    ),
+    lead: {
+      ...webLeadContext(
+        "ffuf_result",
+        result.url,
+        result.artifactId,
+        pathSelectionKey(result.url, result.artifactId),
+      ),
+      fallbackKey: pathGroupRowKey(result),
+    },
   };
 }
 
@@ -581,6 +606,8 @@ export type SurfaceLeadSourceKind = "nmap_service" | "http_probe" | "ffuf_result
 // than shortening it. Only the display label is bounded.
 export interface LeadStartContext {
   readonly sourceKey: string;
+  /** Row to focus when sourceKey is folded away, see focusSurfaceRow. */
+  readonly fallbackKey?: string;
   readonly sourceKind: SurfaceLeadSourceKind;
   readonly sourceRef: string;
   readonly sourceText: string;

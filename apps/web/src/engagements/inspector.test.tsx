@@ -17,6 +17,7 @@ import {
   resolveProbeSelectionKey,
   resolvePathSelectionKey,
   probeSelectionKey,
+  pathGroupRowKey,
   pathSelectionKey,
   launcherWarningKind,
   selectDisplayAction,
@@ -842,6 +843,47 @@ describe("surface focus helpers", () => {
     expect(scrollTo).toHaveBeenCalledWith(0, 420);
     expect(document.activeElement).toBe(button);
     document.body.innerHTML = "";
+  });
+
+  it("falls back to the group header when a path row is folded away", () => {
+    const rowKey = pathSelectionKey(pathResult.url, pathResult.artifactId);
+    const groupKey = pathGroupRowKey(pathResult);
+    const header = document.createElement("div");
+    header.setAttribute("data-surface-row", groupKey);
+    header.innerHTML = `<button type="button">disclosure</button>`;
+    const members = document.createElement("ul");
+    members.innerHTML = `<li><button type="button">row</button></li>`;
+    members.firstElementChild?.setAttribute("data-surface-row", rowKey);
+    document.body.append(header, members);
+    const [disclosure, row] = [...document.querySelectorAll("button")];
+
+    expect(focusSurfaceRow(rowKey, groupKey)).toBe(true);
+    expect(document.activeElement).toBe(row);
+    members.remove();
+    row?.focus();
+    expect(focusSurfaceRow(rowKey, groupKey)).toBe(true);
+    expect(document.activeElement).toBe(disclosure);
+    expect(pathInspectorRecord(pathResult, engagementId).lead.fallbackKey).toBe(groupKey);
+    document.body.innerHTML = "";
+  });
+
+  it("keys path groups by observed origin, run, artifact and all four metadata fields", () => {
+    const key = pathGroupRowKey(pathResult);
+    expect(pathGroupRowKey({ ...pathResult, url: "http://192.0.2.10:80/login", fuzz: "login" })).toBe(key);
+    for (const variant of [
+      { url: "https://192.0.2.10/admin" },
+      { url: "http://app.example.test/admin" },
+      { runId: "run-4" },
+      { artifactId: "artifact-4" },
+      { status: 404 },
+      { length: 129 },
+      { words: 5 },
+      { lines: 9 },
+    ]) {
+      expect(pathGroupRowKey({ ...pathResult, ...variant })).not.toBe(key);
+    }
+    // A group anchor never reads as an inspector selection.
+    expect(decodeSurfaceSelection(key)).toBeUndefined();
   });
 });
 
