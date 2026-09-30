@@ -540,6 +540,26 @@ export function useRecordAttemptMutation(engagementId: string, leadId: string) {
   });
 }
 
+// Records an attempt on a lead chosen at submit time, for callers outside a
+// single lead's detail such as the Runs tab.
+export function useRecordLeadAttemptMutation(engagementId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: RecordAttemptInput & { leadId: string }) => {
+      const { leadId, ...attempt } = input;
+      return recordAttemptRequest(engagementId, leadId, attempt);
+    },
+    onSettled: (_data, _error, input) => {
+      void queryClient.invalidateQueries({
+        queryKey: leadAttemptsQueryKey(engagementId, input.leadId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: leadOutlineQueryKey(engagementId, input.leadId),
+      });
+    },
+  });
+}
+
 export async function fetchObjectives(
   engagementId: string,
   signal?: AbortSignal,

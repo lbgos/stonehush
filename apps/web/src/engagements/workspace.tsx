@@ -534,6 +534,7 @@ function EngagementDetail({
       {activeTab === "runs" ? (
         <div className="mt-5">
           <RunHistoryPanel
+            archived={archived}
             engagementId={displayed.id}
             selectedRunId={runId}
             onSelect={selectRun}
