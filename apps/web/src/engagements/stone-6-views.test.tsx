@@ -69,7 +69,7 @@ describe("NextStepEditor", () => {
         </QueryClientProvider>
       </ThemeProvider>,
     );
-    fireEvent.change(screen.getByLabelText("Next step, optional"), {
+    fireEvent.change(screen.getByLabelText("Next step"), {
       target: { value: "Unsaved draft for eng-a." },
     });
     expect(screen.getByDisplayValue("Unsaved draft for eng-a.")).toBeDefined();

@@ -60,8 +60,8 @@ describe("next-step concurrency", () => {
     serverRevision = 2; serverText = "Their step";
     await client.refetchQueries({ queryKey: engagementResumeQueryKey(id) });
     expect(screen.getByDisplayValue("Mine")).toBeDefined(); click("Save");
-    await screen.findByText("Saved: Their step");
-    expect(requests[0]?.expectedRevision).toBe(1); click("Save mine");
+    await screen.findByText("Their step");
+    expect(requests[0]?.expectedRevision).toBe(1); click("Keep yours");
     await waitFor(() => expect((screen.getByRole("textbox") as HTMLInputElement).disabled).toBe(false));
     expect(requests[1]?.expectedRevision).toBe(2);
     serverRevision = 4; serverText = "External";
@@ -85,16 +85,16 @@ describe("next-step concurrency", () => {
       .mockResolvedValueOnce(conflict(3)).mockResolvedValueOnce(reply(saved(3, "Third step")));
     setup(); type(); click("Save");
     await screen.findByText("Loading saved next step.");
-    expect(screen.queryByRole("button", { name: "Save mine" })).toBeNull();
-    finish(reply(saved())); await screen.findByText("Saved: Their step");
-    expect(screen.getByText("Yours: Mine")).toBeDefined(); click("Save mine");
-    await screen.findByText("Saved: Third step");
+    expect(screen.queryByRole("button", { name: "Keep yours" })).toBeNull();
+    finish(reply(saved())); await screen.findByText("Their step");
+    expect(screen.getByText("Mine")).toBeDefined(); click("Keep yours");
+    await screen.findByText("Third step");
     expect(sent(2)).toEqual({ nextStep: "Mine", expectedRevision: 2 });
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
   it("Use saved adopts the fresh response without saving", async () => {
     fetchMock.mockResolvedValueOnce(conflict()).mockResolvedValueOnce(reply(saved()));
-    const view = setup(); type(); click("Save"); await screen.findByText("Saved: Their step");
+    const view = setup(); type(); click("Save"); await screen.findByText("Their step");
     click("Use saved"); expect(screen.getByDisplayValue("Their step")).toBeDefined();
     view.rerender(2, "Their step"); view.rerender(3, "Later step");
     await screen.findByDisplayValue("Later step"); expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -103,7 +103,7 @@ describe("next-step concurrency", () => {
     fetchMock.mockResolvedValueOnce(conflict()).mockRejectedValueOnce(new Error("offline"));
     setup(); type(); click("Save"); await screen.findByRole("button", { name: "Retry saved next step" });
     expect(screen.getByDisplayValue("Mine")).toBeDefined();
-    expect(screen.queryByRole("button", { name: "Save mine" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Keep yours" })).toBeNull();
   });
   it("releases the saved draft after query confirmation and blocks edits until then", async () => {
     fetchMock.mockResolvedValue(reply(record()));

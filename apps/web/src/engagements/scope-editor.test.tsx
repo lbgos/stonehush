@@ -249,7 +249,7 @@ describe("saved-scope editor", () => {
 
     expect(await screen.findByRole("heading", { name: "No saved scope yet" })).toBeTruthy();
     expect(screen.getAllByText(/Scope is context, not authorization/).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(within(screen.getByRole("region", { name: "Saved scope" })).queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: "Save scope" })).toHaveProperty("disabled", true);
   });
 

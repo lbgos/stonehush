@@ -228,7 +228,7 @@ describe("EngagementDeadlineSection", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderSection({});
-    expect(await screen.findByRole("heading", { name: "Deadline unavailable" })).toBeTruthy();
+    expect(await screen.findByText(/Deadline unavailable/)).toBeTruthy();
     const calls = () =>
       fetchMock.mock.calls.filter(([url]) => String(url).endsWith(engagement.id)).length;
     const before = calls();
@@ -263,7 +263,7 @@ describe("EngagementDeadlineSection", () => {
     expect(await screen.findByText(/No deadline set/)).toBeTruthy();
 
     const draft = toDateTimeLocalValue("2026-08-14T12:00:00.000Z");
-    fireEvent.change(screen.getByLabelText("Date and time"), { target: { value: draft } });
+    fireEvent.change(screen.getByLabelText("Deadline"), { target: { value: draft } });
     fireEvent.click(screen.getByRole("button", { name: "Save deadline" }));
     await waitFor(() =>
       expect(patches).toEqual([
@@ -301,12 +301,9 @@ describe("EngagementDeadlineSection", () => {
     );
     renderSection({ archived: true });
     expect(await screen.findByText(/Due /)).toBeTruthy();
-    expect(
-      (screen.getByRole("button", { name: "Save deadline" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect(
-      (screen.getByRole("button", { name: "Clear deadline" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect(screen.getByText(/archived/)).toBeTruthy();
+    // Archived deadlines read as text: no input and no write actions.
+    expect(screen.queryByLabelText("Deadline")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save deadline" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear deadline" })).toBeNull();
   });
 });

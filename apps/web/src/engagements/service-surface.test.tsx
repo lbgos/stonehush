@@ -142,10 +142,9 @@ describe("EngagementServicesSection", () => {
     renderSurface();
     expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
     expect(await screen.findByText(/No services have been observed/i)).toBeTruthy();
-    expect(screen.getByText("Services").previousElementSibling?.textContent).toBe("0");
-    expect(screen.getByText("Hosts").previousElementSibling?.textContent).toBe("0");
-    expect(screen.getByText("Evidence artifacts").previousElementSibling?.textContent).toBe("0");
-    expect(screen.getByText("Latest observation")).toBeTruthy();
+    expect(screen.getByTestId("engagement-totals").textContent).toBe(
+      "0 services · 0 hosts · 0 evidence artifacts",
+    );
     expect(screen.queryByText("Runs")).toBeNull();
   });
 
@@ -155,10 +154,9 @@ describe("EngagementServicesSection", () => {
     expect(await screen.findByRole("heading", { name: "Attack surface" })).toBeTruthy();
     expect((await screen.findAllByRole("button", { name: /192\.0\.2\.2/ })).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /192\.0\.2\.10/ })).toBeTruthy();
-    expect(screen.getByText("Services").previousElementSibling?.textContent).toBe("2");
-    expect(screen.getByText("Hosts").previousElementSibling?.textContent).toBe("2");
-    expect(screen.getByText("Evidence artifacts").previousElementSibling?.textContent).toBe("2");
-    expect(screen.getByText("Latest observation").previousElementSibling?.textContent).toMatch(/11:00/);
+    expect(screen.getByTestId("engagement-totals").textContent).toMatch(
+      /^2 services · 2 hosts · 2 evidence artifacts · latest 13 Aug 2026, 11:00 UTC$/,
+    );
     expect(screen.getAllByText(/13 Aug 2026/i).length).toBeGreaterThanOrEqual(1);
 
     // The first target sorts first and shows alone: no reconciling tables.
@@ -376,7 +374,7 @@ describe("EngagementServicesSection", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderSurface();
-    expect(await screen.findByText("Services")).toBeTruthy();
+    expect(await screen.findByTestId("engagement-totals")).toBeTruthy();
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/http-probes")) {
@@ -417,7 +415,7 @@ describe("EngagementServicesSection", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderSurface();
-    expect(await screen.findByText("Services")).toBeTruthy();
+    expect(await screen.findByTestId("engagement-totals")).toBeTruthy();
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/services")) return Promise.resolve(response([serviceA]));

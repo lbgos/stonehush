@@ -19,7 +19,6 @@ import {
 import { partitionEngagements, useEngagementDetailQuery, useEngagementsQuery } from "./query.js";
 import { ActionPlanner } from "./action-planner.js";
 import { AdvisorPanel } from "../advisor/advisor-panel.js";
-import { EngagementDeadlineSection } from "./deadline.js";
 import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
 import { EngagementGitleaksSection } from "./gitleaks.js";
@@ -34,6 +33,7 @@ import {
 import { EngagementAccessSection } from "./access.js";
 import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
+import { EngagementResumeView } from "./resume-view.js";
 import { RunHistoryPanel } from "./run-history-panel.js";
 import { SavedScopeEditor } from "./scope-editor.js";
 import { EngagementHttpProbesSection } from "./http-probe-surface.js";
@@ -392,13 +392,16 @@ function EngagementDetail({
 
   return (
     <article className="min-w-0">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <p className="m-0 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
-            {ENGAGEMENT_KIND_LABELS[displayed.kind]}
-          </p>
-          <h1 className="mt-1 text-[26px] font-semibold tracking-[-0.04em] leading-none">{displayed.name}</h1>
-          <p className="mt-2 flex flex-wrap items-center gap-x-2 text-[12px] text-muted-foreground">
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="m-0 min-w-0 text-[20px] leading-7 font-semibold tracking-[-0.03em] break-words">
+            {displayed.name}
+          </h1>
+          <p className="m-0 flex flex-wrap items-center gap-x-2 text-[12px] text-muted-foreground">
+            <span>{ENGAGEMENT_KIND_LABELS[displayed.kind]}</span>
+            <span className="text-border" aria-hidden="true">
+              ·
+            </span>
             <span aria-label={`Status: ${ENGAGEMENT_STATUS_LABELS[displayed.status]}`}>
               {ENGAGEMENT_STATUS_LABELS[displayed.status]}
             </span>
@@ -406,39 +409,35 @@ function EngagementDetail({
               ·
             </span>
             <span className="font-mono">rev {displayed.revision}</span>
-            <span className="text-border" aria-hidden="true">
-              ·
-            </span>
-            <span>{displayed.kind}</span>
           </p>
         </div>
-        <div className="shrink-0 text-right">
-          <p className="m-0 text-[11px] text-muted-foreground">Updated</p>
-          <p className="m-0 font-mono text-[11px] text-foreground">{formatEngagementTimestamp(displayed.updatedAt)}</p>
-        </div>
+        <p className="m-0 shrink-0 text-[11px] text-muted-foreground">
+          Updated{" "}
+          <time dateTime={displayed.updatedAt} className="font-mono text-foreground">
+            {formatEngagementTimestamp(displayed.updatedAt)}
+          </time>
+        </p>
       </header>
 
       {displayed.description !== null || displayed.authorizationContext !== null ? (
         <section
           aria-label="Engagement context"
-          className="mt-4 overflow-hidden rounded-[10px] border border-border"
+          className="mt-1.5 flex flex-col gap-0.5 text-[12px] leading-5 sm:flex-row sm:flex-wrap sm:gap-x-6"
         >
-          <div className="flex flex-col gap-1.5 px-3 py-2.5 text-[12px] leading-5 sm:flex-row sm:flex-wrap sm:gap-x-4">
-            {displayed.description !== null ? (
-              <p className="m-0 min-w-0 flex-1 whitespace-pre-wrap break-words">{displayed.description}</p>
-            ) : null}
-            {displayed.authorizationContext !== null ? (
-              <p className="m-0 min-w-0 flex-1 whitespace-pre-wrap break-words">
-                <span className="font-medium">Authorization</span>
-                <span className="text-muted-foreground"> · </span>
-                {displayed.authorizationContext}
-              </p>
-            ) : null}
-          </div>
+          {displayed.description !== null ? (
+            <p className="m-0 min-w-0 flex-1 whitespace-pre-wrap break-words">{displayed.description}</p>
+          ) : null}
+          {displayed.authorizationContext !== null ? (
+            <p className="m-0 min-w-0 flex-1 whitespace-pre-wrap break-words">
+              <span className="font-medium">Authorization</span>
+              <span className="text-muted-foreground"> · </span>
+              {displayed.authorizationContext}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
-      <nav aria-label="Engagement sections" className="mt-4 flex flex-wrap gap-1 border-b border-border">
+      <nav aria-label="Engagement sections" className="mt-3 flex flex-wrap gap-1 border-b border-border">
         {ENGAGEMENT_TABS.map((entry) => {
           const active = entry.id === activeTab;
           return (
@@ -471,12 +470,17 @@ function EngagementDetail({
       ) : null}
 
       {activeTab === "surface" ? (
-        <div className="mt-5">
-          <EngagementDeadlineSection archived={archived} engagementId={displayed.id} />
+        <div className="mt-4">
+          <EngagementResumeView
+            key={displayed.id}
+            archived={archived}
+            engagementId={displayed.id}
+            onOpenRun={openRunFromTray}
+          />
 
           <ExecutionTray engagementId={displayed.id} onOpenRun={openRunFromTray} />
 
-          <div className="mt-5">
+          <div className="mt-4">
             <EngagementServicesSection
               archived={archived}
               engagementId={displayed.id}
