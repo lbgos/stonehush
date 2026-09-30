@@ -70,8 +70,11 @@ beforeEach(() => {
   });
 });
 
-function stub(resumeReply: () => Response | Promise<Response>, detail = engagement) {
-  const fetchMock = vi.fn((input: RequestInfo | URL) => {
+function stub(
+  resumeReply: () => Response | Promise<Response>,
+  detail: Omit<typeof engagement, "deadlineAt"> & { deadlineAt: string | null } = engagement,
+) {
+  const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url === `/api/v1/engagements/${id}/resume`) return Promise.resolve(resumeReply());
     if (url === `/api/v1/engagements/${id}`) {
