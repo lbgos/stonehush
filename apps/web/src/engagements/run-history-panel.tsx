@@ -11,12 +11,14 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { formatEngagementTimestamp } from "./format.js";
+import { RunLeadAttemptForm, runLeadEvidence } from "./run-lead-attempt.js";
 import { useRunHistoryQuery } from "./run-history-query.js";
 import { RunNotFoundError, useRunOutputQuery } from "./run-output-query.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
 import { splitHeldBackIds } from "./workspace-tabs.js";
 
 export interface RunHistoryPanelProps {
+  readonly archived?: boolean;
   readonly engagementId: string | undefined;
   readonly limit?: number;
   readonly onSelect: (runId: string) => void;
@@ -36,6 +38,7 @@ const PENDING_POLL_MAX_ROUNDS = 30;
 // never auto-selects the newest run. Paging uses the scoped infinite query
 // and Load more forwards the opaque cursor verbatim.
 export function RunHistoryPanel({
+  archived = false,
   engagementId,
   limit,
   onSelect,
@@ -415,6 +418,7 @@ export function RunHistoryPanel({
           />
         ) : (
           <SelectedRunOutput
+            archived={archived}
             engagementId={engagementId}
             selectedRunId={selectedRunId}
             onManualRetry={resetPollBudget}
@@ -507,10 +511,12 @@ function PendingSelectedRun({
 }
 
 function SelectedRunOutput({
+  archived,
   engagementId,
   onManualRetry,
   selectedRunId,
 }: {
+  archived: boolean;
   engagementId: string;
   onManualRetry: () => void;
   selectedRunId: string | undefined;
@@ -587,7 +593,14 @@ function SelectedRunOutput({
     );
   }
 
-  const content = <SelectedRunContent output={output.data} onRefresh={retryOutput} />;
+  const content = (
+    <SelectedRunContent
+      archived={archived}
+      engagementId={engagementId}
+      output={output.data}
+      onRefresh={retryOutput}
+    />
+  );
   if (output.isError) {
     return (
       <StaleDataState
@@ -603,9 +616,13 @@ function SelectedRunOutput({
 }
 
 function SelectedRunContent({
+  archived,
+  engagementId,
   onRefresh,
   output,
 }: {
+  archived: boolean;
+  engagementId: string;
   onRefresh: () => void;
   output: RunOutputResponse;
 }) {
@@ -615,6 +632,31 @@ function SelectedRunContent({
   const askIds = [output.stdout, output.stderr].flatMap((stream) =>
     stream.present ? [stream.artifactId] : [],
   );
+  // Lead form state belongs to one engagement and run. A new selection
+  // starts closed with no draft and no stale confirmation.
+  const leadKey = `${engagementId}:${output.run.id}`;
+  const [leadForm, setLeadForm] = useState<{
+    key: string;
+    open: boolean;
+    recorded: string | undefined;
+  }>({ key: leadKey, open: false, recorded: undefined });
+  if (leadForm.key !== leadKey) {
+    setLeadForm({ key: leadKey, open: false, recorded: undefined });
+  }
+  const canAddToLead = !archived && runLeadEvidence(output).length > 0;
+  const addToLeadRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef(false);
+  const closeLeadForm = (recorded: string | undefined) => {
+    returnFocusRef.current = true;
+    setLeadForm({ key: leadKey, open: false, recorded });
+  };
+  // Focus returns after the closed state commits, when Add to lead is
+  // enabled again. A frame callback could run before that commit.
+  useEffect(() => {
+    if (leadForm.open || !returnFocusRef.current) return;
+    returnFocusRef.current = false;
+    addToLeadRef.current?.focus({ preventScroll: true });
+  }, [leadForm.open]);
   return (
     <section aria-label="Selected run output">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -635,6 +677,19 @@ function SelectedRunContent({
               Ask about this run
             </Button>
           ) : null}
+          {canAddToLead ? (
+            <Button
+              ref={addToLeadRef}
+              type="button"
+              variant="quiet"
+              className="h-7 px-2 text-[12px]"
+              aria-expanded={leadForm.open && leadForm.key === leadKey}
+              disabled={leadForm.open && leadForm.key === leadKey}
+              onClick={() => setLeadForm({ key: leadKey, open: true, recorded: undefined })}
+            >
+              Add to lead
+            </Button>
+          ) : null}
           <Button
             type="button"
             variant="quiet"
@@ -645,6 +700,21 @@ function SelectedRunContent({
           </Button>
         </div>
       </div>
+      {canAddToLead && leadForm.open && leadForm.key === leadKey ? (
+        <RunLeadAttemptForm
+          key={leadKey}
+          archived={archived}
+          engagementId={engagementId}
+          output={output}
+          onClose={() => closeLeadForm(undefined)}
+          onRecorded={closeLeadForm}
+        />
+      ) : null}
+      {leadForm.recorded !== undefined && leadForm.key === leadKey ? (
+        <p className="mt-2 mb-0 text-[12px] text-muted-foreground" role="status">
+          {leadForm.recorded}
+        </p>
+      ) : null}
       <div className="mt-3 grid gap-3">
         <SelectedRunStream label="stdout" runId={output.run.id} stream={output.stdout} />
         <SelectedRunStream label="stderr" runId={output.run.id} stream={output.stderr} />
