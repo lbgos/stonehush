@@ -5,6 +5,7 @@ import {
   hideFfufGroups,
   restoreAllFfufGroups,
   undoHideFfufGroups,
+  visibleFfufGroups,
   type FfufHideState,
 } from "@stonehush/domain";
 import { useId, useState, type ReactNode } from "react";
@@ -24,6 +25,7 @@ export function PathGroups({ paths, renderPath }: {
     else contexts.set(key, [path]);
   }
   return <div className="border-t border-border p-2.5">
+    <p className="m-0 text-[11px] text-muted-foreground">Grouped by exact response metadata.</p>
     {[...contexts].map(([key, members]) => (
       <PathGroupContext key={key} paths={members} renderPath={renderPath} />
     ))}
@@ -47,7 +49,9 @@ function PathGroupContext({ paths, renderPath }: {
     else membersByBasis.set(basis, [path]);
   }
   const groups = groupFfufResults(paths);
-  const hiddenCount = paths.filter((path) => hidden.hiddenBases.includes(ffufGroupBasis(path))).length;
+  const { hiddenMembers: hiddenCount } = visibleFfufGroups(groups, hidden);
+  const hiddenBases = new Set(hidden.hiddenBases);
+  const expandedBases = new Set(expanded);
   const context = paths[0];
   if (!context) return null;
   return <section aria-label={`Path responses from run ${context.runId}, artifact ${context.artifactId}`} className="min-w-0">
@@ -63,8 +67,8 @@ function PathGroupContext({ paths, renderPath }: {
     <ul className="m-0 grid list-none gap-1 p-0">
       {groups.map((group, index) => {
         const members = membersByBasis.get(group.basis) ?? [];
-        const isHidden = hidden.hiddenBases.includes(group.basis);
-        const isExpanded = expanded.includes(group.basis);
+        const isHidden = hiddenBases.has(group.basis);
+        const isExpanded = expandedBases.has(group.basis);
         const repeated = members.length > 1;
         const id = `${listId}-${index}`;
         if (!repeated && !isHidden) return members.map(renderPath);
