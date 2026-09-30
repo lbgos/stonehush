@@ -107,7 +107,7 @@ export function ResumeChangeList({
                   type="button"
                   title={change.summary}
                   onClick={() => onOpenRun(change.id)}
-                  className="min-h-11 min-w-0 truncate rounded-sm md:min-h-0 text-left text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  className="min-h-11 min-w-0 truncate rounded-sm md:pointer-fine:min-h-0 text-left text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {change.summary}
                 </button>

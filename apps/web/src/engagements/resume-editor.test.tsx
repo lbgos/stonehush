@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAppQueryClient } from "../query-client.js";
 import { NextStepEditor } from "./resume-view.js";
@@ -36,6 +36,34 @@ function click(name: string) { fireEvent.click(screen.getByRole("button", { name
 function sent(index = 0) { return JSON.parse(String(fetchMock.mock.calls[index]?.[1]?.body)) as { nextStep: string | null; expectedRevision: number }; }
 
 describe("next-step concurrency", () => {
+  it("fetches a fresh saved step on return even when the cache is still fresh", async () => {
+    fetchMock.mockResolvedValueOnce(reply(saved(1, "Original"))).mockResolvedValueOnce(reply(saved(2, "External")));
+    const client = createAppQueryClient();
+    const wrapper = ({ children }: { children: React.ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    const first = renderHook(() => useEngagementResumeQuery(id), { wrapper });
+    await waitFor(() => expect(first.result.current.data?.nextStep).toBe("Original"));
+    first.unmount();
+    const second = renderHook(() => useEngagementResumeQuery(id), { wrapper });
+    await waitFor(() => expect(second.result.current.data?.nextStep).toBe("External"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    second.unmount(); client.clear();
+  });
+  it("unlocks after a confirmed reopen without losing the draft revision", async () => {
+    fetchMock.mockResolvedValueOnce(reply({ code: "engagement_archived" }, 409)).mockResolvedValueOnce(reply({ code: "storage_busy" }, 503));
+    const view = setup(); type(); click("Save");
+    await screen.findByText("This engagement is archived. The next step was not saved.");
+    view.rerender(2, "External", id, false);
+    expect((screen.getByRole("textbox") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByDisplayValue("Mine")).toBeDefined();
+    view.rerender(2, "External", id, true);
+    expect((screen.getByRole("textbox") as HTMLInputElement).disabled).toBe(true);
+    view.rerender(3, "External", id, false);
+    await waitFor(() => expect((screen.getByRole("textbox") as HTMLInputElement).disabled).toBe(false));
+    expect(screen.getByDisplayValue("Mine")).toBeDefined(); click("Save");
+    await screen.findByText("Storage is busy. Try again.");
+    expect(sent(1)).toEqual({ nextStep: "Mine", expectedRevision: 1 });
+  });
+
   it("retains a draft through a real query refetch and releases it after the save refetch", async () => {
     let serverRevision = 1;
     let serverText = "Original";

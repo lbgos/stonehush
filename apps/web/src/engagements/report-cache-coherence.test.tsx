@@ -15,6 +15,7 @@ import {
   useCreateFindingMutation,
   useFindingTransitionMutation,
 } from "./findings-query.js";
+import { engagementResumeQueryKey } from "./resume-query.js";
 import { reportQueryKey, reportQueryOptions } from "./report-query.js";
 import { EngagementReportSection } from "./report.js";
 import { isTerminalActionState } from "./action-query.js";
@@ -56,6 +57,12 @@ function jsonResponse(payload: unknown, status = 200): Response {
 const clients = new Set<QueryClient>();
 
 function trackClient(client: QueryClient): QueryClient {
+  for (const engagementId of [engagementA, engagementB]) {
+    client.setQueryData(engagementResumeQueryKey(engagementId), {
+      engagementId, nextStep: null, nextStepUpdatedAt: null, nextStepRevision: 0,
+      changes: [], complete: true,
+    });
+  }
   clients.add(client);
   return client;
 }
@@ -226,6 +233,7 @@ describe("report cache coherence", () => {
       );
     });
     expect(client.getQueryState(reportQueryKey(engagementA))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(engagementResumeQueryKey(engagementA))?.isInvalidated).toBe(true);
 
     renderReport(client, engagementA);
     expect(await screen.findByText(/notes-v2/)).toBeTruthy();
@@ -266,7 +274,9 @@ describe("report cache coherence", () => {
       );
     });
     expect(client.getQueryState(reportQueryKey(engagementA))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(engagementResumeQueryKey(engagementA))?.isInvalidated).toBe(true);
     expect(client.getQueryState(reportQueryKey(engagementB))?.isInvalidated).not.toBe(true);
+    expect(client.getQueryState(engagementResumeQueryKey(engagementB))?.isInvalidated).not.toBe(true);
     expect(client.getQueryData(reportQueryKey(engagementB))).toEqual(b1);
   });
 
@@ -298,6 +308,7 @@ describe("report cache coherence", () => {
       );
     });
     expect(client.getQueryState(reportQueryKey(engagementA))?.isInvalidated).not.toBe(true);
+    expect(client.getQueryState(engagementResumeQueryKey(engagementA))?.isInvalidated).not.toBe(true);
     expect(client.getQueryData(reportQueryKey(engagementA))).toEqual(v1);
     expect(reportCalls).toBe(1);
   });
@@ -351,6 +362,7 @@ describe("report cache coherence", () => {
     });
     expect(createdId).toBe(created.id);
     expect(client.getQueryState(reportQueryKey(engagementA))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(engagementResumeQueryKey(engagementA))?.isInvalidated).toBe(true);
 
     renderReport(client, engagementA);
     expect(await screen.findAllByText(/Fresh finding/)).toBeTruthy();
@@ -404,6 +416,7 @@ describe("report cache coherence", () => {
       );
     });
     expect(client.getQueryState(reportQueryKey(engagementA))?.isInvalidated).toBe(true);
+    expect(client.getQueryState(engagementResumeQueryKey(engagementA))?.isInvalidated).toBe(true);
 
     renderReport(client, engagementA);
     expect(await screen.findByText(/\(resolved\)/)).toBeTruthy();
@@ -612,6 +625,7 @@ describe("terminal action coherence", () => {
       ).length;
     expect(matching('"services"')).toBe(1);
     expect(matching('"report"')).toBe(1);
+    expect(matching('"resume"')).toBe(1);
     const pollsAfterTerminal = actionPolls;
     await new Promise((r) => setTimeout(r, 300));
     expect(actionPolls).toBe(pollsAfterTerminal);
@@ -619,6 +633,10 @@ describe("terminal action coherence", () => {
     spy.mockRestore();
     cleanup();
   }
+
+  it("planner succeeded terminal refreshes resume once without looping", async () => {
+    await drivePlannerToTerminal("succeeded");
+  }, 30000);
 
   it("planner failed terminal refreshes partials and report once without looping", async () => {
     await drivePlannerToTerminal("failed");
@@ -676,6 +694,7 @@ describe("terminal action coherence", () => {
       ).length;
     expect(count("ffuf-results")).toBe(1);
     expect(count('"report"')).toBe(1);
+    expect(count('"resume"')).toBe(1);
     const polls = actionPolls;
     await new Promise((r) => setTimeout(r, 300));
     expect(actionPolls).toBe(polls);

@@ -126,7 +126,7 @@ export function useCreateFindingMutation(engagementId: string) {
         current === undefined ? [finding] : [...current, finding],
       );
       void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
-    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
+      void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: findingsQueryKey(engagementId) });
@@ -149,7 +149,7 @@ export function useFindingTransitionMutation(
           : current.map((entry) => (entry.id === finding.id ? finding : entry)),
       );
       void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
-    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
+      void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: findingsQueryKey(engagementId) });
@@ -213,7 +213,7 @@ export function useUpdateFindingMutation(engagementId: string) {
           : current.map((entry) => (entry.id === finding.id ? finding : entry)),
       );
       void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
-    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
+      void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: findingsQueryKey(engagementId) });

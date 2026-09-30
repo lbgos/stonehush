@@ -103,7 +103,7 @@ export function useSaveEngagementNotesMutation(engagementId: string) {
         notes,
       );
       void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
-    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
+      void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
     },
   });
 }
