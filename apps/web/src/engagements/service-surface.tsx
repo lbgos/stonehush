@@ -6,6 +6,7 @@ import type {
 import { Button, LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
 import { useRef, useState } from "react";
 
+import { PathGroups } from "./path-groups.js";
 import { formatEngagementTimestamp } from "./format.js";
 import {
   ActionLauncher,
@@ -1077,8 +1078,7 @@ function OriginBlock({
         </p>
       )}
       {sortedPaths.length > 0 ? (
-        <ul className="m-0 grid list-none gap-1 border-t border-border p-2.5">
-          {sortedPaths.map((result) => (
+        <PathGroups key={JSON.stringify([engagementId, identityKey])} paths={sortedPaths} renderPath={(result) => (
             <PathRow
               key={`${result.url}:${result.artifactId}`}
               engagementId={engagementId}
@@ -1093,8 +1093,7 @@ function OriginBlock({
               result={result}
               selected={resolvedPathKey === pathSelectionKey(result.url, result.artifactId)}
             />
-          ))}
-        </ul>
+          )} />
       ) : null}
       {belowOrigin === undefined ? null : (
         <div className="border-t border-border px-2.5 py-1.5">
