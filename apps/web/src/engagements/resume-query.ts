@@ -66,6 +66,9 @@ export function engagementResumeQueryOptions(engagementId: string, since?: strin
   return queryOptions({
     queryKey: engagementResumeQueryKey(engagementId, since),
     queryFn: ({ signal }) => fetchEngagementResume(engagementId, since, signal),
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 

@@ -51,6 +51,7 @@ import {
   engagementServicesQueryKey,
   useEngagementDetailQuery,
 } from "./query.js";
+import { engagementResumeQueryKey } from "./resume-query.js";
 import { copyTextToClipboard, reportQueryKey } from "./report-query.js";
 
 // Shared surface selection, inspector, and action launcher for STONE-2.
@@ -1385,6 +1386,7 @@ function useLauncherActionState(
     void queryClient.invalidateQueries({ queryKey: engagementHttpProbesQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: engagementFfufResultsQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
+    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
   }, [engagementId, polledActionQuery.data, queryClient, trackedActionId]);
 
   const trackLaunched = (action: PersistedAction) => {

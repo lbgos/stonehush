@@ -26,6 +26,7 @@ import {
   useEngagementFfufResultsQuery,
 } from "./query.js";
 import { copyTextToClipboard } from "./report-query.js";
+import { engagementResumeQueryKey } from "./resume-query.js";
 import { reportQueryKey } from "./report-query.js";
 
 const DEFAULT_MATCH_CODES = "200, 204, 301, 302, 307, 308, 401, 403";
@@ -175,6 +176,7 @@ function FfufDiscoveryBody({
     hasInvalidatedFfufRef.current = trackedActionId;
     void queryClient.invalidateQueries({ queryKey: engagementFfufResultsQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
+    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
   }, [engagementId, polledActionQuery.data, queryClient, trackedActionId]);
 
   const mutationError =

@@ -1,6 +1,6 @@
 import { EngagementNextStepSchema, type EngagementResumeResponse } from "@stonehush/contracts";
 import { Button } from "@stonehush/ui";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { EngagementDeadlineSection } from "./deadline.js";
@@ -107,7 +107,7 @@ export function ResumeChangeList({
                   type="button"
                   title={change.summary}
                   onClick={() => onOpenRun(change.id)}
-                  className="min-w-0 truncate rounded-sm text-left text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  className="min-h-11 min-w-0 truncate rounded-sm md:min-h-0 text-left text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   {change.summary}
                 </button>
@@ -235,12 +235,25 @@ function NextStepEditorState({ engagementId, archived, nextStep, revision, updat
   const [confirmedRevision, setConfirmedRevision] = useState<number>();
   const [conflict, setConflict] = useState<{ saved?: EngagementResumeResponse; loading: boolean; failed: boolean }>();
   const [error, setError] = useState<EngagementNextStepMutationError>();
+  const archiveConfirmed = useRef(false);
   const value = draft?.value ?? nextStep ?? "";
   const valid = EngagementNextStepSchema.safeParse(value.trim()).success;
   const waitingForSaved = confirmedRevision !== undefined && revision < confirmedRevision;
   const readOnly = archived || error?.detail?.code === "engagement_archived";
   const disabled = readOnly || save.isPending || waitingForSaved;
   const saveDisabled = disabled || !valid || conflict !== undefined;
+
+  useEffect(() => {
+    if (error?.detail?.code !== "engagement_archived") {
+      archiveConfirmed.current = false;
+    } else if (archived) {
+      archiveConfirmed.current = true;
+    } else if (archiveConfirmed.current) {
+      // A stale active prop after 409 is not evidence of a reopen.
+      archiveConfirmed.current = false;
+      setError(undefined);
+    }
+  }, [archived, error]);
 
   useEffect(() => {
     if (confirmedRevision !== undefined && revision >= confirmedRevision) {
