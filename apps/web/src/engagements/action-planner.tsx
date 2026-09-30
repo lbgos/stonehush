@@ -45,6 +45,7 @@ import {
 import { FirstActionReadiness } from "./first-action-readiness.js";
 import { engagementMutationMessage, isRevisionConflict } from "./errors.js";
 import { engagementHttpProbesQueryKey, engagementServicesQueryKey, engagementFfufResultsQueryKey, useEngagementDetailQuery } from "./query.js";
+import { engagementResumeQueryKey } from "./resume-query.js";
 import { reportQueryKey } from "./report-query.js";
 import { runHistoryQueryKey } from "./run-history-query.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
@@ -214,6 +215,7 @@ function PlannerBody({
     void queryClient.invalidateQueries({ queryKey: engagementHttpProbesQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: engagementFfufResultsQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
+    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
     // The readiness summary reads run history, so a finished run must refresh
     // it instead of leaving the queued copy.
     void queryClient.invalidateQueries({ queryKey: runHistoryQueryKey(engagementId) });

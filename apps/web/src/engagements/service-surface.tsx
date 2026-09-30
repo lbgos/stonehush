@@ -61,6 +61,10 @@ function deriveServiceStats(services: readonly NmapProjectedService[]) {
   return { serviceCount: services.length, hostCount, artifactCount, latestObservedAt };
 }
 
+function countLabel(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
 function formatPrimaryIdentity(service: NmapProjectedService): string {
   if (service.product !== null) {
     return service.version !== null ? `${service.product} ${service.version}` : service.product;
@@ -243,37 +247,30 @@ export function EngagementServicesSection({
       />
     );
 
-  const statBar = (
-    <section aria-label="Engagement totals" className="overflow-hidden rounded-[10px] border border-border bg-card">
-      <div className="grid grid-cols-2 divide-x divide-y divide-border sm:grid-cols-4 sm:divide-y-0">
-        <div className="px-3 py-3 sm:px-4">
-          <div className="text-[22px] font-semibold tracking-[-0.04em]">{stats.serviceCount}</div>
-          <div className="mt-1 text-[11px] tracking-[0.08em] text-muted-foreground uppercase">Services</div>
-        </div>
-        <div className="px-3 py-3 sm:px-4">
-          <div className="text-[22px] font-semibold tracking-[-0.04em]">{stats.hostCount}</div>
-          <div className="mt-1 text-[11px] tracking-[0.08em] text-muted-foreground uppercase">Hosts</div>
-        </div>
-        <div className="px-3 py-3 sm:px-4">
-          <div className="text-[22px] font-semibold tracking-[-0.04em]">{stats.artifactCount}</div>
-          <div className="mt-1 text-[11px] tracking-[0.08em] text-muted-foreground uppercase">Evidence artifacts</div>
-        </div>
-        <div className="px-3 py-3 sm:px-4">
-          <div className="truncate text-[12px] font-medium tracking-[-0.02em]" title={latestLabel}>
-            {latestLabel}
-          </div>
-          <div className="mt-1 text-[11px] tracking-[0.08em] text-muted-foreground uppercase">Latest observation</div>
-        </div>
-      </div>
-    </section>
+  // Totals ride in the Attack surface header instead of a separate block so
+  // the resume band above can stay on screen with the console open.
+  const totalsLabel = [
+    countLabel(stats.serviceCount, "service", "services"),
+    countLabel(stats.hostCount, "host", "hosts"),
+    countLabel(stats.artifactCount, "evidence artifact", "evidence artifacts"),
+    ...(stats.latestObservedAt === undefined ? [] : [`latest ${latestLabel}`]),
+  ].join(" · ");
+  const totals = (
+    <p
+      data-testid="engagement-totals"
+      className="m-0 min-w-0 truncate text-[11px] text-muted-foreground"
+      title={totalsLabel}
+    >
+      {totalsLabel}
+    </p>
   );
 
   const attackSurface =
     sorted.length === 0 ? (
       <section aria-label="Attack surface" className="overflow-hidden rounded-[10px] border border-border bg-card">
-        <div className="flex min-h-10 items-center justify-between border-b border-border px-3">
-          <h2 className="m-0 text-[13px] font-semibold">Attack surface</h2>
-          <span className="hidden text-[11px] text-muted-foreground sm:inline">Projected Nmap services</span>
+        <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border px-3">
+          <h2 className="m-0 shrink-0 text-[13px] font-semibold">Attack surface</h2>
+          {totals}
         </div>
         <div className="px-4 py-8 text-center">
           <h3 className="m-0 text-[13px] font-semibold">No services yet</h3>
@@ -297,9 +294,9 @@ export function EngagementServicesSection({
       </section>
     ) : (
       <section aria-label="Attack surface" className="overflow-hidden rounded-[10px] border border-border bg-card">
-        <div className="flex min-h-10 items-center justify-between border-b border-border px-3">
-          <h2 className="m-0 text-[13px] font-semibold">Attack surface</h2>
-          <span className="hidden text-[11px] text-muted-foreground sm:inline">Targets with services and origins</span>
+        <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border px-3">
+          <h2 className="m-0 shrink-0 text-[13px] font-semibold">Attack surface</h2>
+          {totals}
         </div>
         <TargetSelector
           activeTarget={activeTarget}
@@ -367,7 +364,6 @@ export function EngagementServicesSection({
   const body = (
     <div className={inspector === null ? "grid gap-4" : "grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start"}>
       <div className="grid min-w-0 gap-4">
-        {statBar}
         {webStatusBanner}
         {attackSurface}
       </div>

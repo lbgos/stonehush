@@ -29,6 +29,7 @@ import {
   useEngagementVhostResultsQuery,
 } from "./query.js";
 import { copyTextToClipboard } from "./report-query.js";
+import { engagementResumeQueryKey } from "./resume-query.js";
 import { reportQueryKey } from "./report-query.js";
 import {
   decideStoneHostnameRequest,
@@ -192,6 +193,7 @@ function VhostDiscoveryBody({
     hasInvalidatedRef.current = trackedActionId;
     void queryClient.invalidateQueries({ queryKey: engagementVhostResultsQueryKey(engagementId) });
     void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
+    void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
   }, [engagementId, polledActionQuery.data, queryClient, trackedActionId]);
 
   const mutationError =

@@ -1,5 +1,8 @@
 import {
   EngagementResumeResponseSchema,
+  EngagementResumeErrorSchema,
+  EngagementNextStepRecordSchema,
+  type EngagementResumeError,
   UpdateEngagementNextStepRequestSchema,
   type EngagementResumeResponse,
 } from "@stonehush/contracts";
@@ -16,8 +19,11 @@ export class EngagementResumeQueryError extends Error {
 }
 
 export class EngagementNextStepMutationError extends Error {
-  constructor(message: string = ENGAGEMENT_NEXT_STEP_MUTATION_ERROR_MESSAGE) {
-    super(message);
+  constructor(readonly detail?: EngagementResumeError) {
+    super(detail?.code === "revision_conflict" ? "The next step changed elsewhere."
+      : detail?.code === "engagement_archived" ? "This engagement is archived. The next step was not saved."
+      : detail?.code === "storage_busy" ? "Storage is busy. Try again."
+      : ENGAGEMENT_NEXT_STEP_MUTATION_ERROR_MESSAGE);
     this.name = "EngagementNextStepMutationError";
   }
 }
@@ -52,7 +58,7 @@ export async function fetchEngagementResume(
     throw new EngagementResumeQueryError();
   }
   const result = EngagementResumeResponseSchema.safeParse(payload);
-  if (!result.success) throw new EngagementResumeQueryError();
+  if (!result.success || result.data.engagementId !== engagementId) throw new EngagementResumeQueryError();
   return result.data;
 }
 
@@ -60,6 +66,9 @@ export function engagementResumeQueryOptions(engagementId: string, since?: strin
   return queryOptions({
     queryKey: engagementResumeQueryKey(engagementId, since),
     queryFn: ({ signal }) => fetchEngagementResume(engagementId, since, signal),
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 
@@ -92,13 +101,15 @@ export async function saveNextStepRequest(
   } catch {
     throw new EngagementNextStepMutationError();
   }
-  if (response.status === 409) {
-    throw new EngagementNextStepMutationError("The next step changed elsewhere. Reload and try again.");
+  if (response.status !== 200) {
+    const error = EngagementResumeErrorSchema.safeParse(payload);
+    throw new EngagementNextStepMutationError(error.success ? error.data : undefined);
   }
-  if (response.status !== 200) throw new EngagementNextStepMutationError();
-  const record = payload as { revision?: unknown };
-  if (typeof record.revision !== "number") throw new EngagementNextStepMutationError();
-  return { revision: record.revision };
+  const record = EngagementNextStepRecordSchema.safeParse(payload);
+  if (!record.success || record.data.engagementId !== engagementId) {
+    throw new EngagementNextStepMutationError();
+  }
+  return { revision: record.data.revision };
 }
 
 export function useSaveNextStepMutation(engagementId: string) {
