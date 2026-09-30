@@ -13,6 +13,7 @@ import {
   fromDateTimeLocalValue,
   toDateTimeLocalValue,
 } from "./deadline.js";
+import { engagementDetailQueryKey } from "./query.js";
 import { updateDeadlineRequest } from "./mutations.js";
 
 const engagement: {
@@ -280,6 +281,38 @@ describe("EngagementDeadlineSection", () => {
       ]),
     );
     expect(await screen.findByText(/No deadline set/)).toBeTruthy();
+  });
+
+  it("warns about a cached archived deadline after refresh failure and recovers with Retry", async () => {
+    const archived = { ...engagement, status: "archived", deadlineAt: "2026-08-14T12:00:00.000Z" };
+    const fresh = { ...archived, revision: 3, deadlineAt: "2026-08-15T12:00:00.000Z" };
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ engagement: archived, activeScopeRevision: null }))
+      .mockResolvedValueOnce(response({ code: "storage_busy" }, 503))
+      .mockResolvedValueOnce(response({ engagement: fresh, activeScopeRevision: null }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createAppQueryClient();
+    testQueryClients.add(client);
+    render(<ThemeProvider><QueryClientProvider client={client}>
+      <EngagementDeadlineSection archived engagementId={engagement.id} />
+    </QueryClientProvider></ThemeProvider>);
+    await screen.findByText("Due 14 Aug 2026, 12:00 UTC");
+    await client.invalidateQueries({ queryKey: engagementDetailQueryKey(engagement.id) });
+    await screen.findByText(/Refresh failed. Showing the last saved deadline./);
+    expect(screen.getByText("Due 14 Aug 2026, 12:00 UTC")).toBeTruthy();
+    expect(screen.queryByLabelText("Deadline")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save deadline" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear deadline" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Due 15 Aug 2026, 12:00 UTC");
+    expect(screen.queryByText(/Refresh failed/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    expect(screen.queryByLabelText("Deadline")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe(`/api/v1/engagements/${engagement.id}`);
+      expect(init?.method).toBeUndefined();
+    }
   });
 
   it("disables writes on archived engagements", async () => {

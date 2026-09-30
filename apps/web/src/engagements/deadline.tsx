@@ -241,12 +241,15 @@ function DeadlineControl({
       </span>
     );
 
-  // Archived deadlines are read, not edited: show the value without controls.
+  // Archived deadlines stay read-only, with the same refresh warning and retry.
   if (archived) {
     return (
       <>
         <span className={DEADLINE_LABEL}>Deadline</span>
-        <p className="m-0 flex min-h-8 flex-wrap items-center gap-x-3 text-[12px] leading-5">{status}</p>
+        <div className="grid min-w-0 gap-1">
+          <p className="m-0 flex min-h-8 flex-wrap items-center gap-x-3 text-[12px] leading-5">{status}</p>
+          {stale}
+        </div>
       </>
     );
   }
