@@ -1,16 +1,9 @@
-import type { EngagementResumeResponse } from "@stonehush/contracts";
+import { EngagementNextStepSchema, type EngagementResumeResponse } from "@stonehush/contracts";
 import { Button, LoadingRegion, RecoverableError, Skeleton } from "@stonehush/ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
-import { useEngagementResumeQuery, useSaveNextStepMutation } from "./resume-query.js";
-
-/**
- * STONE-6 standalone resume view. Ships as a new file and mounts via the
- * STONE-2 `engagement.resume` extension slot after STONE-2 merges; it is
- * not wired into workspace.tsx in this slice. Shows the saved next step
- * (optional, never blocking), the inspected context, and the factual
- * change list with snapshot labels. No fabricated timelines.
- */
+import { engagementResumeQueryKey, EngagementNextStepMutationError, fetchEngagementResume, useEngagementResumeQuery, useSaveNextStepMutation } from "./resume-query.js";
 
 function changeKindLabel(kind: string): string {
   switch (kind) {
@@ -88,7 +81,7 @@ export function EngagementResumeView({
             />
             <ResumeChangeList resume={data} />
             {data.complete === false ? (
-              <p className="m-0 text-[11px] leading-5 text-muted-foreground">Showing the 200 most recent changes.</p>
+              <p className="m-0 text-[11px] leading-5 text-muted-foreground">Older changes not listed.</p>
             ) : null}
           </>
         ) : null}
@@ -97,82 +90,114 @@ export function EngagementResumeView({
   );
 }
 
-/**
- * Next-step editor. Keyed by engagement so an unsaved draft never leaks
- * into another engagement when the host switches without remounting.
- */
-export function NextStepEditor({
-  engagementId,
-  archived,
-  nextStep,
-  revision,
-}: {
+type NextStepEditorProps = {
   engagementId: string;
   archived: boolean;
   nextStep: string | null;
   revision: number;
-}) {
+};
+
+/** Remount even when a host forgets to key the editor by engagement. */
+export function NextStepEditor(props: NextStepEditorProps) {
+  return <NextStepEditorState key={props.engagementId} {...props} />;
+}
+
+function NextStepEditorState({ engagementId, archived, nextStep, revision }: NextStepEditorProps) {
   const save = useSaveNextStepMutation(engagementId);
-  const [draft, setDraft] = useState<string | undefined>(undefined);
-  // The query refetch after a save is async; the mutation result carries
-  // the new revision, so a second quick edit uses it instead of sending a
-  // stale expectedRevision into a false conflict.
-  const [confirmedRevision, setConfirmedRevision] = useState<number | undefined>(undefined);
-  const effectiveRevision = Math.max(revision, confirmedRevision ?? 0);
-  const value = draft ?? nextStep ?? "";
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<{ value: string; baseRevision: number }>();
+  const [confirmedRevision, setConfirmedRevision] = useState<number>();
+  const [conflict, setConflict] = useState<{ saved?: EngagementResumeResponse; loading: boolean; failed: boolean }>();
+  const [error, setError] = useState<EngagementNextStepMutationError>();
+  const value = draft?.value ?? nextStep ?? "";
+  const valid = EngagementNextStepSchema.safeParse(value.trim()).success;
+  const waitingForSaved = confirmedRevision !== undefined && revision < confirmedRevision;
+  const readOnly = archived || error?.detail?.code === "engagement_archived";
+  const disabled = readOnly || save.isPending || waitingForSaved;
+
+  useEffect(() => {
+    if (confirmedRevision !== undefined && revision >= confirmedRevision) {
+      setDraft(undefined);
+      setConfirmedRevision(undefined);
+    }
+  }, [confirmedRevision, revision]);
+
+  async function loadConflict() {
+    setConflict({ loading: true, failed: false });
+    try {
+      const saved = await fetchEngagementResume(engagementId);
+      queryClient.setQueryData(engagementResumeQueryKey(engagementId), saved);
+      setConflict({ saved, loading: false, failed: false });
+    } catch {
+      setConflict({ loading: false, failed: true });
+    }
+  }
+
+  function submit(next: string | null, expectedRevision: number) {
+    setDraft({ value: next === null ? "" : value, baseRevision: expectedRevision });
+    setError(undefined);
+    // A new race needs a new response before the operator can overwrite it.
+    setConflict(undefined);
+    save.mutate({ nextStep: next, expectedRevision }, {
+      onSuccess: (result) => {
+        setDraft({ value: next ?? "", baseRevision: result.revision });
+        setConfirmedRevision(result.revision);
+      },
+      onError: (failure) => {
+        const typed = failure instanceof EngagementNextStepMutationError
+          ? failure : new EngagementNextStepMutationError();
+        setError(typed);
+        if (typed.detail?.code === "revision_conflict") void loadConflict();
+      },
+    });
+  }
 
   return (
     <div className="grid gap-1">
-      <label htmlFor="engagement-next-step" className="text-[12px] font-medium text-foreground">
-        Next step, optional
-      </label>
+      <label htmlFor="engagement-next-step" className="text-[12px] font-medium text-foreground">Next step, optional</label>
       <div className="flex gap-2">
         <input
           id="engagement-next-step"
           type="text"
           value={value}
-          maxLength={280}
-          disabled={archived || save.isPending}
+          disabled={disabled}
           placeholder="One sentence, e.g. probe port 8080 next."
           onChange={(event) => {
-            setDraft(event.target.value);
-            if (save.isError) save.reset();
+            setDraft({ value: event.target.value, baseRevision: draft?.baseRevision ?? revision });
           }}
           className="h-9 min-w-0 flex-1 rounded-[10px] border border-border bg-background px-2 text-[12px] text-foreground"
         />
-        <Button
-          type="button"
-          disabled={archived || save.isPending || value.trim().length === 0}
-          onClick={() => {
-            // Keep the submitted text visible until the refetch lands;
-            // falling back to the stale prop would resubmit old text.
-            const submitted = value.trim();
-            save.mutate(
-              { nextStep: submitted, expectedRevision: effectiveRevision },
-              { onSuccess: (result) => { setDraft(submitted); setConfirmedRevision(result.revision); } },
-            );
-          }}
-        >
-          Save
-        </Button>
-        {nextStep !== null ? (
-          <Button
-            type="button"
-            variant="quiet"
-            disabled={archived || save.isPending}
-            onClick={() => {
-              save.mutate(
-                { nextStep: null, expectedRevision: effectiveRevision },
-                { onSuccess: (result) => { setDraft(""); setConfirmedRevision(result.revision); } },
-              );
-            }}
-          >
-            Clear
-          </Button>
+        <Button type="button" disabled={disabled || !valid || conflict !== undefined}
+          onClick={() => submit(value.trim(), draft?.baseRevision ?? revision)}>Save</Button>
+        {nextStep !== null || draft !== undefined ? (
+          <Button type="button" variant="quiet" disabled={disabled || conflict !== undefined}
+            onClick={() => submit(null, draft?.baseRevision ?? revision)}>Clear</Button>
         ) : null}
       </div>
-      {save.isError ? (
-        <p className="m-0 text-[12px] leading-5 text-destructive">The next step was not saved. Try again.</p>
+      {readOnly ? <p>Archived, read only.</p> : null}
+      {draft !== undefined && value.length > 0 && !valid ? <p role="alert">Use one line with 1 to 280 characters.</p> : null}
+      {error ? <p role="alert">{error.message}</p> : null}
+      {conflict ? (
+        <div>
+          {conflict.loading ? <p>Loading saved next step.</p> : null}
+          {conflict.failed ? <Button type="button" onClick={() => void loadConflict()}>Retry saved next step</Button> : null}
+          {conflict.saved ? <>
+            <p>Saved: {conflict.saved.nextStep ?? "cleared"}</p>
+            <p>Yours: {value || "cleared"}</p>
+            <Button type="button" disabled={disabled || (value !== "" && !valid)}
+              onClick={() => {
+                if (conflict.saved) submit(value === "" ? null : value.trim(), conflict.saved.nextStepRevision);
+              }}>Save mine</Button>
+            <Button type="button" disabled={disabled} onClick={() => {
+              if (!conflict.saved) return;
+              // Keep this exact fresh value until the host query catches up.
+              setDraft({ value: conflict.saved.nextStep ?? "", baseRevision: conflict.saved.nextStepRevision });
+              setConfirmedRevision(conflict.saved.nextStepRevision);
+              setConflict(undefined);
+              setError(undefined);
+            }}>Use saved</Button>
+          </> : null}
+        </div>
       ) : null}
     </div>
   );
