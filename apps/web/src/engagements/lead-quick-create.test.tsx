@@ -251,6 +251,31 @@ describe("lead quick create", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each(["upper", "lower"])("keeps %s lead focus in its source region if the opener unmounts", (origin) => {
+    stubLeads(() => response(savedLead, 201));
+    function FoldedHarness() {
+      const [open, setOpen] = useState(false);
+      const opener = <button type="button" onClick={() => setOpen(true)}>Start a lead</button>;
+      return <>
+        <section data-surface-region="upper">
+          <div data-surface-row={pathContext.fallbackKey}><button type="button">Restore</button></div>
+          {origin === "upper" && !open ? opener : null}
+        </section>
+        <section data-surface-region="lower">
+          <div data-surface-row={pathContext.sourceKey}>
+            {origin === "lower" && !open ? opener : <button type="button">Lower URL</button>}
+          </div>
+        </section>
+        {open ? <LeadQuickCreate archived={false} context={pathContext} engagementId={engagementId} onClose={() => setOpen(false)} /> : null}
+      </>;
+    }
+    render(<QueryClientProvider client={queryClient}><FoldedHarness /></QueryClientProvider>);
+    const opener = screen.getByRole("button", { name: "Start a lead" });
+    opener.focus(); fireEvent.click(opener);
+    fireEvent.keyDown(screen.getByRole("dialog", { name: "Start a lead" }), { key: "Escape" });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: origin === "upper" ? "Restore" : "Start a lead" }));
+  });
+
   it("rejects an empty title on save without a request", () => {
     const fetchMock = stubLeads(() => response(savedLead, 201));
     const { dialog } = openDialog();

@@ -213,6 +213,42 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("workspace inspector return context", () => {
+  it.each([
+    { origin: "upper", state: "hidden" }, { origin: "upper", state: "collapsed" },
+    { origin: "lower", state: "hidden" }, { origin: "lower", state: "expanded" },
+  ])("keeps $origin focus after real route navigation with the upper group $state", async ({ origin, state }) => {
+    const path = {
+      source: "ffuf", parserVersion: "ffuf-json-v1", url: "http://192.0.2.10/admin",
+      status: 200, length: 1234, words: 10, lines: 5, redirectlocation: null,
+      fuzz: "admin", runId: "run-1", artifactId: "artifact-9",
+      artifactDigest: `sha256:${"c".repeat(64)}`, observedAt: "2026-08-13T12:00:00.000Z",
+    };
+    const basis = "status 200, length 1234, words 10, lines 5";
+    stubFetch((url) => {
+      if (url.endsWith("/ffuf-results")) return response([path, { ...path, url: "http://192.0.2.10/login" }]);
+      return readEngagementResponse(url, [activeEngagement]) ?? response([]);
+    });
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}`);
+    const upper = await screen.findByRole("region", { name: "Path results for http://192.0.2.10" });
+    const lower = screen.getByRole("region", { name: "ffuf discovery" });
+    await within(lower).findByRole("button", { name: path.url });
+    const disclosure = within(upper).getByRole("button", { name: basis });
+    fireEvent.click(disclosure);
+    const list = origin === "upper" ? upper : lower;
+    const row = within(list).getByRole("button", { name: path.url }).closest("li")!;
+    const opener = within(row).getByRole("button", { name: "Inspect" });
+    fireEvent.click(opener);
+    await screen.findByRole("complementary", { name: "Selection inspector" });
+    await waitFor(() => expect(router.state.location.search.sel).toBeDefined());
+    if (state !== "expanded") fireEvent.click(state === "hidden" ? within(upper).getByRole("button", { name: `Hide ${basis}` }) : disclosure);
+    fireEvent.click(screen.getByRole("button", { name: "Close inspector" }));
+    await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    const expected = origin === "lower" ? opener : within(upper).getByRole("button", { name: state === "hidden" ? `Restore ${basis}` : basis });
+    await waitFor(() => expect(document.activeElement).toBe(expected));
+  });
+});
+
 describe("engagement workspace", () => {
   it("shows a primary empty state without synthetic records", async () => {
     stubFetch((url, init) => {

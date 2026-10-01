@@ -4,8 +4,9 @@ import type {
   NmapProjectedService,
 } from "@stonehush/contracts";
 import { Button, LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
+import { EMPTY_PATH_FILTERS, PathGroups, type PathFilters } from "./path-groups.js";
 import { formatEngagementTimestamp } from "./format.js";
 import {
   ActionLauncher,
@@ -13,10 +14,15 @@ import {
   decodeSurfaceSelection,
   defaultSchemeForPort,
   focusSurfaceRow,
+  captureSurfaceReturn,
+  type SurfaceReturnContext,
+  type SurfaceSelectionReturn,
+  type SurfaceSelectionHandler,
   resolvePathSelectionKey,
   resolveProbeSelectionKey,
   resolveServiceSelectionKey,
   isWebServiceCandidate,
+  pathGroupRowKey,
   pathInspectorRecord,
   pathSelectionKey,
   probeInspectorRecord,
@@ -92,10 +98,11 @@ export interface EngagementServicesSectionProps {
   readonly extraRowActions?: ExtraRowActions | undefined;
   readonly onAskAbout?: ((target: string) => void) | undefined;
   readonly onOpenNotes?: (() => void) | undefined;
-  readonly onSelectKey?: ((key: string | undefined) => void) | undefined;
+  readonly onSelectKey?: SurfaceSelectionHandler | undefined;
   readonly onSelectTarget?: ((target: string) => void) | undefined;
   readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
   readonly selectedKey?: string | undefined;
+  readonly selectionReturn?: SurfaceSelectionReturn | undefined;
   readonly selectedTarget?: string | undefined;
 }
 
@@ -110,6 +117,7 @@ export function EngagementServicesSection({
   onSelectTarget,
   onStartLead,
   selectedKey,
+  selectionReturn,
   selectedTarget,
 }: EngagementServicesSectionProps) {
   const servicesQuery = useEngagementServicesQuery(engagementId);
@@ -118,15 +126,44 @@ export function EngagementServicesSection({
   const [internalTarget, setInternalTarget] = useState<string | undefined>(undefined);
   const [internalKey, setInternalKey] = useState<string | undefined>(undefined);
   const [schemes, setSchemes] = useState<Readonly<Record<string, OriginScheme>>>({});
+  // Lives here, not in OriginBlock, so it survives target switches and
+  // refetches. Keys carry the engagement, so switching engagements starts clean.
+  const [pathFilters, setPathFilters] = useState<PathFilters>(EMPTY_PATH_FILTERS);
   const [launcher, setLauncher] = useState<LauncherRequest | null>(null);
-  const scrollRestoreRef = useRef(0);
-  const returnFocusRef = useRef<HTMLElement | null>(null);
-  const returnKeyRef = useRef<string | undefined>(undefined);
+  const inspectorReturnRef = useRef<SurfaceSelectionReturn | undefined>(undefined);
+  const launcherReturnRef = useRef<{ key: string | undefined; context: SurfaceReturnContext } | undefined>(undefined);
+  const pendingPathFocusRef = useRef<{ key: string; engagementId: string; scrollY: number; context?: SurfaceReturnContext } | undefined>(undefined);
 
   const effectiveTarget = selectedTarget ?? internalTarget;
   const effectiveKey = selectedKey ?? internalKey;
   const selectTarget = onSelectTarget ?? setInternalTarget;
   const selectKey = onSelectKey ?? setInternalKey;
+
+  useEffect(() => {
+    const pending = pendingPathFocusRef.current;
+    if (pending === undefined) return;
+    if (pending.engagementId !== engagementId || (effectiveKey !== undefined && effectiveKey !== pending.key)) {
+      pendingPathFocusRef.current = undefined;
+      return;
+    }
+    if (selectionReturn?.engagementId === engagementId && selectionReturn.key === pending.key &&
+        pending.context !== undefined && selectionReturn.context !== pending.context) {
+      pendingPathFocusRef.current = undefined;
+      return;
+    }
+    if (effectiveKey !== undefined) return;
+    const key = pending.key;
+    // Wait for the route to clear the inspector and its pinned row. A close
+    // animation frame can run before that commit on controlled selections.
+    const frame = requestAnimationFrame(() => {
+      const resolved = resolvePathSelectionKey(key, ffufQuery.data ?? []) ?? key;
+      const result = ffufQuery.data?.find((entry) => pathSelectionKey(entry.url, entry.artifactId) === resolved);
+      restoreSurfacePosition(pending.scrollY, undefined);
+      focusSurfaceRow(resolved, result === undefined ? undefined : pathGroupRowKey(result), pending.context);
+      pendingPathFocusRef.current = undefined;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [effectiveKey, engagementId, ffufQuery.data, selectionReturn]);
 
   const hasData = servicesQuery.data !== undefined;
   const retry = () => void servicesQuery.refetch();
@@ -157,53 +194,62 @@ export function EngagementServicesSection({
       ? effectiveTarget
       : targets[0]?.target;
 
-  const openSelection = (key: string) => {
-    scrollRestoreRef.current = window.scrollY;
-    returnKeyRef.current = key;
-    selectKey(key);
+  // A path row folded into a collapsed or hidden group is not rendered, so
+  // focus falls back to that group's header, derived from the exact record.
+  const focusReturnRow = (key: string, context?: SurfaceReturnContext) => {
+    const resolved = resolvePathSelectionKey(key, ffufResults ?? []) ?? key;
+    const result = ffufResults?.find(
+      (entry) => pathSelectionKey(entry.url, entry.artifactId) === resolved,
+    );
+    focusSurfaceRow(resolved, result === undefined ? undefined : pathGroupRowKey(result), context);
+  };
+  // Overlay buttons remain the first destination. If the inspector itself
+  // disappears, retain the list provenance of the selection underneath it.
+  const overlayReturnContext = (key: string | undefined, context: SurfaceReturnContext): SurfaceReturnContext => {
+    const opened = selectionReturn ?? inspectorReturnRef.current;
+    if (context.region === null && opened?.engagementId === engagementId && opened.key === key) {
+      return { ...opened.context, trigger: context.trigger, scrollY: context.scrollY };
+    }
+    return context;
+  };
+  const openSelection: SurfaceSelectionHandler = (key, context) => {
+    pendingPathFocusRef.current = undefined;
+    inspectorReturnRef.current = key === undefined ? undefined : {
+      key, engagementId,
+      context: context ?? captureSurfaceReturn(document.activeElement instanceof HTMLElement ? document.activeElement : null),
+    };
+    selectKey(key, context);
   };
   const closeInspector = () => {
-    // Selections opened from the probe or path sections (or a shared link)
-    // bypass openSelection, so fall back to the current key and scroll
-    // position instead of resetting to the top with no focus target.
-    const key = returnKeyRef.current ?? effectiveKey;
-    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const key = effectiveKey;
+    const opened = selectionReturn ?? inspectorReturnRef.current;
+    const context = opened?.engagementId === engagementId && opened.key === key ? opened.context : undefined;
+    const isPath = decodeSurfaceSelection(key)?.kind === "path";
+    if (isPath && key !== undefined) pendingPathFocusRef.current = { key, engagementId, scrollY: context?.scrollY ?? window.scrollY, ...(context === undefined ? {} : { context }) };
     selectKey(undefined);
-    const savedY = returnKeyRef.current === undefined ? window.scrollY : scrollRestoreRef.current;
-    returnKeyRef.current = undefined;
-    requestAnimationFrame(() => {
-      restoreSurfacePosition(savedY, undefined);
-      if (active !== null && active !== document.body && document.contains(active)) {
-        active.focus({ preventScroll: true });
-      } else if (key !== undefined) {
-        focusSurfaceRow(key);
-      }
-    });
+    inspectorReturnRef.current = undefined;
+    if (!isPath) {
+      const savedY = context?.scrollY ?? window.scrollY;
+      requestAnimationFrame(() => {
+        restoreSurfacePosition(savedY, undefined);
+        if (key !== undefined) focusReturnRow(key, context);
+      });
+    }
   };
-  const openLauncher = (request: LauncherRequest, sourceKey: string | undefined) => {
-    scrollRestoreRef.current = window.scrollY;
-    returnFocusRef.current =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    returnKeyRef.current = sourceKey;
+  const openLauncher = (request: LauncherRequest, sourceKey: string | undefined, context?: SurfaceReturnContext) => {
+    const captured = context ?? captureSurfaceReturn(document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    launcherReturnRef.current = { key: sourceKey, context: overlayReturnContext(sourceKey, captured) };
     setLauncher(request);
   };
   const closeLauncher = () => {
-    const key = returnKeyRef.current;
-    const returnElement = returnFocusRef.current;
+    const opened = launcherReturnRef.current;
     setLauncher(null);
-    returnFocusRef.current = null;
-    // The launcher borrowed the shared return context. Clear it so a later
-    // inspector close falls back to its own selection instead of this
-    // launcher's stale row and scroll position.
-    returnKeyRef.current = undefined;
-    const savedY = scrollRestoreRef.current;
+    launcherReturnRef.current = undefined;
+    if (opened === undefined) return;
     requestAnimationFrame(() => {
-      restoreSurfacePosition(savedY, undefined);
-      if (returnElement !== null && document.contains(returnElement)) {
-        returnElement.focus({ preventScroll: true });
-      } else if (key !== undefined) {
-        focusSurfaceRow(key);
-      }
+      restoreSurfacePosition(opened.context.scrollY, undefined);
+      if (opened.key !== undefined) focusReturnRow(opened.key, opened.context);
+      else if (opened.context.trigger?.isConnected) opened.context.trigger.focus({ preventScroll: true });
     });
   };
 
@@ -228,7 +274,7 @@ export function EngagementServicesSection({
         services={sorted}
         onAskAbout={onAskAbout}
         onClose={closeInspector}
-        onDiscoverOrigin={(origin, scopeHint) =>
+        onDiscoverOrigin={(origin, scopeHint, context) =>
           openLauncher(
             {
               kind: "ffuf",
@@ -237,13 +283,19 @@ export function EngagementServicesSection({
               sourceLabel: selection.key,
             },
             selection.key,
+            context,
           )
         }
         onOpenNotes={onOpenNotes}
-        onProbeOrigin={(origin) =>
-          openLauncher({ kind: "probe", origin, sourceLabel: selection.key }, selection.key)
+        onProbeOrigin={(origin, context) =>
+          openLauncher({ kind: "probe", origin, sourceLabel: selection.key }, selection.key, context)
         }
-        onStartLead={onStartLead}
+        onStartLead={onStartLead === undefined ? undefined : (context) => onStartLead({
+          ...context,
+          returnContext: overlayReturnContext(context.sourceKey, context.returnContext ?? captureSurfaceReturn(
+            document.activeElement instanceof HTMLElement ? document.activeElement : null,
+          )),
+        })}
       />
     );
 
@@ -267,7 +319,7 @@ export function EngagementServicesSection({
 
   const attackSurface =
     sorted.length === 0 ? (
-      <section aria-label="Attack surface" className="overflow-hidden rounded-[10px] border border-border bg-card">
+      <section data-surface-region={JSON.stringify(["surface", engagementId])} aria-label="Attack surface" className="overflow-hidden rounded-[10px] border border-border bg-card">
         <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border px-3">
           <h2 className="m-0 shrink-0 text-[13px] font-semibold">Attack surface</h2>
           {totals}
@@ -288,12 +340,14 @@ export function EngagementServicesSection({
           onOpenLauncher={openLauncher}
           onSelectKey={openSelection}
           onStartLead={onStartLead}
+          pathFilters={pathFilters}
           probes={probes}
           selectedKey={effectiveKey}
+          setPathFilters={setPathFilters}
         />
       </section>
     ) : (
-      <section aria-label="Attack surface" className="overflow-hidden rounded-[10px] border border-border bg-card">
+      <section data-surface-region={JSON.stringify(["surface", engagementId])} aria-label="Attack surface" className="overflow-hidden rounded-[10px] border border-border bg-card">
         <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border px-3">
           <h2 className="m-0 shrink-0 text-[13px] font-semibold">Attack surface</h2>
           {totals}
@@ -314,10 +368,12 @@ export function EngagementServicesSection({
             onOpenLauncher={openLauncher}
             onSelectKey={openSelection}
             onStartLead={onStartLead}
+            pathFilters={pathFilters}
             probes={probes}
             schemes={schemes}
             selectedKey={effectiveKey}
             services={sorted.filter((service) => service.address === activeTarget)}
+            setPathFilters={setPathFilters}
             setSchemes={setSchemes}
             target={activeTarget}
           />
@@ -549,10 +605,12 @@ function TargetGroup({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   probes,
   schemes,
   selectedKey,
   services,
+  setPathFilters,
   setSchemes,
   target,
 }: {
@@ -562,13 +620,15 @@ function TargetGroup({
   extraRowActions: ExtraRowActions | undefined;
   ffufResults: readonly FfufProjected[] | undefined;
   onAskAbout: ((target: string) => void) | undefined;
-  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
-  onSelectKey: ((key: string) => void) | undefined;
+  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined, context?: SurfaceReturnContext) => void;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   probes: readonly HttpProbeProjected[] | undefined;
   schemes: Readonly<Record<string, OriginScheme>>;
   selectedKey: string | undefined;
   services: readonly NmapProjectedService[];
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
   setSchemes: (next: Readonly<Record<string, OriginScheme>>) => void;
   target: string;
 }) {
@@ -633,12 +693,14 @@ function TargetGroup({
                     onOpenLauncher={onOpenLauncher}
                     onSelectKey={onSelectKey}
                     onStartLead={onStartLead}
+                    pathFilters={pathFilters}
                     paths={group.paths}
                     port={group.port}
                     probes={group.probes}
                     scheme={schemes[schemeKey] ?? group.scheme}
                     selectedKey={selectedKey}
                     service={service}
+                    setPathFilters={setPathFilters}
                     setScheme={(scheme) => setSchemes({ ...schemes, [schemeKey]: scheme })}
                     target={target}
                   />
@@ -658,9 +720,11 @@ function TargetGroup({
         onOpenLauncher={onOpenLauncher}
         onSelectKey={onSelectKey}
         onStartLead={onStartLead}
+        pathFilters={pathFilters}
         probes={probes}
         schemes={schemes}
         selectedKey={selectedKey}
+        setPathFilters={setPathFilters}
         setSchemes={setSchemes}
         target={target}
       />
@@ -796,9 +860,11 @@ function UnmatchedOrigins({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   probes,
   schemes,
   selectedKey,
+  setPathFilters,
   setSchemes,
   target,
 }: {
@@ -808,12 +874,14 @@ function UnmatchedOrigins({
   extraRowActions: ExtraRowActions | undefined;
   ffufResults: readonly FfufProjected[] | undefined;
   onAskAbout: ((target: string) => void) | undefined;
-  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
-  onSelectKey: ((key: string) => void) | undefined;
+  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined, context?: SurfaceReturnContext) => void;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   probes: readonly HttpProbeProjected[] | undefined;
   schemes: Readonly<Record<string, OriginScheme>>;
   selectedKey: string | undefined;
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
   setSchemes: (next: Readonly<Record<string, OriginScheme>>) => void;
   target: string;
 }) {
@@ -862,11 +930,13 @@ function UnmatchedOrigins({
               onOpenLauncher={onOpenLauncher}
               onSelectKey={onSelectKey}
               onStartLead={onStartLead}
+              pathFilters={pathFilters}
               paths={entry.paths}
               port={entry.port}
               probes={entry.probes}
               scheme={schemes[key] ?? entry.scheme}
               selectedKey={selectedKey}
+              setPathFilters={setPathFilters}
               setScheme={(next) => setSchemes({ ...schemes, [key]: next })}
               target={target}
             />
@@ -886,19 +956,23 @@ function ObservedOriginsWithoutServices({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   probes,
   selectedKey,
+  setPathFilters,
 }: {
   belowOrigin: BelowOrigin | undefined;
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
   ffufResults: readonly FfufProjected[] | undefined;
   onAskAbout: ((target: string) => void) | undefined;
-  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
-  onSelectKey: ((key: string) => void) | undefined;
+  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined, context?: SurfaceReturnContext) => void;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   probes: readonly HttpProbeProjected[] | undefined;
   selectedKey: string | undefined;
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
 }) {
   const [schemes, setSchemes] = useState<Readonly<Record<string, OriginScheme>>>({});
   const entries = groupObservationsByOrigin(probes ?? [], ffufResults ?? []).sort((left, right) => {
@@ -927,11 +1001,13 @@ function ObservedOriginsWithoutServices({
               onOpenLauncher={onOpenLauncher}
               onSelectKey={onSelectKey}
               onStartLead={onStartLead}
+              pathFilters={pathFilters}
               paths={entry.paths}
               port={entry.port}
               probes={entry.probes}
               scheme={schemes[key] ?? entry.scheme}
               selectedKey={selectedKey}
+              setPathFilters={setPathFilters}
               setScheme={(next) => setSchemes({ ...schemes, [key]: next })}
               target={entry.host}
             />
@@ -952,12 +1028,14 @@ function OriginBlock({
   onOpenLauncher,
   onSelectKey,
   onStartLead,
+  pathFilters,
   paths,
   port,
   probes,
   scheme,
   selectedKey,
   service,
+  setPathFilters,
   setScheme,
   target,
 }: {
@@ -967,15 +1045,17 @@ function OriginBlock({
   host: string;
   observedScheme: OriginScheme;
   onAskAbout: ((target: string) => void) | undefined;
-  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined) => void;
-  onSelectKey: ((key: string) => void) | undefined;
+  onOpenLauncher: (request: LauncherRequest, sourceKey: string | undefined, context?: SurfaceReturnContext) => void;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
+  pathFilters: PathFilters;
   paths: readonly FfufProjected[];
   port: number;
   probes: readonly HttpProbeProjected[];
   scheme: OriginScheme;
   selectedKey: string | undefined;
   service?: NmapProjectedService | undefined;
+  setPathFilters: Dispatch<SetStateAction<PathFilters>>;
   setScheme: (scheme: OriginScheme) => void;
   target: string;
 }) {
@@ -983,7 +1063,6 @@ function OriginBlock({
   const origin = withOriginScheme(`${formattedHost}:${String(port)}`, scheme);
   const resolvedProbeKey = resolveProbeSelectionKey(selectedKey, probes);
   const resolvedPathKey = resolvePathSelectionKey(selectedKey, paths);
-  const sortedPaths = [...paths].sort((left, right) => left.url.localeCompare(right.url));
   // Origin-level row identifier so launcher actions carry a defined sourceKey
   // for focus restoration. The container is not a selectable inspector row,
   // so the key uses an origin namespace that never collides with selection keys.
@@ -1019,8 +1098,8 @@ function OriginBlock({
         <OriginActionButton
           label="Probe web"
           sourceKey={rowKey}
-          onClick={(sourceKey) =>
-            onOpenLauncher({ kind: "probe", origin, sourceLabel: origin }, sourceKey)
+          onClick={(sourceKey, context) =>
+            onOpenLauncher({ kind: "probe", origin, sourceLabel: origin }, sourceKey, context)
           }
         />
         <a
@@ -1034,8 +1113,8 @@ function OriginBlock({
         <OriginActionButton
           label="Discover paths"
           sourceKey={rowKey}
-          onClick={(sourceKey) =>
-            onOpenLauncher({ kind: "ffuf", origin, sourceLabel: origin }, sourceKey)
+          onClick={(sourceKey, context) =>
+            onOpenLauncher({ kind: "ffuf", origin, sourceLabel: origin }, sourceKey, context)
           }
         />
         {/* The origin row's lead source is its Nmap service. Origins without a
@@ -1043,7 +1122,7 @@ function OriginBlock({
         {onStartLead !== undefined && service !== undefined ? (
           <button
             type="button"
-            onClick={() => onStartLead(serviceLeadContext(service, rowKey, origin))}
+            onClick={(event) => onStartLead({ ...serviceLeadContext(service, rowKey, origin), returnContext: captureSurfaceReturn(event.currentTarget) })}
             className="inline-flex min-h-8 items-center rounded-md px-2 text-[12px] font-medium text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             Start a lead
@@ -1076,25 +1155,32 @@ function OriginBlock({
           Not probed yet. Probe web records status, title, and headers here.
         </p>
       )}
-      {sortedPaths.length > 0 ? (
-        <ul className="m-0 grid list-none gap-1 border-t border-border p-2.5">
-          {sortedPaths.map((result) => (
+      {paths.length > 0 ? (
+        <PathGroups
+          engagementId={engagementId}
+          filters={pathFilters}
+          label={origin}
+          paths={paths}
+          renderPath={(result) => (
             <PathRow
               key={`${result.url}:${result.artifactId}`}
               engagementId={engagementId}
               extraRowActions={extraRowActions}
-              onDiscover={(sourceKey) =>
+              onDiscover={(sourceKey, context) =>
                 onOpenLauncher(
                   { kind: "ffuf", origin, scopeHint: result.url, sourceLabel: result.url },
                   sourceKey,
+                  context,
                 )
               }
               onSelectKey={onSelectKey}
               result={result}
               selected={resolvedPathKey === pathSelectionKey(result.url, result.artifactId)}
             />
-          ))}
-        </ul>
+          )}
+          selectedKey={resolvedPathKey}
+          setFilters={setPathFilters}
+        />
       ) : null}
       {belowOrigin === undefined ? null : (
         <div className="border-t border-border px-2.5 py-1.5">
@@ -1111,7 +1197,7 @@ function OriginActionButton({
   sourceKey,
 }: {
   label: string;
-  onClick: (sourceKey: string | undefined) => void;
+  onClick: (sourceKey: string | undefined, context: SurfaceReturnContext) => void;
   sourceKey?: string | undefined;
 }) {
   return (
@@ -1119,12 +1205,13 @@ function OriginActionButton({
       type="button"
       onClick={(event) => {
         if (sourceKey !== undefined) {
-          onClick(sourceKey);
+          onClick(sourceKey, captureSurfaceReturn(event.currentTarget));
           return;
         }
         const row = event.currentTarget.closest("[data-surface-row]");
         onClick(
           row instanceof HTMLElement ? (row.getAttribute("data-surface-row") ?? undefined) : undefined,
+          captureSurfaceReturn(event.currentTarget),
         );
       }}
       className="inline-flex min-h-8 items-center rounded-md px-2 text-[12px] font-semibold text-foreground outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
@@ -1141,7 +1228,7 @@ function ProbeEnrichmentRow({
   selected,
 }: {
   extraRowActions: ExtraRowActions | undefined;
-  onSelectKey: ((key: string) => void) | undefined;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   probe: HttpProbeProjected;
   selected: boolean;
 }) {
@@ -1159,7 +1246,7 @@ function ProbeEnrichmentRow({
           <button
             type="button"
             aria-current={selected ? "true" : undefined}
-            onClick={() => onSelectKey(key)}
+            onClick={(event) => onSelectKey(key, captureSurfaceReturn(event.currentTarget))}
             className={`min-w-0 flex-1 truncate text-left font-mono text-[12px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring ${
               selected ? "font-semibold text-foreground" : "text-foreground"
             }`}
@@ -1174,7 +1261,7 @@ function ProbeEnrichmentRow({
         {onSelectKey === undefined ? null : (
           <button
             type="button"
-            onClick={() => onSelectKey(key)}
+            onClick={(event) => onSelectKey(key, captureSurfaceReturn(event.currentTarget))}
             className="inline-flex min-h-8 items-center text-[11px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
           >
             Inspect
@@ -1188,6 +1275,9 @@ function ProbeEnrichmentRow({
   );
 }
 
+const PATH_ACTION =
+  "inline-flex min-h-11 items-center text-[11px] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:pointer-fine:min-h-8";
+
 function PathRow({
   engagementId,
   extraRowActions,
@@ -1198,8 +1288,8 @@ function PathRow({
 }: {
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
-  onDiscover: (sourceKey: string | undefined) => void;
-  onSelectKey: ((key: string) => void) | undefined;
+  onDiscover: (sourceKey: string | undefined, context?: SurfaceReturnContext) => void;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   result: FfufProjected;
   selected: boolean;
 }) {
@@ -1212,20 +1302,23 @@ function PathRow({
     });
   };
   return (
-    <li data-surface-row={key} className="min-w-0 rounded-md border border-border px-2 py-1.5">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+    <li
+      data-surface-row={key}
+      className={`min-w-0 px-2.5 py-0.5 ${selected ? "bg-accent" : ""}`}
+    >
+      {/* One line when the origin block is wide; actions wrap below the URL
+          when it is not. */}
+      <div className="flex flex-wrap items-center gap-x-3">
         {onSelectKey === undefined ? (
-          <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold" title={result.url}>
+          <span className="min-w-0 flex-1 basis-64 truncate font-mono text-[12px] font-semibold" title={result.url}>
             {result.url}
           </span>
         ) : (
           <button
             type="button"
             aria-current={selected ? "true" : undefined}
-            onClick={() => onSelectKey(key)}
-            className={`min-w-0 flex-1 truncate text-left font-mono text-[12px] font-semibold outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring ${
-              selected ? "text-foreground" : "text-foreground"
-            }`}
+            onClick={(event) => onSelectKey(key, captureSurfaceReturn(event.currentTarget))}
+            className="min-h-11 min-w-0 flex-1 basis-64 truncate text-left font-mono text-[12px] font-semibold text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:pointer-fine:min-h-8"
             title={result.url}
           >
             {result.url}
@@ -1234,52 +1327,53 @@ function PathRow({
         <span className="font-mono text-[11px] text-muted-foreground" title={meta}>
           {meta}
         </span>
-      </div>
-      <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-        {onSelectKey === undefined ? null : (
+        <div className="flex flex-wrap items-center gap-x-3">
+          {onSelectKey === undefined ? null : (
+            <button
+              type="button"
+              onClick={(event) => onSelectKey(key, captureSurfaceReturn(event.currentTarget))}
+              className={`${PATH_ACTION} font-semibold text-primary`}
+            >
+              Inspect
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => onSelectKey(key)}
-            className="inline-flex min-h-8 items-center text-[11px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => copyValue("copy", result.url)}
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
           >
-            Inspect
+            {copied === "copy" ? "Copied" : "Copy"}
           </button>
-        )}
-        <button
-          type="button"
-          onClick={() => copyValue("copy", result.url)}
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {copied === "copy" ? "Copied" : "Copy"}
-        </button>
-        <button
-          type="button"
-          onClick={() => copyValue("note", pathInspectorRecord(result, engagementId).noteReference)}
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {copied === "note" ? "Copied" : "Copy note reference"}
-        </button>
-        <button
-          type="button"
-          onClick={(event) => {
-            const row = event.currentTarget.closest("[data-surface-row]");
-            onDiscover(
-              row instanceof HTMLElement
-                ? (row.getAttribute("data-surface-row") ?? undefined)
-                : undefined,
-            );
-          }}
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          Discover paths
-        </button>
-        <a
-          className="inline-flex min-h-8 items-center text-[11px] font-medium text-muted-foreground outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-          href={artifactContentUrl(engagementId, result.artifactId)}
-          download
-        >
-          Raw evidence
-        </a>
+          <button
+            type="button"
+            onClick={() => copyValue("note", pathInspectorRecord(result, engagementId).noteReference)}
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
+          >
+            {copied === "note" ? "Copied" : "Copy note reference"}
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              const row = event.currentTarget.closest("[data-surface-row]");
+              onDiscover(
+                row instanceof HTMLElement
+                  ? (row.getAttribute("data-surface-row") ?? undefined)
+                  : undefined,
+                captureSurfaceReturn(event.currentTarget),
+              );
+            }}
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
+          >
+            Discover paths
+          </button>
+          <a
+            className={`${PATH_ACTION} font-medium text-muted-foreground hover:text-foreground`}
+            href={artifactContentUrl(engagementId, result.artifactId)}
+            download
+          >
+            Raw evidence
+          </a>
+        </div>
       </div>
       {extraRowActions === undefined ? null : (
         <div>{extraRowActions({ kind: "path", key, title: result.url, target: result.url })}</div>
@@ -1305,9 +1399,9 @@ function SurfaceInspectorLoader({
   ffufQuery: { data: readonly FfufProjected[] | undefined; isFetching: boolean; isError?: boolean; refetch?: () => void };
   onAskAbout: ((target: string) => void) | undefined;
   onClose: () => void;
-  onDiscoverOrigin: (origin: string, scopeHint: string | undefined) => void;
+  onDiscoverOrigin: (origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void;
   onOpenNotes: (() => void) | undefined;
-  onProbeOrigin: (origin: string) => void;
+  onProbeOrigin: (origin: string, context?: SurfaceReturnContext) => void;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
   probesQuery: { data: readonly HttpProbeProjected[] | undefined; isFetching: boolean; isError?: boolean; refetch?: () => void };
   selectionKey: string;
@@ -1430,7 +1524,7 @@ function ServiceRow({
 }: {
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
-  onSelect: ((key: string) => void) | undefined;
+  onSelect: SurfaceSelectionHandler | undefined;
   selected: boolean;
   service: NmapProjectedService;
 }) {
@@ -1456,7 +1550,7 @@ function ServiceRow({
         <button
           type="button"
           aria-current={selected ? "true" : undefined}
-          onClick={() => onSelect(key)}
+          onClick={(event) => onSelect(key, captureSurfaceReturn(event.currentTarget))}
           className={`block w-full truncate text-left font-mono text-[13px] font-semibold tracking-[-0.02em] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring ${
             selected ? "text-foreground" : "text-foreground"
           }`}
@@ -1501,7 +1595,7 @@ function ServiceRow({
               {" "}
               <button
                 type="button"
-                onClick={() => onSelect(key)}
+                onClick={(event) => onSelect(key, captureSurfaceReturn(event.currentTarget))}
                 className="mt-1 inline-block max-w-full truncate text-[11px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Inspect

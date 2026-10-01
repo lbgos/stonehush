@@ -358,6 +358,7 @@ describe("surface target organization", () => {
       sourceText: "192.0.2.10:80/tcp nginx 1.25",
       target: "192.0.2.10",
       serviceRef: "http://192.0.2.10",
+      returnContext: expect.objectContaining({ trigger: within(origin!).getByRole("button", { name: "Start a lead" }) }),
     });
     expect(screen.queryByRole("button", { name: "Ask about this" })).toBeNull();
   });

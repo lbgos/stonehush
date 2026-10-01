@@ -22,7 +22,7 @@ import { AdvisorPanel } from "../advisor/advisor-panel.js";
 import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
 import { EngagementGitleaksSection } from "./gitleaks.js";
-import type { LeadStartContext } from "./inspector.js";
+import type { LeadStartContext, SurfaceSelectionHandler, SurfaceSelectionReturn } from "./inspector.js";
 import { LeadQuickCreate } from "./lead-quick-create.js";
 import { EngagementVhostSection } from "./vhost-surface.js";
 import {
@@ -347,7 +347,14 @@ function EngagementDetail({
     });
   };
 
-  const selectSurfaceItem = (key: string | undefined) => {
+  const [selectionReturn, setSelectionReturn] = useState<SurfaceSelectionReturn | undefined>(undefined);
+  useEffect(() => {
+    setSelectionReturn((current) => current?.engagementId === displayed.id && current.key === selectedItemKey ? current : undefined);
+  }, [displayed.id, selectedItemKey]);
+  const selectSurfaceItem: SurfaceSelectionHandler = (key, context) => {
+    if (key !== undefined) {
+      setSelectionReturn(context === undefined ? undefined : { engagementId: displayed.id, key, context });
+    }
     void navigate({
       to: "/engagements/$engagementId",
       params: { engagementId: displayed.id },
@@ -489,6 +496,7 @@ function EngagementDetail({
               onSelectTarget={selectTarget}
               onStartLead={(context) => setLeadStart({ engagementId: displayed.id, context })}
               selectedKey={selectedItemKey}
+              selectionReturn={selectionReturn}
               selectedTarget={selectedTargetId}
             />
           </div>

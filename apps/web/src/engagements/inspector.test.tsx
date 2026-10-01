@@ -12,11 +12,13 @@ import {
   decodeSurfaceSelection,
   defaultSchemeForPort,
   focusSurfaceRow,
+  captureSurfaceReturn,
   isLauncherStoppable,
   resolveServiceSelectionKey,
   resolveProbeSelectionKey,
   resolvePathSelectionKey,
   probeSelectionKey,
+  pathGroupRowKey,
   pathSelectionKey,
   launcherWarningKind,
   selectDisplayAction,
@@ -843,6 +845,79 @@ describe("surface focus helpers", () => {
     expect(document.activeElement).toBe(button);
     document.body.innerHTML = "";
   });
+
+  it("falls back to the group header when a path row is folded away", () => {
+    const rowKey = pathSelectionKey(pathResult.url, pathResult.artifactId);
+    const groupKey = pathGroupRowKey(pathResult);
+    const header = document.createElement("div");
+    header.setAttribute("data-surface-row", groupKey);
+    header.innerHTML = `<button type="button">disclosure</button>`;
+    const members = document.createElement("ul");
+    members.innerHTML = `<li><button type="button">row</button></li>`;
+    members.firstElementChild?.setAttribute("data-surface-row", rowKey);
+    document.body.append(header, members);
+    const [disclosure, row] = [...document.querySelectorAll("button")];
+
+    expect(focusSurfaceRow(rowKey, groupKey)).toBe(true);
+    expect(document.activeElement).toBe(row);
+    members.remove();
+    row?.focus();
+    expect(focusSurfaceRow(rowKey, groupKey)).toBe(true);
+    expect(document.activeElement).toBe(disclosure);
+    expect(pathInspectorRecord(pathResult, engagementId).lead.fallbackKey).toBe(groupKey);
+    document.body.innerHTML = "";
+  });
+
+  it("keeps scoped row and group return separate from a duplicate list, including remounts", () => {
+    const rowKey = pathSelectionKey(pathResult.url, pathResult.artifactId);
+    const groupKey = pathGroupRowKey(pathResult);
+    const upper = document.createElement("section");
+    const lower = document.createElement("section");
+    upper.setAttribute("data-surface-region", "upper"); lower.setAttribute("data-surface-region", "lower");
+    const row = document.createElement("div"); row.setAttribute("data-surface-row", rowKey);
+    row.innerHTML = '<button>URL</button><button>Inspect</button>';
+    upper.append(row); lower.append(row.cloneNode(true)); document.body.append(upper, lower);
+    const trigger = row.lastElementChild as HTMLElement;
+    const context = captureSurfaceReturn(trigger);
+    expect(focusSurfaceRow(rowKey, groupKey, context)).toBe(true);
+    expect(document.activeElement).toBe(trigger);
+    row.remove();
+    const replacement = row.cloneNode(true);
+    if (!(replacement instanceof HTMLElement)) throw new Error("Expected an element clone");
+    upper.append(replacement);
+    expect(focusSurfaceRow(rowKey, groupKey, context)).toBe(true);
+    expect(document.activeElement).toBe(replacement.firstChild);
+    replacement.remove();
+    const header = document.createElement("div"); header.setAttribute("data-surface-row", groupKey);
+    header.innerHTML = '<button>Restore</button>'; upper.append(header);
+    const remounted = upper.cloneNode(true);
+    if (!(remounted instanceof HTMLElement)) throw new Error("Expected an element clone");
+    upper.replaceWith(remounted);
+    expect(focusSurfaceRow(rowKey, groupKey, context)).toBe(true);
+    expect(document.activeElement).toBe(remounted.querySelector("button"));
+    remounted.remove();
+    expect(focusSurfaceRow(rowKey, groupKey, context)).toBe(false);
+    document.body.innerHTML = "";
+  });
+
+  it("keys path groups by observed origin, run, artifact and all four metadata fields", () => {
+    const key = pathGroupRowKey(pathResult);
+    expect(pathGroupRowKey({ ...pathResult, url: "http://192.0.2.10:80/login", fuzz: "login" })).toBe(key);
+    for (const variant of [
+      { url: "https://192.0.2.10/admin" },
+      { url: "http://app.example.test/admin" },
+      { runId: "run-4" },
+      { artifactId: "artifact-4" },
+      { status: 404 },
+      { length: 129 },
+      { words: 5 },
+      { lines: 9 },
+    ]) {
+      expect(pathGroupRowKey({ ...pathResult, ...variant })).not.toBe(key);
+    }
+    // A group anchor never reads as an inspector selection.
+    expect(decodeSurfaceSelection(key)).toBeUndefined();
+  });
 });
 
 describe("surface inspector", () => {
@@ -912,16 +987,18 @@ describe("surface inspector", () => {
     renderInspector(record, { onStartLead, onAskAbout, onProbeOrigin, onDiscoverOrigin, onOpenNotes });
 
     fireEvent.click(await screen.findByRole("button", { name: "Start a lead" }));
-    expect(onStartLead).toHaveBeenCalledWith(record.lead);
+    expect(onStartLead).toHaveBeenCalledWith(expect.objectContaining(record.lead));
+    expect(onStartLead.mock.calls[0]?.[0].returnContext.trigger).toBe(screen.getByRole("button", { name: "Start a lead" }));
     expect(record.lead.sourceKey).toBe(record.key);
     fireEvent.click(screen.getByRole("button", { name: "Ask about this" }));
     expect(onAskAbout).toHaveBeenCalledWith("http://192.0.2.10/admin");
     fireEvent.click(screen.getByRole("button", { name: "Probe web" }));
-    expect(onProbeOrigin).toHaveBeenCalledWith("http://192.0.2.10");
+    expect(onProbeOrigin).toHaveBeenCalledWith("http://192.0.2.10", expect.objectContaining({ trigger: screen.getByRole("button", { name: "Probe web" }) }));
     fireEvent.click(screen.getByRole("button", { name: "Discover paths" }));
     expect(onDiscoverOrigin).toHaveBeenCalledWith(
       "http://192.0.2.10",
       "http://192.0.2.10/admin",
+      expect.objectContaining({ trigger: screen.getByRole("button", { name: "Discover paths" }) }),
     );
     const browser = screen.getByRole("link", { name: "Open in browser" });
     expect(browser.getAttribute("href")).toBe("http://192.0.2.10/admin");

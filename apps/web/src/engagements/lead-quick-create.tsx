@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 
 import {
   focusSurfaceRow,
+  captureSurfaceReturn,
   leadCreateInput,
   leadFieldFits,
   restoreSurfacePosition,
@@ -50,7 +51,7 @@ export function LeadQuickCreate({ archived, context, engagementId, onClose }: Le
   const inputRef = useRef<HTMLInputElement>(null);
   // Captured during the first render, before focus moves into the dialog.
   const [returnTo] = useState(() => ({
-    element: document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    context: context.returnContext ?? captureSurfaceReturn(document.activeElement instanceof HTMLElement ? document.activeElement : null),
     scrollY: window.scrollY,
   }));
   const [title, setTitle] = useState("");
@@ -69,11 +70,7 @@ export function LeadQuickCreate({ archived, context, engagementId, onClose }: Le
     onClose();
     requestAnimationFrame(() => {
       restoreSurfacePosition(returnTo.scrollY, undefined);
-      if (returnTo.element !== null && document.contains(returnTo.element)) {
-        returnTo.element.focus({ preventScroll: true });
-      } else {
-        focusSurfaceRow(context.sourceKey);
-      }
+      focusSurfaceRow(context.sourceKey, context.fallbackKey, returnTo.context);
     });
   };
 

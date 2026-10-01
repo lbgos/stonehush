@@ -387,17 +387,72 @@ export function resolvePathSelectionKey(
 // Focus and scroll restoration
 // ---------------------------------------------------------------------------
 
-export function focusSurfaceRow(key: string): boolean {
-  const nodes = document.querySelectorAll("[data-surface-row]");
-  for (const node of nodes) {
-    if (!(node instanceof HTMLElement)) continue;
-    if (node.getAttribute("data-surface-row") !== key) continue;
-    const target =
-      node instanceof HTMLButtonElement ? node : node.querySelector<HTMLElement>("button");
-    (target ?? node).focus({ preventScroll: true });
+/** UI provenance is separate from the artifact-qualified evidence key. */
+export interface SurfaceReturnContext {
+  readonly trigger: HTMLElement | null;
+  readonly region: HTMLElement | null;
+  readonly regionKey: string | undefined;
+  readonly scrollY: number;
+}
+
+export interface SurfaceSelectionReturn {
+  readonly engagementId: string;
+  readonly key: string;
+  readonly context: SurfaceReturnContext;
+}
+
+export type SurfaceSelectionHandler = (key: string | undefined, context?: SurfaceReturnContext) => void;
+
+export function captureSurfaceReturn(trigger: HTMLElement | null): SurfaceReturnContext {
+  if (trigger === document.body) trigger = null;
+  const region = trigger?.closest<HTMLElement>("[data-surface-region]") ?? null;
+  return { trigger, region, regionKey: region?.getAttribute("data-surface-region") ?? undefined, scrollY: window.scrollY };
+}
+
+function findSurfaceRow(key: string, root: ParentNode): HTMLElement | undefined {
+  for (const node of root.querySelectorAll("[data-surface-row]")) {
+    if (node instanceof HTMLElement && node.getAttribute("data-surface-row") === key) return node;
+  }
+  return undefined;
+}
+
+// Connected opener first, then exact row and group within its original list.
+// Shared links have no opener and deterministically use document order.
+export function focusSurfaceRow(key: string, fallbackKey?: string, context?: SurfaceReturnContext): boolean {
+  if (context?.trigger !== null && context?.trigger !== undefined && context.trigger.isConnected) {
+    context.trigger.focus({ preventScroll: true });
     return true;
   }
-  return false;
+  let root: ParentNode = document;
+  if (context?.regionKey !== undefined) {
+    const region = context.region?.isConnected ? context.region :
+      [...document.querySelectorAll<HTMLElement>("[data-surface-region]")]
+        .find((node) => node.getAttribute("data-surface-region") === context.regionKey);
+    if (region === undefined || region === null) return false;
+    root = region;
+  }
+  const node = findSurfaceRow(key, root) ??
+    (fallbackKey === undefined ? undefined : findSurfaceRow(fallbackKey, root));
+  if (node === undefined) return false;
+  const target = node instanceof HTMLButtonElement ? node : node.querySelector<HTMLElement>("button");
+  (target ?? node).focus({ preventScroll: true });
+  return true;
+}
+
+// Row key of the group header for results that share exact status, length,
+// words and lines within one observed origin, run and artifact. Path rows
+// folded into a collapsed or hidden group return focus here.
+export function pathGroupRowKey(result: FfufProjected): string {
+  const origin = splitOriginUrl(result.url)?.origin ?? result.url;
+  return `pathgroup:${JSON.stringify([
+    origin,
+    result.runId,
+    result.artifactId,
+    result.status,
+    result.length,
+    result.words,
+    result.lines,
+  ])}`;
 }
 
 export function restoreSurfacePosition(scrollY: number, key: string | undefined): void {
@@ -560,12 +615,15 @@ export function pathInspectorRecord(
     openUrl: result.url,
     ...(parts === undefined ? {} : { origin: parts.origin }),
     noteReference: `- ${result.url} (${String(result.status)}) · evidence ${result.artifactId}`,
-    lead: webLeadContext(
-      "ffuf_result",
-      result.url,
-      result.artifactId,
-      pathSelectionKey(result.url, result.artifactId),
-    ),
+    lead: {
+      ...webLeadContext(
+        "ffuf_result",
+        result.url,
+        result.artifactId,
+        pathSelectionKey(result.url, result.artifactId),
+      ),
+      fallbackKey: pathGroupRowKey(result),
+    },
   };
 }
 
@@ -581,6 +639,9 @@ export type SurfaceLeadSourceKind = "nmap_service" | "http_probe" | "ffuf_result
 // than shortening it. Only the display label is bounded.
 export interface LeadStartContext {
   readonly sourceKey: string;
+  /** Row to focus when sourceKey is folded away, see focusSurfaceRow. */
+  readonly fallbackKey?: string;
+  readonly returnContext?: SurfaceReturnContext;
   readonly sourceKind: SurfaceLeadSourceKind;
   readonly sourceRef: string;
   readonly sourceText: string;
@@ -664,9 +725,9 @@ export interface SurfaceInspectorProps {
   readonly onRetry?: (() => void) | undefined;
   readonly onAskAbout?: ((target: string) => void) | undefined;
   readonly onClose: () => void;
-  readonly onDiscoverOrigin?: ((origin: string, scopeHint: string | undefined) => void) | undefined;
+  readonly onDiscoverOrigin?: ((origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void) | undefined;
   readonly onOpenNotes?: (() => void) | undefined;
-  readonly onProbeOrigin?: ((origin: string) => void) | undefined;
+  readonly onProbeOrigin?: ((origin: string, context?: SurfaceReturnContext) => void) | undefined;
   readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
   readonly record: InspectorRecord | undefined;
   readonly selectionKey: string;
@@ -807,9 +868,9 @@ function InspectorRecordBody({
   engagementId: string;
   onAskAbout: ((target: string) => void) | undefined;
   onCopy: (label: string, value: string) => void;
-  onDiscoverOrigin: ((origin: string, scopeHint: string | undefined) => void) | undefined;
+  onDiscoverOrigin: ((origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void) | undefined;
   onOpenNotes: (() => void) | undefined;
-  onProbeOrigin: ((origin: string) => void) | undefined;
+  onProbeOrigin: ((origin: string, context?: SurfaceReturnContext) => void) | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
   record: InspectorRecord;
 }) {
@@ -852,7 +913,7 @@ function InspectorRecordBody({
       <InspectorSection title="Follow-up actions">
         <div className="flex flex-col items-stretch gap-2">
           {record.origin !== undefined && onProbeOrigin !== undefined ? (
-            <Button type="button" variant="secondary" onClick={() => onProbeOrigin(record.origin ?? "")}>
+            <Button type="button" variant="secondary" onClick={(event) => onProbeOrigin(record.origin ?? "", captureSurfaceReturn(event.currentTarget))}>
               Probe web
             </Button>
           ) : null}
@@ -870,10 +931,11 @@ function InspectorRecordBody({
             <Button
               type="button"
               variant="secondary"
-              onClick={() =>
+              onClick={(event) =>
                 onDiscoverOrigin(
                   record.origin ?? "",
                   record.kind === "path" ? record.target : undefined,
+                  captureSurfaceReturn(event.currentTarget),
                 )
               }
             >
@@ -884,7 +946,7 @@ function InspectorRecordBody({
             <Button
               type="button"
               variant="quiet"
-              onClick={() => onStartLead(record.lead)}
+              onClick={(event) => onStartLead({ ...record.lead, returnContext: captureSurfaceReturn(event.currentTarget) })}
             >
               Start a lead
             </Button>
