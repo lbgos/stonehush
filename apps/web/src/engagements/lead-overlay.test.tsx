@@ -803,6 +803,51 @@ describe("continue an evidence-linked lead from Surface", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it.each([
+    ["Close lead", "closeLead", "open", "closed"],
+    ["Reopen", "reopenLead", "parked", "open"],
+    ["Dismiss", "dismissRevisit", "parked", "parked"],
+  ] as const)("continues a failed draft-free %s navigation after a successful retry", async (operation, handler, disposition, nextDisposition) => {
+    const finishes: ((value: Response) => void)[] = [];
+    const current = lead(OPEN_ID, engagement.id, {
+      disposition,
+      parkReason: disposition === "parked" ? "No access yet" : null,
+      revisitSuggestion: operation === "Dismiss"
+        ? { trigger: "new_access", reason: "New access may help", createdAt: TS, dismissed: false }
+        : null,
+    });
+    const server: Server = {
+      engagements: [engagement], leads: { [engagement.id]: [current] }, attempts: {},
+      [handler]: () => new Promise<Response>((resolve) => { finishes.push(resolve); }),
+    };
+    const fetchMock = serve(server);
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await within(dialog()).findByLabelText("Attempt summary");
+    fireEvent.click(within(dialog()).getByRole("button", { name: operation }));
+    await waitFor(() => expect(finishes).toHaveLength(1));
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    finishes[0]?.(response({ code: "storage_busy" }, 503));
+    expect(await within(dialog()).findByText("The change failed. Leave without applying it?")).toBeTruthy();
+    expect(within(dialog()).getByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: operation }));
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    expect(within(dialog()).getByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    expect(within(dialog()).queryByRole("button", { name: "Leave" })).toBeNull();
+    expect(within(dialog()).queryByRole("button", { name: "Discard" })).toBeNull();
+    expect(router.state.location.search.tab).toBeUndefined();
+    const saved = { ...current, disposition: nextDisposition, revisitSuggestion: null };
+    server.leads[engagement.id] = [saved];
+    finishes[1]?.(response(saved));
+    await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("The change failed. Leave without applying it?")).toBeNull();
+    expect(writes(fetchMock)).toHaveLength(2);
+  });
+
   it("continues a new successful operation despite an older mutation error", async () => {
     let finish: ((value: Response) => void) | undefined;
     const current = lead(OPEN_ID, engagement.id, { disposition: "parked", parkReason: "No access yet" });

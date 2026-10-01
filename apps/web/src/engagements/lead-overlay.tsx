@@ -18,8 +18,9 @@ import { LeadNotFoundError, useLeadQuery } from "./leads-query.js";
 // Continue an evidence-linked lead from the Surface inspector. The inspector
 // stays mounted underneath. The overlay reads the exact lead again before
 // showing its detail, reuses the Leads tab detail for attempts and park, and
-// returns focus to the linked lead button that opened it. An unsaved draft or
-// an in-flight write holds Close, Escape, the backdrop, and route changes.
+// returns focus to the linked lead button that opened it. An unsaved draft,
+// an in-flight write, or a failed held route guards Close, Escape, the backdrop,
+// and route changes.
 
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -99,11 +100,11 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
     if (blocker.reset === acknowledgedNavigationRef.current) return;
     if (held.failed) {
       if (!held.dirty) setFailedNavigation(true);
-    } else if (!held.dirty && !failedNavigation) {
+    } else if (!held.dirty) {
       blocker.proceed?.();
       onClose();
     }
-  }, [navigationBlocked, held.dirty, held.pending, held.failed, failedNavigation, blocker, onClose]);
+  }, [navigationBlocked, held.dirty, held.pending, held.failed, blocker, onClose]);
 
   // The opening button first, then the inspector it lived in, then its row.
   const close = () => {
