@@ -9,7 +9,7 @@ import {
   StaleDataState,
 } from "@stonehush/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ENGAGEMENT_KIND_LABELS,
@@ -22,7 +22,8 @@ import { AdvisorPanel } from "../advisor/advisor-panel.js";
 import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
 import { EngagementGitleaksSection } from "./gitleaks.js";
-import type { LeadStartContext, SurfaceSelectionHandler, SurfaceSelectionReturn } from "./inspector.js";
+import type { LeadOpenRequest, LeadStartContext, SurfaceSelectionHandler, SurfaceSelectionReturn } from "./inspector.js";
+import { LeadOverlay } from "./lead-overlay.js";
 import { LeadQuickCreate } from "./lead-quick-create.js";
 import { EngagementVhostSection } from "./vhost-surface.js";
 import {
@@ -384,6 +385,22 @@ function EngagementDetail({
   const findingDestination =
     destination?.kind === "finding" && destination.engagementId === displayed.id ? destination : undefined;
 
+  // A lead opened from the inspector belongs to that engagement and Surface
+  // selection. A route change away from either closes it; the overlay holds
+  // such changes itself while it has unsaved or pending work.
+  const [leadOpen, setLeadOpen] = useState<
+    { engagementId: string; sel: string | undefined; request: LeadOpenRequest } | null
+  >(null);
+  const leadOpenVisible =
+    leadOpen !== null &&
+    leadOpen.engagementId === displayed.id &&
+    leadOpen.sel === selectedItemKey &&
+    activeTab === "surface";
+  useEffect(() => {
+    if (!leadOpenVisible) setLeadOpen(null);
+  }, [leadOpenVisible]);
+  const closeLeadOpen = useCallback(() => setLeadOpen(null), []);
+
   const toggleAdvisorFinding = (findingId: string) => {
     if (archived) return;
     if (advisorDraft.findingIds.includes(findingId)) {
@@ -589,9 +606,11 @@ function EngagementDetail({
             <EngagementServicesSection
               archived={archived}
               engagementId={displayed.id}
+              onOpenLead={(request) => setLeadOpen({ engagementId: displayed.id, sel: selectedItemKey, request })}
               onOpenNotes={openNotesFromSurface}
               onSearch={openSearch}
               searchOpen={searchOpen}
+              leadOpen={leadOpenVisible}
               onSelectKey={selectSurfaceItem}
               onSelectTarget={selectTarget}
               onStartLead={(context) => setLeadStart({ engagementId: displayed.id, context })}
@@ -736,6 +755,16 @@ function EngagementDetail({
           onQueryChange={setSearchQuery}
           onClose={closeSearch}
           onSelect={openSearchResult}
+        />
+      ) : null}
+
+      {leadOpenVisible ? (
+        <LeadOverlay
+          key={`${leadOpen.engagementId}:${leadOpen.request.leadId}:${leadOpen.request.sourceKey}`}
+          archived={archived}
+          engagementId={leadOpen.engagementId}
+          request={leadOpen.request}
+          onClose={closeLeadOpen}
         />
       ) : null}
 

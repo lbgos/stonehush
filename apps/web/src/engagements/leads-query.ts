@@ -1,3 +1,4 @@
+import { useId } from "react";
 import {
   CaptureObjectiveRequestSchema,
   CreateLeadAttemptRequestSchema,
@@ -38,6 +39,14 @@ export class LeadsQueryError extends Error {
   constructor() {
     super(LEADS_QUERY_ERROR_MESSAGE);
     this.name = "LeadsQueryError";
+  }
+}
+
+// A single-lead read answered with 404: the lead or its engagement is gone.
+export class LeadNotFoundError extends LeadsQueryError {
+  constructor() {
+    super();
+    this.name = "LeadNotFoundError";
   }
 }
 
@@ -172,6 +181,10 @@ export function leadsQueryKey(engagementId: string) {
   return ["engagements", engagementId, "leads"] as const;
 }
 
+export function leadQueryKey(engagementId: string, leadId: string) {
+  return ["engagements", engagementId, "leads", leadId] as const;
+}
+
 export function leadAttemptsQueryKey(engagementId: string, leadId: string) {
   return ["engagements", engagementId, "leads", leadId, "attempts"] as const;
 }
@@ -261,6 +274,27 @@ export async function fetchLeads(
     () => new LeadsQueryError(),
     signal,
   );
+}
+
+export async function fetchLead(
+  engagementId: string,
+  leadId: string,
+  signal?: AbortSignal,
+): Promise<Lead> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `/api/v1/engagements/${engagementId}/leads/${leadId}`,
+      signal ? { signal } : undefined,
+    );
+  } catch {
+    throw new LeadsQueryError();
+  }
+  if (response.status === 404) throw new LeadNotFoundError();
+  if (response.status !== 200) throw new LeadsQueryError();
+  const result = LeadResponseSchema.safeParse(await readJson(response));
+  if (!result.success) throw new LeadsQueryError();
+  return result.data;
 }
 
 export interface CreateLeadInput {
@@ -373,7 +407,7 @@ export async function fetchLeadAttempts(
   }
   if (response.status !== 200) throw new LeadsQueryError();
   const result = LeadAttemptListResponseSchema.safeParse(await readJson(response));
-  if (!result.success) throw new LeadsQueryError();
+  if (!result.success || result.data.some((attempt) => attempt.engagementId !== engagementId || attempt.leadId !== leadId)) throw new LeadsQueryError();
   return result.data;
 }
 
@@ -433,19 +467,37 @@ export function useLeadsQuery(engagementId: string) {
   });
 }
 
-export function useLeadAttemptsQuery(engagementId: string, leadId: string | null) {
+// The app client never refetches on mount. Views that continue a lead away
+// from the Leads tab pass fresh so they read the saved record again on open.
+const FRESH_ON_MOUNT = { refetchOnMount: "always" } as const;
+
+export function useLeadQuery(engagementId: string, leadId: string) {
+  // Each overlay owns its initial read. Cached records and cache writes are
+  // not proof that this engagement and evidence association were just read.
+  const readId = useId();
+  return useQuery({
+    queryKey: [...leadQueryKey(engagementId, leadId), "read", readId],
+    gcTime: 0,
+    queryFn: ({ signal }) => fetchLead(engagementId, leadId, signal),
+    ...FRESH_ON_MOUNT,
+  });
+}
+
+export function useLeadAttemptsQuery(engagementId: string, leadId: string | null, fresh = false) {
   return useQuery({
     queryKey: leadId === null ? ["engagements", engagementId, "leads", "none"] : leadAttemptsQueryKey(engagementId, leadId),
     queryFn: ({ signal }) =>
       leadId === null ? Promise.resolve([]) : fetchLeadAttempts(engagementId, leadId, signal),
+    ...(fresh ? FRESH_ON_MOUNT : {}),
   });
 }
 
-export function useLeadOutlineQuery(engagementId: string, leadId: string | null) {
+export function useLeadOutlineQuery(engagementId: string, leadId: string | null, fresh = false) {
   return useQuery({
     queryKey: leadId === null ? ["engagements", engagementId, "leads", "none"] : leadOutlineQueryKey(engagementId, leadId),
     queryFn: ({ signal }) =>
       leadId === null ? Promise.resolve("") : fetchLeadOutline(engagementId, leadId, signal),
+    ...(fresh ? FRESH_ON_MOUNT : {}),
   });
 }
 

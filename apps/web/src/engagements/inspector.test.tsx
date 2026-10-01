@@ -32,6 +32,7 @@ import {
   serviceInspectorRecord,
   splitOriginUrl,
   withOriginScheme,
+  type LeadOpenRequest,
 } from "./inspector.js";
 
 const engagementId = "10000000-0000-4000-8000-000000000001";
@@ -1142,7 +1143,7 @@ describe("start a lead source mapping", () => {
     });
   });
 
-  it("lists leads that reference the evidence only when leads are wired", async () => {
+  it("opens leads linked to the evidence by exact id, only when leads are wired", async () => {
     const lead = {
       contractVersion: 1,
       id: "30000000-0000-4000-8000-000000000001",
@@ -1163,18 +1164,48 @@ describe("start a lead source mapping", () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/findings")) return Promise.resolve(response([]));
-      if (url.endsWith("/leads")) return Promise.resolve(response([lead, { ...lead, id: "30000000-0000-4000-8000-000000000002", title: "Other", source: { kind: "http_probe", ref: "artifact-2" } }]));
+      if (url.endsWith("/leads")) {
+        return Promise.resolve(response([
+          lead,
+          { ...lead, id: "30000000-0000-4000-8000-000000000002", title: "Other", source: { kind: "http_probe", ref: "artifact-2" } },
+          { ...lead, id: "30000000-0000-4000-8000-000000000003", disposition: "parked", parkReason: "No creds" },
+        ]));
+      }
       return Promise.resolve(response({ code: "invalid_request" }, 400));
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderInspector(pathInspectorRecord(pathResult, engagementId), { onStartLead: vi.fn() });
-    expect(await screen.findByText("1 linked lead: Admin panel")).toBeTruthy();
+    const record = pathInspectorRecord(pathResult, engagementId);
+    const onOpenLead = vi.fn();
+    renderInspector(record, { onOpenLead, onStartLead: vi.fn() });
+    const list = await screen.findByRole("list", { name: "Leads linked to this evidence" });
+    const buttons = within(list).getAllByRole("button");
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Admin panel 00000001, open",
+      "Admin panel 00000003, parked",
+    ]);
+    fireEvent.click(buttons[1]!);
+    expect(onOpenLead).toHaveBeenCalledTimes(1);
+    const request = onOpenLead.mock.calls[0]![0] as LeadOpenRequest;
+    expect(request).toMatchObject({
+      leadId: "30000000-0000-4000-8000-000000000003",
+      artifactId: "artifact-3",
+      sourceKey: record.lead.sourceKey,
+      fallbackKey: record.lead.fallbackKey,
+      sourceText: record.title,
+    });
+    expect(request.returnContext?.trigger).toBe(buttons[1]);
+    cleanup();
+
+    renderInspector(record, { onStartLead: vi.fn() });
+    const plain = await screen.findByRole("list", { name: "Leads linked to this evidence" });
+    expect(within(plain).queryByRole("button")).toBeNull();
+    expect(within(plain).getAllByRole("listitem")).toHaveLength(2);
     cleanup();
 
     fetchMock.mockClear();
     renderInspector(pathInspectorRecord(pathResult, engagementId));
     expect(await screen.findByText("No findings reference this evidence yet.")).toBeTruthy();
-    expect(screen.queryByText(/linked lead/)).toBeNull();
+    expect(screen.queryByText(/Leads linked/)).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/leads"))).toBe(false);
   });
 });

@@ -691,6 +691,20 @@ function webLeadContext(
   };
 }
 
+// What a linked lead button carries into the lead overlay: the exact lead and
+// evidence artifact ids, never a title or a target. sourceKey and fallbackKey
+// name the inspected row so focus can return to it if the button is gone.
+export interface LeadOpenRequest {
+  readonly leadId: string;
+  // Display-only suffix from the opener, including any collision extension.
+  readonly idSuffix?: string;
+  readonly artifactId: string;
+  readonly sourceKey: string;
+  readonly fallbackKey?: string;
+  readonly sourceText: string;
+  readonly returnContext?: SurfaceReturnContext;
+}
+
 export function leadFieldFits(value: string | null): value is string {
   return value !== null && LeadTargetSchema.safeParse(value).success;
 }
@@ -729,7 +743,9 @@ export interface SurfaceInspectorProps {
   readonly onOpenNotes?: (() => void) | undefined;
   readonly onSearch?: ((trigger: HTMLButtonElement) => void) | undefined;
   readonly searchOpen?: boolean | undefined;
+  readonly leadOpen?: boolean | undefined;
   readonly onProbeOrigin?: ((origin: string, context?: SurfaceReturnContext) => void) | undefined;
+  readonly onOpenLead?: ((request: LeadOpenRequest) => void) | undefined;
   readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
   readonly record: InspectorRecord | undefined;
   readonly selectionKey: string;
@@ -754,9 +770,11 @@ export function SurfaceInspector({
   onAskAbout,
   onClose,
   onDiscoverOrigin,
+  onOpenLead,
   onOpenNotes,
   onSearch,
   searchOpen = false,
+  leadOpen = false,
   onProbeOrigin,
   onStartLead,
   record,
@@ -771,7 +789,7 @@ export function SurfaceInspector({
   }, [selectionKey]);
 
   const onAsideKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
-    if (searchOpen) return;
+    if (searchOpen || leadOpen) return;
     if (event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
@@ -789,14 +807,14 @@ export function SurfaceInspector({
       <button
         type="button"
         aria-label="Close inspector"
-        inert={searchOpen ? true : undefined}
+        inert={searchOpen || leadOpen ? true : undefined}
         className="fixed inset-0 z-40 bg-black/62 lg:hidden"
         onClick={onClose}
       />
       <aside
         ref={asideRef}
         aria-label="Selection inspector"
-        inert={searchOpen ? true : undefined}
+        inert={searchOpen || leadOpen ? true : undefined}
         tabIndex={-1}
         onKeyDown={onAsideKeyDown}
         className="fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto border-l border-border bg-background outline-none lg:static lg:z-auto lg:w-80 lg:max-w-none lg:shrink-0 lg:overflow-visible lg:border-l-0"
@@ -863,6 +881,7 @@ export function SurfaceInspector({
             onAskAbout={onAskAbout}
             onCopy={copyValue}
             onDiscoverOrigin={onDiscoverOrigin}
+            onOpenLead={onOpenLead}
             onOpenNotes={onOpenNotes}
             onProbeOrigin={onProbeOrigin}
             onStartLead={onStartLead}
@@ -881,6 +900,7 @@ function InspectorRecordBody({
   onAskAbout,
   onCopy,
   onDiscoverOrigin,
+  onOpenLead,
   onOpenNotes,
   onProbeOrigin,
   onStartLead,
@@ -891,6 +911,7 @@ function InspectorRecordBody({
   onAskAbout: ((target: string) => void) | undefined;
   onCopy: (label: string, value: string) => void;
   onDiscoverOrigin: ((origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void) | undefined;
+  onOpenLead: ((request: LeadOpenRequest) => void) | undefined;
   onOpenNotes: (() => void) | undefined;
   onProbeOrigin: ((origin: string, context?: SurfaceReturnContext) => void) | undefined;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
@@ -1010,8 +1031,8 @@ function InspectorRecordBody({
               : `${String(linkedFindings.length)} linked finding${linkedFindings.length === 1 ? "" : "s"}: ${linkedFindings.map((finding) => finding.title).join(", ")}`}
           </p>
         ) : null}
-        {onStartLead !== undefined ? (
-          <LinkedLeadsLine artifactId={record.artifactId} engagementId={engagementId} />
+        {onStartLead !== undefined || onOpenLead !== undefined ? (
+          <LinkedLeads engagementId={engagementId} onOpenLead={onOpenLead} record={record} />
         ) : null}
         <details className="group mt-2 rounded-md border border-border">
           <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between px-2.5 text-[11px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -1059,16 +1080,89 @@ function InspectorRecordBody({
   );
 }
 
-function LinkedLeadsLine({ artifactId, engagementId }: { artifactId: string; engagementId: string }) {
+// Leads whose opaque source reference is this record's evidence artifact.
+// One artifact can hold many services or paths, so the copy names the
+// evidence, never the selected row. Each button opens its lead by exact id;
+// a short id tells apart leads that share a title.
+function LinkedLeads({
+  engagementId,
+  onOpenLead,
+  record,
+}: {
+  engagementId: string;
+  onOpenLead: ((request: LeadOpenRequest) => void) | undefined;
+  record: InspectorRecord;
+}) {
   const leads = useLeadsQuery(engagementId);
-  if (leads.data === undefined) return null;
-  const linked = leads.data.filter((lead) => lead.source.ref === artifactId);
+  const labelId = useId();
+  if (leads.data === undefined) {
+    if (!leads.isError) return null;
+    return (
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-[12px] text-muted-foreground">
+        <span>Linked leads could not be loaded.</span>
+        <Button type="button" variant="quiet" className="px-2 text-[12px]" onClick={() => void leads.refetch()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  const linked = leads.data.filter((lead) => lead.engagementId === engagementId && lead.source.ref === record.artifactId);
+  if (linked.length === 0) {
+    return <p className="mt-1 mb-0 text-[12px] text-muted-foreground">No leads reference this evidence yet.</p>;
+  }
+  const titleCounts = new Map<string, number>();
+  for (const lead of linked) titleCounts.set(lead.title, (titleCounts.get(lead.title) ?? 0) + 1);
   return (
-    <p className="mt-1 mb-0 text-[12px] text-muted-foreground">
-      {linked.length === 0
-        ? "No leads reference this evidence yet."
-        : `${String(linked.length)} linked lead${linked.length === 1 ? "" : "s"}: ${linked.map((lead) => lead.title).join(", ")}`}
-    </p>
+    <div className="mt-1">
+      <p id={labelId} className="m-0 text-[12px] text-muted-foreground">
+        Leads linked to this evidence
+      </p>
+      <ul aria-labelledby={labelId} className="m-0 mt-1 list-none p-0">
+        {linked.map((lead) => {
+          let suffixLength = 8;
+          while (suffixLength < lead.id.length && linked.some((other) =>
+            other.title === lead.title && other.id !== lead.id && other.id.slice(-suffixLength) === lead.id.slice(-suffixLength))) suffixLength += 1;
+          const shortId = (titleCounts.get(lead.title) ?? 0) > 1 ? lead.id.slice(-suffixLength) : undefined;
+          const label = (
+            <>
+              <span className="min-w-0 truncate">
+                {lead.title}
+                {shortId === undefined ? null : <span className="font-mono text-muted-foreground"> {shortId}</span>}
+              </span>
+              <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{lead.disposition}</span>
+            </>
+          );
+          return (
+            <li key={lead.id}>
+              {onOpenLead === undefined ? (
+                <span className="flex min-h-8 items-center justify-between gap-2 text-[12px]">{label}</span>
+              ) : (
+                <Button
+                  type="button"
+                  variant="quiet"
+                  aria-label={`${lead.title}${shortId === undefined ? "" : ` ${shortId}`}, ${lead.disposition}`}
+                  title={lead.title}
+                  className="w-full justify-between px-2 text-left text-[12px] font-medium text-foreground"
+                  onClick={(event) =>
+                    onOpenLead({
+                      leadId: lead.id,
+                      idSuffix: lead.id.slice(-suffixLength),
+                      artifactId: record.artifactId,
+                      sourceKey: record.lead.sourceKey,
+                      ...(record.lead.fallbackKey === undefined ? {} : { fallbackKey: record.lead.fallbackKey }),
+                      sourceText: record.title,
+                      returnContext: captureSurfaceReturn(event.currentTarget),
+                    })
+                  }
+                >
+                  {label}
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

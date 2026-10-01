@@ -37,6 +37,7 @@ import {
   type ExtraRowActions,
   type InspectorRecord,
   type LauncherRequest,
+  type LeadOpenRequest,
   type LeadStartContext,
   type OriginScheme,
 } from "./inspector.js";
@@ -97,9 +98,11 @@ export interface EngagementServicesSectionProps {
   readonly engagementId: string;
   readonly extraRowActions?: ExtraRowActions | undefined;
   readonly onAskAbout?: ((target: string) => void) | undefined;
+  readonly onOpenLead?: ((request: LeadOpenRequest) => void) | undefined;
   readonly onOpenNotes?: (() => void) | undefined;
   readonly onSearch?: ((trigger: HTMLButtonElement) => void) | undefined;
   readonly searchOpen?: boolean | undefined;
+  readonly leadOpen?: boolean | undefined;
   readonly onSelectKey?: SurfaceSelectionHandler | undefined;
   readonly onSelectTarget?: ((target: string) => void) | undefined;
   readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
@@ -114,9 +117,11 @@ export function EngagementServicesSection({
   engagementId,
   extraRowActions,
   onAskAbout,
+  onOpenLead,
   onOpenNotes,
   onSearch,
   searchOpen,
+  leadOpen,
   onSelectKey,
   onSelectTarget,
   onStartLead,
@@ -290,9 +295,16 @@ export function EngagementServicesSection({
             context,
           )
         }
+        onOpenLead={onOpenLead === undefined ? undefined : (request) => onOpenLead({
+          ...request,
+          returnContext: overlayReturnContext(request.sourceKey, request.returnContext ?? captureSurfaceReturn(
+            document.activeElement instanceof HTMLElement ? document.activeElement : null,
+          )),
+        })}
         onOpenNotes={onOpenNotes}
         onSearch={onSearch}
         searchOpen={searchOpen}
+        leadOpen={leadOpen}
         onProbeOrigin={(origin, context) =>
           openLauncher({ kind: "probe", origin, sourceLabel: selection.key }, selection.key, context)
         }
@@ -1394,9 +1406,11 @@ function SurfaceInspectorLoader({
   onAskAbout,
   onClose,
   onDiscoverOrigin,
+  onOpenLead,
   onOpenNotes,
   onSearch,
   searchOpen,
+  leadOpen,
   onProbeOrigin,
   onStartLead,
   probesQuery,
@@ -1408,9 +1422,11 @@ function SurfaceInspectorLoader({
   onAskAbout: ((target: string) => void) | undefined;
   onClose: () => void;
   onDiscoverOrigin: (origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void;
+  onOpenLead: ((request: LeadOpenRequest) => void) | undefined;
   onOpenNotes: (() => void) | undefined;
   onSearch: ((trigger: HTMLButtonElement) => void) | undefined;
   searchOpen: boolean | undefined;
+  leadOpen: boolean | undefined;
   onProbeOrigin: (origin: string, context?: SurfaceReturnContext) => void;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
   probesQuery: { data: readonly HttpProbeProjected[] | undefined; isFetching: boolean; isError?: boolean; refetch?: () => void };
@@ -1495,9 +1511,11 @@ function SurfaceInspectorLoader({
       onAskAbout={onAskAbout}
       onClose={onClose}
       onDiscoverOrigin={onDiscoverOrigin}
+      onOpenLead={onOpenLead}
       onOpenNotes={onOpenNotes}
       onSearch={onSearch}
       searchOpen={searchOpen}
+      leadOpen={leadOpen}
       onProbeOrigin={onProbeOrigin}
       onRetry={onRetry}
       onStartLead={onStartLead}
