@@ -7,11 +7,10 @@ import { EngagementDeadlineSection } from "./deadline.js";
 import { formatEngagementTimestamp } from "./format.js";
 import { engagementResumeQueryKey, EngagementNextStepMutationError, fetchEngagementResume, useEngagementResumeQuery, useSaveNextStepMutation } from "./resume-query.js";
 
-// Resume band at the top of Surface: the saved next step and the deadline on
-// the left, the factual change list on the right. It is flat and scrolls
-// away with the page so it never competes with the inspector or the console.
-// Every state keeps the same two rows and list header, so loading, failure,
-// and archived views do not shift the results below.
+// Resume band at the top of Surface: the saved next step, deadline and optional
+// remembered lead row on the left, and factual changes on the right. It scrolls
+// with the page. Next-step loading, failure and archived views keep their row
+// and list header; the remembered lead row appears only when a pointer exists.
 
 const RECENT_LIMIT = 8;
 // Shared with the deadline row so both labels sit in one column.
@@ -134,10 +133,13 @@ export function ResumeChangeList({
 export function EngagementResumeView({
   engagementId,
   archived,
+  lead,
   onOpenRun,
 }: {
   engagementId: string;
   archived: boolean;
+  // Row for the remembered lead, after the deadline. Absent when none is kept.
+  lead?: ReactNode;
   onOpenRun?: ((runId: string) => void) | undefined;
 }) {
   const resume = useEngagementResumeQuery(engagementId);
@@ -157,7 +159,9 @@ export function EngagementResumeView({
   return (
     <section
       aria-label="Resume"
-      className="grid min-w-0 gap-x-8 gap-y-3 border-b border-border pb-4 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
+      tabIndex={-1}
+      data-resume-band=""
+      className="grid min-w-0 outline-none gap-x-8 gap-y-3 border-b border-border pb-4 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]"
     >
       <div className="grid min-w-0 content-start gap-2">
         {data !== undefined ? (
@@ -183,6 +187,7 @@ export function EngagementResumeView({
           </div>
         )}
         <EngagementDeadlineSection archived={archived} engagementId={engagementId} />
+        {lead}
         {archived ? (
           <p className="m-0 text-[12px] leading-5 text-muted-foreground">Archived, read only.</p>
         ) : null}

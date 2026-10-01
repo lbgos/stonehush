@@ -1,4 +1,4 @@
-import type { Engagement } from "@stonehush/contracts";
+import type { Engagement, Lead } from "@stonehush/contracts";
 import { ADVISOR_FINDING_IDS_MAX } from "@stonehush/contracts";
 import {
   Button,
@@ -23,7 +23,7 @@ import { EngagementFindingsSection } from "./findings.js";
 import { EngagementFfufSection } from "./ffuf-surface.js";
 import { EngagementGitleaksSection } from "./gitleaks.js";
 import type { LeadOpenRequest, LeadStartContext, SurfaceSelectionHandler, SurfaceSelectionReturn } from "./inspector.js";
-import { LeadOverlay } from "./lead-overlay.js";
+import { LeadOverlay, overlayLeadId, type LeadOverlayOrigin } from "./lead-overlay.js";
 import { LeadQuickCreate } from "./lead-quick-create.js";
 import { EngagementVhostSection } from "./vhost-surface.js";
 import {
@@ -34,6 +34,7 @@ import {
 import { EngagementAccessSection } from "./access.js";
 import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
+import { ResumeLeadRow, useRememberedLead } from "./resume-lead.js";
 import { EngagementResumeView } from "./resume-view.js";
 import type { SearchDestination } from "./search-destination.js";
 import { EngagementSearchDialog, type SearchSelection } from "./search-view.js";
@@ -385,11 +386,12 @@ function EngagementDetail({
   const findingDestination =
     destination?.kind === "finding" && destination.engagementId === displayed.id ? destination : undefined;
 
-  // A lead opened from the inspector belongs to that engagement and Surface
-  // selection. A route change away from either closes it; the overlay holds
-  // such changes itself while it has unsaved or pending work.
+  // A lead opened from the inspector or the Resume band belongs to that
+  // engagement and Surface selection. A route change away from either closes
+  // it; the overlay holds such changes itself while it has unsaved or
+  // pending work.
   const [leadOpen, setLeadOpen] = useState<
-    { engagementId: string; sel: string | undefined; request: LeadOpenRequest } | null
+    { engagementId: string; sel: string | undefined; origin: LeadOverlayOrigin } | null
   >(null);
   const leadOpenVisible =
     leadOpen !== null &&
@@ -400,6 +402,22 @@ function EngagementDetail({
     if (!leadOpenVisible) setLeadOpen(null);
   }, [leadOpenVisible]);
   const closeLeadOpen = useCallback(() => setLeadOpen(null), []);
+  const openSurfaceLead = (request: LeadOpenRequest) =>
+    setLeadOpen({ engagementId: displayed.id, sel: selectedItemKey, origin: { kind: "surface", request } });
+
+  // Every validated overlay read, from either opener, becomes this browser's
+  // Resume pointer for the lead's engagement.
+  const rememberedLead = useRememberedLead(displayed.id);
+  const { remember: rememberLeadId, forget: forgetLeadId } = rememberedLead;
+  const rememberLead = useCallback((lead: Lead) => rememberLeadId(lead.engagementId, lead.id), [rememberLeadId]);
+  const openResumeLead = (leadId: string, trigger: HTMLElement) => {
+    const engagementId = displayed.id;
+    setLeadOpen({
+      engagementId,
+      sel: selectedItemKey,
+      origin: { kind: "resume", leadId, trigger, onForget: () => forgetLeadId(engagementId, leadId) },
+    });
+  };
 
   const toggleAdvisorFinding = (findingId: string) => {
     if (archived) return;
@@ -597,6 +615,16 @@ function EngagementDetail({
             key={displayed.id}
             archived={archived}
             engagementId={displayed.id}
+            lead={
+              rememberedLead.leadId === null ? undefined : (
+                <ResumeLeadRow
+                  engagementId={displayed.id}
+                  leadId={rememberedLead.leadId}
+                  onOpen={openResumeLead}
+                  onForget={(leadId) => forgetLeadId(displayed.id, leadId)}
+                />
+              )
+            }
             onOpenRun={openRunFromTray}
           />
 
@@ -606,7 +634,7 @@ function EngagementDetail({
             <EngagementServicesSection
               archived={archived}
               engagementId={displayed.id}
-              onOpenLead={(request) => setLeadOpen({ engagementId: displayed.id, sel: selectedItemKey, request })}
+              onOpenLead={openSurfaceLead}
               onOpenNotes={openNotesFromSurface}
               onSearch={openSearch}
               searchOpen={searchOpen}
@@ -760,11 +788,12 @@ function EngagementDetail({
 
       {leadOpenVisible ? (
         <LeadOverlay
-          key={`${leadOpen.engagementId}:${leadOpen.request.leadId}:${leadOpen.request.sourceKey}`}
+          key={`${leadOpen.engagementId}:${overlayLeadId(leadOpen.origin)}:${leadOpen.origin.kind === "surface" ? leadOpen.origin.request.sourceKey : "resume"}`}
           archived={archived}
           engagementId={leadOpen.engagementId}
-          request={leadOpen.request}
+          origin={leadOpen.origin}
           onClose={closeLeadOpen}
+          onValidRead={rememberLead}
         />
       ) : null}
 

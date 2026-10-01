@@ -1,11 +1,12 @@
+import { LeadSchema } from "@stonehush/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /**
- * STONE-6 reload-safe working state. Per-engagement UI state (selected
- * target/run, inspector selection, launcher inputs, drafts, filters,
- * starred ids) persists to localStorage under a versioned key so closing
- * the browser with work active restores target, draft, next step affordance,
- * and run state on return. Saved scope itself is never written here.
+ * Per-engagement client state in localStorage under a versioned key. Writes
+ * are best-effort. The workspace reads and writes only `lastLeadId`, the
+ * Surface resume pointer kept by `resume-lead.tsx`. The other fields are
+ * parsed and written back unchanged, but no view restores them yet. Saved
+ * scope is never written here.
  */
 
 export const WORKSPACE_STATE_VERSION = 1 as const;
@@ -21,6 +22,9 @@ export interface EngagementWorkspaceState {
   readonly filters: Record<string, string>;
   readonly starredIds: readonly string[];
   readonly lastWordlistName: string | null;
+  // Exact id of the last lead opened and validated in this engagement. Never
+  // a title, source, or draft. Missing in payloads written before it existed.
+  readonly lastLeadId: string | null;
   readonly updatedAt: string;
 }
 
@@ -35,6 +39,7 @@ export function emptyWorkspaceState(now: () => string = () => new Date().toISOSt
     filters: {},
     starredIds: [],
     lastWordlistName: null,
+    lastLeadId: null,
     updatedAt: now(),
   };
 }
@@ -54,6 +59,13 @@ function asStringRecord(value: unknown): Record<string, string> {
     if (typeof entry === "string") out[key] = entry;
   }
   return out;
+}
+
+// A stored id becomes part of a request path, so anything but a lead id is
+// dropped rather than sent.
+function parseLeadId(value: unknown): string | null {
+  const parsed = LeadSchema.shape.id.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 /** Parse stored state; unknown or version-mismatched payloads reset clean. */
@@ -79,10 +91,12 @@ export function parseWorkspaceState(raw: string | null): EngagementWorkspaceStat
       ? (parsed["starredIds"] as unknown[]).filter((entry): entry is string => typeof entry === "string")
       : [],
     lastWordlistName: typeof parsed["lastWordlistName"] === "string" ? (parsed["lastWordlistName"] as string) : null,
+    lastLeadId: parseLeadId(parsed["lastLeadId"]),
     updatedAt: typeof parsed["updatedAt"] === "string" ? (parsed["updatedAt"] as string) : fallback.updatedAt,
   };
 }
 
+// `save` throws when the write fails; saveWorkspaceState turns that into false.
 export interface WorkspaceStateStore {
   readonly load: (key: string) => string | null;
   readonly save: (key: string, value: string) => void;
@@ -98,11 +112,7 @@ export function browserWorkspaceStateStore(): WorkspaceStateStore {
       }
     },
     save: (key, value) => {
-      try {
-        window.localStorage.setItem(key, value);
-      } catch {
-        // Persistence is best-effort; a full store never blocks the UI.
-      }
+      window.localStorage.setItem(key, value);
     },
   };
 }
@@ -120,15 +130,17 @@ export function loadWorkspaceState(
   return parseWorkspaceState(raw);
 }
 
+/** Best-effort and never throws. False when the store rejected the write. */
 export function saveWorkspaceState(
   store: WorkspaceStateStore,
   engagementId: string,
   state: EngagementWorkspaceState,
-): void {
+): boolean {
   try {
     store.save(workspaceStateKey(engagementId), JSON.stringify(state));
+    return true;
   } catch {
-    // Best-effort, never blocking.
+    return false;
   }
 }
 

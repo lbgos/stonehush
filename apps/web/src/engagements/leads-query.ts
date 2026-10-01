@@ -483,6 +483,29 @@ export function useLeadQuery(engagementId: string, leadId: string) {
   });
 }
 
+// What one exact single-lead read can show. A record for another id or
+// engagement is a failed read, never a substitute. `stale` marks a failed
+// refresh over a record this read already returned.
+export type ExactLeadRead =
+  | { readonly state: "loading" }
+  | { readonly state: "missing" }
+  | { readonly state: "failed" }
+  | { readonly state: "ready"; readonly lead: Lead; readonly stale: boolean };
+
+export function exactLeadRead(
+  query: ReturnType<typeof useLeadQuery>,
+  engagementId: string,
+  leadId: string,
+): ExactLeadRead {
+  if (query.isError && query.error instanceof LeadNotFoundError) return { state: "missing" };
+  const lead = query.data;
+  if (lead !== undefined) {
+    if (lead.id !== leadId || lead.engagementId !== engagementId) return { state: "failed" };
+    return { state: "ready", lead, stale: query.isError };
+  }
+  return query.isFetching || !query.isError ? { state: "loading" } : { state: "failed" };
+}
+
 export function useLeadAttemptsQuery(engagementId: string, leadId: string | null, fresh = false) {
   return useQuery({
     queryKey: leadId === null ? ["engagements", engagementId, "leads", "none"] : leadAttemptsQueryKey(engagementId, leadId),
