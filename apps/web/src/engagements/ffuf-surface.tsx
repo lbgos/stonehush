@@ -19,7 +19,7 @@ import { latestActionSnapshot } from "./action-targets.js";
 import { engagementMutationMessage } from "./errors.js";
 import { type FfufDiscoveryInput, parseFfufPositiveInt, useLaunchFfufDiscoveryMutation, validateFfufWordlistPath } from "./ffuf-mutations.js";
 import { formatEngagementTimestamp } from "./format.js";
-import { isLauncherStoppable, resolvePathSelectionKey, pathInspectorRecord, pathSelectionKey, PausedRunWarning, selectDisplayAction, type ExtraRowActions } from "./inspector.js";
+import { isLauncherStoppable, resolvePathSelectionKey, pathInspectorRecord, pathSelectionKey, PausedRunWarning, selectDisplayAction, type ExtraRowActions, captureSurfaceReturn, type SurfaceSelectionHandler } from "./inspector.js";
 import {
   engagementFfufResultsQueryKey,
   useEngagementDetailQuery,
@@ -56,14 +56,14 @@ export function EngagementFfufSection({
   archived: boolean;
   engagementId: string;
   extraRowActions?: ExtraRowActions | undefined;
-  onSelectKey?: ((key: string) => void) | undefined;
+  onSelectKey?: SurfaceSelectionHandler | undefined;
   selectedKey?: string | undefined;
 }) {
   const detail = useEngagementDetailQuery(engagementId);
   const hasDetail = detail.data !== undefined;
 
   return (
-    <section aria-label="ffuf discovery" className="overflow-hidden rounded-[10px] border border-border bg-card">
+    <section data-surface-region={JSON.stringify(["ffuf", engagementId])} aria-label="ffuf discovery" className="overflow-hidden rounded-[10px] border border-border bg-card">
       <div className="flex min-h-10 items-center justify-between border-b border-border px-3">
         <h2 className="m-0 text-[13px] font-semibold">ffuf discovery</h2>
         <span className="hidden text-[11px] text-muted-foreground sm:inline">T2 content discovery</span>
@@ -415,7 +415,7 @@ function FfufResultsList({
 }: {
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
-  onSelectKey: ((key: string) => void) | undefined;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   selectedKey: string | undefined;
 }) {
   const resultsQuery = useEngagementFfufResultsQuery(engagementId);
@@ -483,7 +483,7 @@ function FfufResultRow({
 }: {
   engagementId: string;
   extraRowActions: ExtraRowActions | undefined;
-  onSelectKey: ((key: string) => void) | undefined;
+  onSelectKey: SurfaceSelectionHandler | undefined;
   result: FfufProjected;
   selected: boolean;
 }) {
@@ -507,7 +507,7 @@ function FfufResultRow({
         <button
           type="button"
           aria-current={selected ? "true" : undefined}
-          onClick={() => onSelectKey(key)}
+          onClick={(event) => onSelectKey(key, captureSurfaceReturn(event.currentTarget))}
           className="block w-full truncate text-left font-mono text-[13px] font-semibold tracking-[-0.02em] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
           title={result.url}
         >
@@ -535,7 +535,7 @@ function FfufResultRow({
         {onSelectKey === undefined ? null : (
           <button
             type="button"
-            onClick={() => onSelectKey(key)}
+            onClick={(event) => onSelectKey(key, captureSurfaceReturn(event.currentTarget))}
             className="inline-flex min-h-11 items-center text-[12px] font-semibold text-primary outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
           >
             Inspect

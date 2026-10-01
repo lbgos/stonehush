@@ -159,7 +159,7 @@ export function PathGroups({
   };
 
   return (
-    <section aria-label={`Path results for ${label}`} className="border-t border-border">
+    <section data-surface-region={JSON.stringify(["paths", engagementId, label])} aria-label={`Path results for ${label}`} className="border-t border-border">
       <div
         ref={countRef}
         tabIndex={-1}
