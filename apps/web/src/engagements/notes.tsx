@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { engagementNotesMutationMessage, isNotesRevisionConflict } from "./errors.js";
 import { useNotesDraftGuard } from "./notes-guard.js";
 import { fetchEngagementNotes, useEngagementNotesEditor } from "./notes-query.js";
+import { revealNoteSelection } from "./notes-reveal.js";
 import { createAttachmentRequest, fetchAttachments } from "./run-output-query.js";
 import {
   passageLine,
@@ -143,13 +144,12 @@ export function EngagementNotesSection({
     // Consume once even when typing or saving prevents editor focus.
     appliedNonce.current = arrival.nonce;
     if (!arrival.select || value !== arrival.saved || protectedRef.current) return;
-    const { start, end, line } = arrival.passage;
-    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || 20;
-    element.scrollTop = Math.max(0, (line - 1) * lineHeight - element.clientHeight / 3);
+    const { start, end } = arrival.passage;
     if (typeof element.scrollIntoView === "function") element.scrollIntoView({ block: "center" });
     if (element.disabled) return;
     element.focus({ preventScroll: true });
     element.setSelectionRange(start, end);
+    revealNoteSelection(element);
   }, [arrival, value, destinationNonce]);
 
   const insertIntoDraft = (snippet: string) => {

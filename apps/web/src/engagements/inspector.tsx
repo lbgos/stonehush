@@ -727,6 +727,8 @@ export interface SurfaceInspectorProps {
   readonly onClose: () => void;
   readonly onDiscoverOrigin?: ((origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void) | undefined;
   readonly onOpenNotes?: (() => void) | undefined;
+  readonly onSearch?: ((trigger: HTMLButtonElement) => void) | undefined;
+  readonly searchOpen?: boolean | undefined;
   readonly onProbeOrigin?: ((origin: string, context?: SurfaceReturnContext) => void) | undefined;
   readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
   readonly record: InspectorRecord | undefined;
@@ -753,6 +755,8 @@ export function SurfaceInspector({
   onClose,
   onDiscoverOrigin,
   onOpenNotes,
+  onSearch,
+  searchOpen = false,
   onProbeOrigin,
   onStartLead,
   record,
@@ -767,6 +771,7 @@ export function SurfaceInspector({
   }, [selectionKey]);
 
   const onAsideKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (searchOpen) return;
     if (event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();
@@ -784,12 +789,14 @@ export function SurfaceInspector({
       <button
         type="button"
         aria-label="Close inspector"
+        inert={searchOpen ? true : undefined}
         className="fixed inset-0 z-40 bg-black/62 lg:hidden"
         onClick={onClose}
       />
       <aside
         ref={asideRef}
         aria-label="Selection inspector"
+        inert={searchOpen ? true : undefined}
         tabIndex={-1}
         onKeyDown={onAsideKeyDown}
         className="fixed inset-y-0 right-0 z-50 w-full max-w-md overflow-y-auto border-l border-border bg-background outline-none lg:static lg:z-auto lg:w-80 lg:max-w-none lg:shrink-0 lg:overflow-visible lg:border-l-0"
@@ -797,9 +804,24 @@ export function SurfaceInspector({
       <div className="lg:sticky lg:top-4 lg:overflow-hidden lg:rounded-[10px] lg:border lg:border-border lg:bg-card">
         <div className="flex min-h-10 items-center justify-between gap-2 border-b border-border px-3">
           <h2 className="m-0 truncate text-[13px] font-semibold">Inspector</h2>
-          <Button type="button" variant="quiet" className="h-7 px-2 text-[12px]" onClick={onClose}>
-            Close
-          </Button>
+          <div className="flex items-center gap-1">
+            {onSearch !== undefined ? (
+              <Button
+                type="button"
+                variant="quiet"
+                className="min-h-11 px-2 text-[12px]"
+                aria-label="Search notes and findings"
+                aria-haspopup="dialog"
+                aria-expanded={searchOpen}
+                onClick={(event) => onSearch(event.currentTarget)}
+              >
+                Search
+              </Button>
+            ) : null}
+            <Button type="button" variant="quiet" className="h-7 px-2 text-[12px]" onClick={onClose}>
+              Close
+            </Button>
+          </div>
         </div>
         {error !== undefined ? (
           <div className="px-3 py-3" role="alert">

@@ -98,6 +98,8 @@ export interface EngagementServicesSectionProps {
   readonly extraRowActions?: ExtraRowActions | undefined;
   readonly onAskAbout?: ((target: string) => void) | undefined;
   readonly onOpenNotes?: (() => void) | undefined;
+  readonly onSearch?: ((trigger: HTMLButtonElement) => void) | undefined;
+  readonly searchOpen?: boolean | undefined;
   readonly onSelectKey?: SurfaceSelectionHandler | undefined;
   readonly onSelectTarget?: ((target: string) => void) | undefined;
   readonly onStartLead?: ((context: LeadStartContext) => void) | undefined;
@@ -113,6 +115,8 @@ export function EngagementServicesSection({
   extraRowActions,
   onAskAbout,
   onOpenNotes,
+  onSearch,
+  searchOpen,
   onSelectKey,
   onSelectTarget,
   onStartLead,
@@ -287,6 +291,8 @@ export function EngagementServicesSection({
           )
         }
         onOpenNotes={onOpenNotes}
+        onSearch={onSearch}
+        searchOpen={searchOpen}
         onProbeOrigin={(origin, context) =>
           openLauncher({ kind: "probe", origin, sourceLabel: selection.key }, selection.key, context)
         }
@@ -1389,6 +1395,8 @@ function SurfaceInspectorLoader({
   onClose,
   onDiscoverOrigin,
   onOpenNotes,
+  onSearch,
+  searchOpen,
   onProbeOrigin,
   onStartLead,
   probesQuery,
@@ -1401,6 +1409,8 @@ function SurfaceInspectorLoader({
   onClose: () => void;
   onDiscoverOrigin: (origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void;
   onOpenNotes: (() => void) | undefined;
+  onSearch: ((trigger: HTMLButtonElement) => void) | undefined;
+  searchOpen: boolean | undefined;
   onProbeOrigin: (origin: string, context?: SurfaceReturnContext) => void;
   onStartLead: ((context: LeadStartContext) => void) | undefined;
   probesQuery: { data: readonly HttpProbeProjected[] | undefined; isFetching: boolean; isError?: boolean; refetch?: () => void };
@@ -1486,6 +1496,8 @@ function SurfaceInspectorLoader({
       onClose={onClose}
       onDiscoverOrigin={onDiscoverOrigin}
       onOpenNotes={onOpenNotes}
+      onSearch={onSearch}
+      searchOpen={searchOpen}
       onProbeOrigin={onProbeOrigin}
       onRetry={onRetry}
       onStartLead={onStartLead}

@@ -308,11 +308,15 @@ function EngagementDetail({
   // one-shot destination for Notes or Findings. All of it belongs to one
   // engagement and resets on a switch.
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
+  const searchReturnRef = useRef<HTMLElement | null>(null);
+  const searchFocusEpoch = useRef(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [destination, setDestination] = useState<SearchDestination | null>(null);
   const destinationNonce = useRef(0);
   useEffect(() => {
+    searchReturnRef.current = null;
+    searchFocusEpoch.current += 1;
     setSearchOpen(false);
     setSearchQuery("");
     setDestination(null);
@@ -326,11 +330,25 @@ function EngagementDetail({
   }, [activeTab]);
 
   const closeSearch = () => {
+    const trigger = searchReturnRef.current ?? searchTriggerRef.current;
+    const epoch = ++searchFocusEpoch.current;
     setDestination(null);
     setSearchOpen(false);
-    requestAnimationFrame(() => searchTriggerRef.current?.focus({ preventScroll: true }));
+    requestAnimationFrame(() => {
+      if (epoch !== searchFocusEpoch.current) return;
+      const available = trigger?.isConnected ? trigger : searchTriggerRef.current;
+      available?.focus({ preventScroll: true });
+    });
+  };
+  const openSearch = (trigger: HTMLElement) => {
+    searchFocusEpoch.current += 1;
+    searchReturnRef.current = trigger;
+    setDestination(null);
+    setSearchOpen(true);
   };
   const reopenSearch = (query: string) => {
+    searchFocusEpoch.current += 1;
+    searchReturnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setDestination(null);
     setSearchQuery(query);
     setSearchOpen(true);
@@ -544,7 +562,7 @@ function EngagementDetail({
           aria-haspopup="dialog"
           aria-expanded={searchOpen}
           className="ml-auto inline-flex min-h-11 items-center rounded-t-[10px] px-3 text-[13px] font-semibold text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          onClick={() => { setDestination(null); setSearchOpen(true); }}
+          onClick={(event) => openSearch(event.currentTarget)}
         >
           Search
         </button>
@@ -572,6 +590,8 @@ function EngagementDetail({
               archived={archived}
               engagementId={displayed.id}
               onOpenNotes={openNotesFromSurface}
+              onSearch={openSearch}
+              searchOpen={searchOpen}
               onSelectKey={selectSurfaceItem}
               onSelectTarget={selectTarget}
               onStartLead={(context) => setLeadStart({ engagementId: displayed.id, context })}

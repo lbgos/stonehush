@@ -90,6 +90,7 @@ function searchPayload(query: string, results: readonly EngagementSearchResult[]
 interface Server {
   notes: (string | Response)[];
   findings: unknown[];
+  paths: unknown[];
   search: (query: string, signal: AbortSignal | undefined) => Promise<Response>;
   searchCalls: string[];
   puts: number;
@@ -126,6 +127,7 @@ function stubServer(server: Server) {
         );
       }
       if (url.endsWith("/findings")) return Promise.resolve(response(server.findings));
+      if (url.endsWith("/ffuf-results")) return Promise.resolve(response(server.paths));
       return Promise.resolve(response([]));
     }),
   );
@@ -135,6 +137,7 @@ function server(overrides: Partial<Server> = {}): Server {
   return {
     notes: [SAVED_NOTES],
     findings,
+    paths: [],
     search: (query) => Promise.resolve(response(searchPayload(query, []))),
     searchCalls: [],
     puts: 0,
@@ -197,6 +200,56 @@ afterEach(() => {
 });
 
 describe("search notes and findings", () => {
+  it("opens by pointer inside the inspector and dismisses only search to its exact trigger", async () => {
+    const path = {
+      source: "ffuf",
+      parserVersion: "ffuf-json-v1",
+      url: "http://192.0.2.10/admin",
+      status: 200,
+      length: 1234,
+      words: 10,
+      lines: 5,
+      redirectlocation: null,
+      fuzz: "admin",
+      runId: "run-1",
+      artifactId: "artifact-9",
+      artifactDigest: `sha256:${"a".repeat(64)}`,
+      observedAt: "2026-08-13T12:00:00.000Z",
+    };
+    stubServer(server({ paths: [path] }));
+    const router = await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=surface&run=run-1&target=192.0.2.10&sel=path:artifact-9:http://192.0.2.10/admin&action=action-1`);
+    const inspector = await screen.findByRole("complementary", { name: "Selection inspector" });
+    await waitFor(() => expect(within(inspector).getByRole("button", { name: "Copy note reference" })).toBeTruthy());
+    const trigger = within(inspector).getByRole("button", { name: "Search notes and findings" });
+    const before = router.state.location.search;
+
+    for (const dismiss of ["Escape", "backdrop", "Close"]) {
+      fireEvent.click(trigger);
+      const dialog = screen.getByRole("dialog", { name: "Search notes and findings" });
+      expect(document.activeElement).toBe(within(dialog).getByRole("searchbox"));
+      expect(inspector.hasAttribute("inert")).toBe(true);
+      const input = within(dialog).getByRole("searchbox");
+      const close = within(dialog).getByRole("button", { name: "Close" });
+      close.focus();
+      fireEvent.keyDown(close, { key: "Tab" });
+      expect(document.activeElement).toBe(input);
+      fireEvent.keyDown(input, { key: "Tab", shiftKey: true });
+      expect(document.activeElement).toBe(close);
+      if (dismiss === "Escape") fireEvent.keyDown(dialog, { key: "Escape" });
+      else if (dismiss === "backdrop") fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+      else fireEvent.click(close);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(inspector.isConnected).toBe(true);
+      expect(inspector.hasAttribute("inert")).toBe(false);
+      expect(document.activeElement).toBe(trigger);
+      expect(router.state.location.search).toEqual(before);
+    }
+
+    fireEvent.keyDown(inspector, { key: "Escape" });
+    await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    expect(router.state.location.search).toEqual({ tab: "surface", run: "run-1", target: "192.0.2.10", action: "action-1" });
+  });
+
   it("opens from every tab and returns focus to Search without changing route context", async () => {
     stubServer(server());
     const router = await renderWorkspace(`/engagements/${ENGAGEMENT_ID}${CONTEXT}`);
@@ -218,6 +271,22 @@ describe("search notes and findings", () => {
       await router.navigate({ to: "/engagements/$engagementId", params: { engagementId: ENGAGEMENT_ID }, search: { tab } });
       expect(await screen.findByRole("button", { name: "Search notes and findings" })).toBeTruthy();
     }
+  });
+
+  it("does not restore a dismissed trigger over a newly reopened search", async () => {
+    stubServer(server());
+    await renderWorkspace(`/engagements/${ENGAGEMENT_ID}?tab=runs`);
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    await openSearch();
+    fireEvent.click(screen.getByRole("button", { name: "Close search" }));
+    const input = await openSearch();
+    frames.forEach((callback) => callback(0));
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByRole("dialog", { name: "Search notes and findings" })).toBeTruthy();
   });
 
   it("bounds the query by code points and keeps it through failure and retry", async () => {
