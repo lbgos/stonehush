@@ -9,7 +9,7 @@ import {
   StaleDataState,
 } from "@stonehush/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   ENGAGEMENT_KIND_LABELS,
@@ -34,6 +34,8 @@ import { EngagementAccessSection } from "./access.js";
 import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
 import { EngagementResumeView } from "./resume-view.js";
+import type { SearchDestination } from "./search-destination.js";
+import { EngagementSearchDialog, type SearchSelection } from "./search-view.js";
 import { RunHistoryPanel } from "./run-history-panel.js";
 import { SavedScopeEditor } from "./scope-editor.js";
 import { EngagementHttpProbesSection } from "./http-probe-surface.js";
@@ -242,6 +244,10 @@ function EngagementSummaryLink({ engagement }: { engagement: Engagement }) {
   );
 }
 
+function destinationTab(destination: SearchDestination): EngagementTabId {
+  return destination.kind === "note" ? "notes" : "findings";
+}
+
 function selectDisplayedEngagement(listed: Engagement, detailed: Engagement | undefined): Engagement {
   if (detailed === undefined) return listed;
   return detailed.revision >= listed.revision ? detailed : listed;
@@ -296,6 +302,69 @@ function EngagementDetail({
   useEffect(() => {
     setLeadStart(null);
   }, [displayed.id]);
+
+  // Search notes and findings. The query survives close so Search again
+  // and reopen resume it; results always refetch. A chosen result becomes a
+  // one-shot destination for Notes or Findings. All of it belongs to one
+  // engagement and resets on a switch.
+  const searchTriggerRef = useRef<HTMLButtonElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [destination, setDestination] = useState<SearchDestination | null>(null);
+  const destinationNonce = useRef(0);
+  useEffect(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setDestination(null);
+  }, [displayed.id]);
+  // Leaving the destination tab ends the destination, so returning to the
+  // tab later never replays it.
+  useEffect(() => {
+    setDestination((current) =>
+      current === null || destinationTab(current) === activeTab ? current : null,
+    );
+  }, [activeTab]);
+
+  const closeSearch = () => {
+    setDestination(null);
+    setSearchOpen(false);
+    requestAnimationFrame(() => searchTriggerRef.current?.focus({ preventScroll: true }));
+  };
+  const reopenSearch = (query: string) => {
+    setDestination(null);
+    setSearchQuery(query);
+    setSearchOpen(true);
+  };
+  const openSearchResult = ({ query, result, target }: SearchSelection) => {
+    destinationNonce.current += 1;
+    const base = { nonce: destinationNonce.current, engagementId: displayed.id, query, result };
+    const next: SearchDestination =
+      target.kind === "note"
+        ? { ...base, kind: "note", codePointOffset: target.codePointOffset }
+        : { ...base, kind: "finding", findingId: target.findingId };
+    setSearchOpen(false);
+    setDestination(next);
+    const tab = destinationTab(next);
+    if (tab === activeTab) return;
+    // A dirty notes or finding draft may block navigation; Stay drops the
+    // destination through onNavigationStay below.
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: displayed.id },
+      search: {
+        tab,
+        ...(runId === undefined ? {} : { run: runId }),
+        ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+        ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+        ...actionSearch,
+      },
+    });
+  };
+  const dismissDestination = () => setDestination(null);
+  const noteDestination =
+    destination?.kind === "note" && destination.engagementId === displayed.id ? destination : undefined;
+  const findingDestination =
+    destination?.kind === "finding" && destination.engagementId === displayed.id ? destination : undefined;
 
   const toggleAdvisorFinding = (findingId: string) => {
     if (archived) return;
@@ -444,7 +513,7 @@ function EngagementDetail({
         </section>
       ) : null}
 
-      <nav aria-label="Engagement sections" className="mt-3 flex flex-wrap gap-1 border-b border-border">
+      <nav aria-label="Engagement sections" className="mt-3 flex flex-wrap items-end gap-1 border-b border-border">
         {ENGAGEMENT_TABS.map((entry) => {
           const active = entry.id === activeTab;
           return (
@@ -468,6 +537,17 @@ function EngagementDetail({
             </Link>
           );
         })}
+        <button
+          ref={searchTriggerRef}
+          type="button"
+          aria-label="Search notes and findings"
+          aria-haspopup="dialog"
+          aria-expanded={searchOpen}
+          className="ml-auto inline-flex min-h-11 items-center rounded-t-[10px] px-3 text-[13px] font-semibold text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => { setDestination(null); setSearchOpen(true); }}
+        >
+          Search
+        </button>
       </nav>
 
       {runId !== undefined ? (
@@ -559,6 +639,10 @@ function EngagementDetail({
           key={displayed.id}
           archived={archived}
           engagementId={displayed.id}
+          destination={noteDestination}
+          onDismissDestination={dismissDestination}
+          onNavigationStay={dismissDestination}
+          onSearchAgain={reopenSearch}
         />
       ) : null}
 
@@ -567,6 +651,10 @@ function EngagementDetail({
           key={`findings-${displayed.id}`}
           archived={archived}
           engagementId={displayed.id}
+          destination={findingDestination}
+          onNavigationStay={dismissDestination}
+          onDismissDestination={dismissDestination}
+          onSearchAgain={reopenSearch}
           {...(advisorDraft.open
             ? {
                 selection: {
@@ -617,6 +705,17 @@ function EngagementDetail({
           context={leadStart.context}
           engagementId={leadStart.engagementId}
           onClose={() => setLeadStart(null)}
+        />
+      ) : null}
+
+      {searchOpen ? (
+        <EngagementSearchDialog
+          key={`search-${displayed.id}`}
+          engagementId={displayed.id}
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          onClose={closeSearch}
+          onSelect={openSearchResult}
         />
       ) : null}
 

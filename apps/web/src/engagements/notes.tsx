@@ -5,15 +5,47 @@ import { useEffect, useId, useRef, useState, type RefObject } from "react";
 
 import { engagementNotesMutationMessage, isNotesRevisionConflict } from "./errors.js";
 import { useNotesDraftGuard } from "./notes-guard.js";
-import { useEngagementNotesEditor } from "./notes-query.js";
+import { fetchEngagementNotes, useEngagementNotesEditor } from "./notes-query.js";
 import { createAttachmentRequest, fetchAttachments } from "./run-output-query.js";
+import {
+  passageLine,
+  resolveNotePassage,
+  type NotePassage,
+  type NoteSearchDestination,
+} from "./search-destination.js";
+import { Highlighted, SearchDestinationNotice } from "./search-view.js";
+
+// A search destination is checked against freshly loaded saved notes. The
+// saved offset only ever selects text in the editor when the editor holds
+// exactly that saved text; a differing draft or conflict keeps the editor
+// untouched and shows the saved passage in the notice instead.
+type NoteArrival =
+  | { readonly nonce: number; readonly status: "checking" | "error" }
+  | {
+      readonly nonce: number;
+      readonly status: "resolved";
+      readonly saved: string;
+      readonly passage: NotePassage;
+      /** Decided once on arrival: false keeps the editor untouched for good. */
+      readonly select: boolean;
+      readonly preserveDraft: boolean;
+    };
 
 export function EngagementNotesSection({
   archived,
   engagementId,
+  destination,
+  onDismissDestination,
+  onNavigationStay,
+  onSearchAgain,
 }: {
   archived: boolean;
   engagementId: string;
+  destination?: NoteSearchDestination | undefined;
+  onDismissDestination?: (() => void) | undefined;
+  /** The operator chose Stay on the unsaved-notes navigation guard. */
+  onNavigationStay?: (() => void) | undefined;
+  onSearchAgain?: ((query: string) => void) | undefined;
 }) {
   const {
     query,
@@ -43,6 +75,82 @@ export function EngagementNotesSection({
   // stale render closure.
   const valueRef = useRef(value);
   valueRef.current = value;
+  const protectedRef = useRef(false);
+  protectedRef.current = dirty || archived || save.isPending || conflictServer !== null || recovering || recoveryError;
+
+  const noticeRef = useRef<HTMLDivElement | null>(null);
+  const [arrival, setArrival] = useState<NoteArrival | null>(null);
+  const [checkSeq, setCheckSeq] = useState(0);
+  const appliedNonce = useRef<number | null>(null);
+  const destinationNonce = destination?.nonce;
+  useEffect(() => {
+    if (destination === undefined) {
+      setArrival(null);
+      return;
+    }
+    if (!hasData && query.isPending) return;
+    const controller = new AbortController();
+    const { nonce } = destination;
+    // Freeze draft protection for this arrival.
+    const draftWasProtected = protectedRef.current;
+    setArrival({ nonce, status: "checking" });
+    // Validation has its own request so failures cannot disturb the editor query.
+    void fetchEngagementNotes(engagementId, controller.signal)
+      .then((notes) => {
+        if (controller.signal.aborted) return;
+        if (notes.engagementId !== engagementId) throw new Error("Notes engagement mismatch");
+        setArrival({
+          nonce,
+          status: "resolved",
+          saved: notes.markdown,
+          // Only select text already shown by an unprotected editor.
+          preserveDraft: !archived && (draftWasProtected || protectedRef.current),
+          select: !draftWasProtected && !protectedRef.current && valueRef.current === notes.markdown,
+          passage: resolveNotePassage({
+            saved: notes.markdown,
+            result: destination.result,
+            query: destination.query,
+            codePointOffset: destination.codePointOffset,
+          }),
+        });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setArrival({ nonce, status: "error" });
+      });
+    return () => {
+      controller.abort();
+    };
+    // The nonce identifies the destination; checkSeq retries a failed load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destinationNonce, checkSeq, engagementId, hasData, query.isPending]);
+
+  // Focus lands on the notice first; an exact passage then moves it into
+  // the editor below.
+  const arrivalNonce = arrival === null || arrival.nonce !== destinationNonce ? undefined : `${arrival.nonce}:${arrival.status}`;
+  useEffect(() => {
+    const notice = noticeRef.current;
+    if (arrivalNonce === undefined || notice === null) return;
+    notice.focus({ preventScroll: true });
+    if (typeof notice.scrollIntoView === "function") notice.scrollIntoView({ block: "nearest" });
+  }, [arrivalNonce]);
+
+  // Select the passage once the editor shows exactly the saved text.
+  useEffect(() => {
+    if (arrival?.status !== "resolved" || arrival.nonce !== destinationNonce || arrival.passage.status !== "exact") return;
+    if (appliedNonce.current === arrival.nonce) return;
+    const element = editorRef.current;
+    if (element === null) return;
+    // Consume once even when typing or saving prevents editor focus.
+    appliedNonce.current = arrival.nonce;
+    if (!arrival.select || value !== arrival.saved || protectedRef.current) return;
+    const { start, end, line } = arrival.passage;
+    const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight) || 20;
+    element.scrollTop = Math.max(0, (line - 1) * lineHeight - element.clientHeight / 3);
+    if (typeof element.scrollIntoView === "function") element.scrollIntoView({ block: "center" });
+    if (element.disabled) return;
+    element.focus({ preventScroll: true });
+    element.setSelectionRange(start, end);
+  }, [arrival, value, destinationNonce]);
 
   const insertIntoDraft = (snippet: string) => {
     const element = editorRef.current;
@@ -97,6 +205,18 @@ export function EngagementNotesSection({
           One Markdown scratchpad per engagement for creds, flags, and observations.
         </p>
       </header>
+      {destination !== undefined && arrival !== null ? (
+        <SearchDestinationNotice
+          noticeRef={noticeRef}
+          onDismiss={() => onDismissDestination?.()}
+          onRetry={arrival.status === "error" ? () => setCheckSeq((current) => current + 1) : undefined}
+          onSearchAgain={
+            onSearchAgain === undefined ? undefined : () => onSearchAgain(destination.query)
+          }
+        >
+          <NoteArrivalCopy arrival={arrival} />
+        </SearchDestinationNotice>
+      ) : null}
       {blocked ? (
         <section
           role="alertdialog"
@@ -111,7 +231,14 @@ export function EngagementNotesSection({
             You have unsaved notes. Leaving now will discard them.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button type="button" autoFocus onClick={() => draftBlocker.reset?.()}>
+            <Button
+              type="button"
+              autoFocus
+              onClick={() => {
+                draftBlocker.reset?.();
+                onNavigationStay?.();
+              }}
+            >
               Stay
             </Button>
             <Button type="button" variant="secondary" onClick={() => draftBlocker.proceed?.()}>
@@ -139,10 +266,10 @@ export function EngagementNotesSection({
           description="The latest refresh failed. Existing notes are still available."
           onRetry={retry}
         >
-          {body}
+          {null}
         </StaleDataState>
       ) : null}
-      {hasData && !query.isError ? body : null}
+      {hasData ? body : null}
       {hasData ? (
         <NoteAttachmentsSection
           archived={archived}
@@ -152,6 +279,32 @@ export function EngagementNotesSection({
         />
       ) : null}
     </section>
+  );
+}
+
+function NoteArrivalCopy({ arrival }: { arrival: NoteArrival }) {
+  if (arrival.status !== "resolved") {
+    return arrival.status === "checking" ? (
+      <p className="m-0">Checking saved notes</p>
+    ) : (
+      <p className="m-0 text-destructive">Saved notes could not be loaded.</p>
+    );
+  }
+  const { passage, saved } = arrival;
+  if (passage.status === "title") return <p className="m-0">Only the notes title matches. No saved passage.</p>;
+  if (passage.status === "changed") {
+    return <p className="m-0">Match changed. The saved notes no longer have this passage.</p>;
+  }
+  return (
+    <>
+      <p className="m-0 font-mono text-[11px] text-muted-foreground">
+        Line {passage.line}
+        {arrival.select ? "" : arrival.preserveDraft ? " · saved text, your draft is unchanged" : " · saved text"}
+      </p>
+      <p className="m-0 mt-0.5 font-mono text-[12px] break-words whitespace-pre-wrap">
+        <Highlighted text={passageLine(saved, passage.start, passage.end)} />
+      </p>
+    </>
   );
 }
 

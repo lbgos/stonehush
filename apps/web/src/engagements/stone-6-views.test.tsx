@@ -10,7 +10,6 @@ import { FfufGroupView } from "./ffuf-group-view.js";
 import { FfufWordlistView } from "./ffuf-wordlist-view.js";
 import { NextStepEditor, ResumeChangeList } from "./resume-view.js";
 import { RunDiffView } from "./run-diff-view.js";
-import { SearchResultGroups } from "./search-view.js";
 
 afterEach(cleanup);
 
@@ -90,36 +89,6 @@ describe("NextStepEditor", () => {
     );
     expect(screen.getByDisplayValue("Enumerate the new scope.")).toBeDefined();
     queryClient.clear();
-  });
-});
-
-describe("SearchResultGroups", () => {
-  it("opens the exact anchor and labels unindexed kinds", () => {
-    const onOpen = vi.fn();
-    renderWithTheme(
-      <SearchResultGroups
-        response={{
-          engagementId: "10000000-0000-4000-8000-000000000001",
-          query: "admin",
-          groups: {
-            target: [],
-            hostname: [],
-            note: [
-              { kind: "note", id: "notes", title: "Engagement notes", snippet: "...admin page...", anchor: "note:notes@4", unindexed: false },
-            ],
-            lead: [],
-            finding: [],
-            artifact: [],
-            excerpt: [],
-          },
-          unindexedKinds: ["lead", "excerpt"],
-        }}
-        onOpen={onOpen}
-      />,
-    );
-    fireEvent.click(screen.getByText("Engagement notes"));
-    expect(onOpen).toHaveBeenCalledWith("note:notes@4");
-    expect(screen.getByText(/Not indexed in this view/)).toBeDefined();
   });
 });
 
