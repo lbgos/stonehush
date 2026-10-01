@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type {
   Lead,
@@ -370,34 +370,66 @@ function LeadsBody({
   );
 }
 
-function LeadDetail({
+/** Unsaved text and the active mutation inside one LeadDetail. */
+export interface LeadDraftState {
+  readonly dirty: boolean;
+  readonly pending: boolean;
+  readonly failed: boolean;
+}
+
+// One lead's attempts, outline, park and transition controls. The Leads tab
+// renders it inline. The Surface lead overlay passes overlay to read attempts
+// and outline again on open, drop the frame and heading it already supplies,
+// and receive draft state through onDraftChange for its close guard.
+export function LeadDetail({
   archived,
   engagementId,
   lead,
+  overlay = false,
+  readOnly = false,
+  onDraftChange,
 }: {
   archived: boolean;
   engagementId: string;
   lead: Lead;
+  overlay?: boolean;
+  readOnly?: boolean;
+  onDraftChange?: ((draft: LeadDraftState) => void) | undefined;
 }) {
-  const attempts = useLeadAttemptsQuery(engagementId, lead.id);
-  const outline = useLeadOutlineQuery(engagementId, lead.id);
+  const attempts = useLeadAttemptsQuery(engagementId, lead.id, overlay);
+  const outline = useLeadOutlineQuery(engagementId, lead.id, overlay);
   const park = useParkLeadMutation(engagementId);
   const transition = useLeadTransitionMutation(engagementId, "reopen");
   const close = useLeadTransitionMutation(engagementId, "close");
   const dismiss = useLeadTransitionMutation(engagementId, "revisit/dismiss");
   const suggest = useSuggestRevisitMutation(engagementId);
   const record = useRecordAttemptMutation(engagementId, lead.id);
+  const mutations = { park, transition, close, dismiss, record };
+  const [activeMutation, setActiveMutation] = useState<keyof typeof mutations>();
 
   const [parkReason, setParkReason] = useState("");
   const [testedConditions, setTestedConditions] = useState("");
   const [summary, setSummary] = useState("");
   const [outcome, setOutcome] =
     useState<(typeof ATTEMPT_OUTCOMES)[number]>("observed");
+  const [savedOutcome, setSavedOutcome] = useState<(typeof ATTEMPT_OUTCOMES)[number]>("observed");
   const [conditions, setConditions] = useState("");
   const [evidence, setEvidence] = useState("");
   const [detailError, setDetailError] = useState<string | undefined>(undefined);
 
-  const records = attempts.data ?? [];
+  // In the overlay, attempts cached before it opened are not shown as current.
+  const records = overlay && !attempts.isFetchedAfterMount ? [] : attempts.data ?? [];
+  const parkDraft =
+    parkReason.trim().length > 0 || testedConditions.trim().length > 0;
+  const attemptDraft = summary.trim().length > 0 || conditions.trim().length > 0 || evidence.trim().length > 0 || outcome !== savedOutcome;
+  const dirty = !archived && (parkDraft || attemptDraft);
+  const pending =
+    park.isPending || transition.isPending || close.isPending || dismiss.isPending || suggest.isPending || record.isPending;
+  // A previous operation's error must not hold a later successful write.
+  const failed = activeMutation !== undefined && mutations[activeMutation].isError;
+  useEffect(() => {
+    onDraftChange?.({ dirty, pending, failed });
+  }, [dirty, pending, failed, onDraftChange]);
   const error =
     detailError ??
     (park.isError || transition.isError || close.isError || dismiss.isError || suggest.isError || record.isError
@@ -413,11 +445,20 @@ function LeadDetail({
       setDetailError("Parking needs a reason.");
       return;
     }
-    park.mutate({
-      leadId: lead.id,
-      reason: parkReason.trim(),
-      ...(testedConditions.trim().length === 0 ? {} : { testedConditions: testedConditions.trim() }),
-    });
+    setActiveMutation("park");
+    park.mutate(
+      {
+        leadId: lead.id,
+        reason: parkReason.trim(),
+        ...(testedConditions.trim().length === 0 ? {} : { testedConditions: testedConditions.trim() }),
+      },
+      {
+        onSuccess: () => {
+          setParkReason("");
+          setTestedConditions("");
+        },
+      },
+    );
   };
 
   const doRecord = () => {
@@ -426,6 +467,7 @@ function LeadDetail({
       setDetailError("Describe the attempt.");
       return;
     }
+    setActiveMutation("record");
     record.mutate(
       {
         summary: summary.trim(),
@@ -436,6 +478,7 @@ function LeadDetail({
       {
         onSuccess: () => {
           setSummary("");
+          setSavedOutcome(outcome);
           setConditions("");
           setEvidence("");
         },
@@ -444,16 +487,19 @@ function LeadDetail({
   };
 
   return (
-    <div className="grid gap-3 border border-border px-3 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="m-0 text-[13px] font-semibold">Lead detail</h3>
+    <div className={overlay ? "grid gap-3" : "grid gap-3 border border-border px-3 py-3"}>
+      <div className={`flex flex-wrap items-center gap-2 ${overlay ? "justify-end" : "justify-between"}`}>
+        {overlay ? null : <h3 className="m-0 text-[13px] font-semibold">Lead detail</h3>}
         <div className="flex flex-wrap gap-2">
           {lead.disposition !== "open" ? (
             <Button
               type="button"
               variant="secondary"
-              disabled={archived || transition.isPending}
-              onClick={() => transition.mutate({ leadId: lead.id })}
+              disabled={archived || readOnly || transition.isPending}
+              onClick={() => {
+                setActiveMutation("transition");
+                transition.mutate({ leadId: lead.id });
+              }}
             >
               Reopen
             </Button>
@@ -462,10 +508,13 @@ function LeadDetail({
             <Button
               type="button"
               variant="secondary"
-              disabled={archived || close.isPending}
-              onClick={() => close.mutate({ leadId: lead.id })}
+              disabled={archived || readOnly || close.isPending}
+              onClick={() => {
+                setActiveMutation("close");
+                close.mutate({ leadId: lead.id });
+              }}
             >
-              Close
+              Close lead
             </Button>
           ) : null}
         </div>
@@ -491,8 +540,11 @@ function LeadDetail({
               <Button
                 type="button"
                 variant="secondary"
-                disabled={archived || dismiss.isPending}
-                onClick={() => dismiss.mutate({ leadId: lead.id })}
+                disabled={archived || readOnly || dismiss.isPending}
+                onClick={() => {
+                  setActiveMutation("dismiss");
+                  dismiss.mutate({ leadId: lead.id });
+                }}
               >
                 Dismiss
               </Button>
@@ -514,6 +566,16 @@ function LeadDetail({
             description="The attempt history could not be loaded from the local control plane."
             onRetry={() => void attempts.refetch()}
           />
+        ) : null}
+        {records.length > 0 && attempts.isError ? (
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2" role="status">
+            <p className="m-0 text-[12px] text-muted-foreground">
+              Refresh failed. Showing the last loaded attempts.
+            </p>
+            <Button type="button" variant="secondary" onClick={() => void attempts.refetch()}>
+              Retry
+            </Button>
+          </div>
         ) : null}
         {records.length === 0 && !attempts.isFetching && !attempts.isError ? (
           <p className="m-0 text-[12px] text-muted-foreground">No attempts recorded.</p>
@@ -557,7 +619,7 @@ function LeadDetail({
           onRetry={() => void outline.refetch()}
         />
       ) : null}
-      {!outline.isError && outline.data !== undefined && outline.data.length > 0 ? (
+      {!outline.isError && (!overlay || outline.isFetchedAfterMount) && outline.data !== undefined && outline.data.length > 0 ? (
         <div>
           <h4 className="m-0 mb-2 text-[12px] font-semibold">Chain outline</h4>
           <pre className="m-0 overflow-x-auto border border-border px-2.5 py-2 font-mono text-[11px] leading-5 whitespace-pre-wrap text-muted-foreground">
@@ -572,14 +634,17 @@ function LeadDetail({
         </p>
       ) : null}
 
-      {!archived && lead.disposition === "open" ? (
+      {!archived && (lead.disposition === "open" || (overlay && parkDraft)) ? (
         <div className="grid gap-2">
+          {lead.disposition !== "open" ? (
+            <p className="m-0 text-[12px] text-muted-foreground">Unsaved park draft. Reopen this lead to park it.</p>
+          ) : null}
           <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor={`park-reason-${lead.id}`}>
             <span>Park reason</span>
             <input
               id={`park-reason-${lead.id}`}
               value={parkReason}
-              disabled={park.isPending}
+              disabled={readOnly || park.isPending}
               placeholder="No working credentials yet"
               maxLength={500}
               className="w-full border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -591,18 +656,20 @@ function LeadDetail({
             <input
               id={`park-conditions-${lead.id}`}
               value={testedConditions}
-              disabled={park.isPending}
+              disabled={readOnly || park.isPending}
               placeholder="Only checked without authentication"
               maxLength={500}
               className="w-full border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onChange={(event) => setTestedConditions(event.target.value)}
             />
           </label>
-          <div className="flex justify-end">
-            <Button type="button" variant="secondary" disabled={park.isPending} onClick={doPark}>
-              {park.isPending ? "Parking" : "Park with reason"}
-            </Button>
-          </div>
+          {lead.disposition === "open" ? (
+            <div className="flex justify-end">
+              <Button type="button" variant="secondary" disabled={readOnly || park.isPending} onClick={doPark}>
+                {park.isPending ? "Parking" : "Park with reason"}
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -613,7 +680,7 @@ function LeadDetail({
             <input
               id={`attempt-summary-${lead.id}`}
               value={summary}
-              disabled={record.isPending}
+              disabled={readOnly || record.isPending}
               placeholder="Checked default credentials"
               maxLength={2000}
               className="w-full border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -626,7 +693,7 @@ function LeadDetail({
               <select
                 id={`attempt-outcome-${lead.id}`}
                 value={outcome}
-                disabled={record.isPending}
+                disabled={readOnly || record.isPending}
                 className="w-full border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onChange={(event) => setOutcome(event.target.value as typeof outcome)}
               >
@@ -642,7 +709,7 @@ function LeadDetail({
               <input
                 id={`attempt-evidence-${lead.id}`}
                 value={evidence}
-                disabled={record.isPending}
+                disabled={readOnly || record.isPending}
                 placeholder="shared-capture-1"
                 spellCheck={false}
                 className="w-full border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -655,7 +722,7 @@ function LeadDetail({
             <input
               id={`attempt-conditions-${lead.id}`}
               value={conditions}
-              disabled={record.isPending}
+              disabled={readOnly || record.isPending}
               placeholder="Only checked without authentication"
               maxLength={500}
               className="w-full border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -663,7 +730,7 @@ function LeadDetail({
             />
           </label>
           <div className="flex justify-end">
-            <Button type="button" disabled={record.isPending} onClick={doRecord}>
+            <Button type="button" disabled={readOnly || record.isPending} onClick={doRecord}>
               {record.isPending ? "Saving" : "Record attempt"}
             </Button>
           </div>
