@@ -143,6 +143,104 @@ describe("stone leads workspace sections", () => {
     );
   });
 
+  it("links a chosen finding from the inline lead detail and reads it fresh on reopen", async () => {
+    const leadId = "20000000-0000-4000-8000-000000000001";
+    const findingId = "50000000-0000-4000-8000-00000000000b";
+    const savedFinding = (title: string) => ({
+      contractVersion: 1,
+      id: findingId,
+      engagementId: ENGAGEMENT_ID,
+      title,
+      severity: "high",
+      status: "open",
+      body: "Backup listed at /backup.zip",
+      evidenceArtifactIds: [],
+      revision: 0,
+      createdAt: TS,
+      updatedAt: TS,
+    });
+    let findings: unknown[] = [
+      { ...savedFinding("Weak admin password"), id: "50000000-0000-4000-8000-00000000000a" },
+      savedFinding("Exposed backup"),
+    ];
+    let attempts: unknown[] = [];
+    const posts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/findings")) return Promise.resolve(response(findings));
+        if (url.endsWith("/leads")) {
+          return Promise.resolve(response([{
+            contractVersion: 1,
+            id: leadId,
+            engagementId: ENGAGEMENT_ID,
+            title: "Backup exposure",
+            target: null,
+            serviceRef: null,
+            source: { kind: "manual", ref: "probe-artifact-1" },
+            nextStep: null,
+            disposition: "open",
+            parkReason: null,
+            testedConditions: null,
+            closedNote: null,
+            revisitSuggestion: null,
+            createdAt: TS,
+            updatedAt: TS,
+          }]));
+        }
+        if (url.endsWith("/attempts") && init?.method === "POST") {
+          const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+          posts.push(body);
+          attempts = [{
+            contractVersion: 1,
+            id: "30000000-0000-4000-8000-000000000001",
+            engagementId: ENGAGEMENT_ID,
+            leadId,
+            sequence: 1,
+            summary: body["summary"],
+            outcome: body["outcome"],
+            conditions: null,
+            evidenceArtifactIds: [],
+            linkedFindingId: body["linkedFindingId"] ?? null,
+            linkedObjectiveId: null,
+            createdAt: TS,
+          }];
+          return Promise.resolve(response(attempts[0], 201));
+        }
+        if (url.endsWith("/attempts")) return Promise.resolve(response(attempts));
+        if (url.endsWith("/outline")) return Promise.resolve(response({ outline: "" }));
+        return Promise.resolve(response([]));
+      }),
+    );
+    const linkedRows = () => screen.queryAllByText(/^Linked finding/).map((node) => node.textContent);
+
+    renderSections();
+    fireEvent.click(await screen.findByRole("button", { name: "Detail" }));
+    const chooser = () => screen.getByLabelText<HTMLSelectElement>("Finding, optional");
+    await waitFor(() =>
+      expect(Array.from(chooser().options, (option) => option.textContent)).toEqual([
+        "None",
+        "Weak admin password · open",
+        "Exposed backup · open",
+      ]),
+    );
+    fireEvent.change(chooser(), { target: { value: findingId } });
+    fireEvent.change(screen.getByLabelText("Attempt summary"), { target: { value: "Downloaded the backup listing" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record attempt" }));
+
+    expect(await screen.findByText("1. Downloaded the backup listing")).toBeTruthy();
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding Exposed backup · open"]));
+    expect(posts).toEqual([{ summary: "Downloaded the backup listing", outcome: "observed", evidenceArtifactIds: [], linkedFindingId: findingId }]);
+    expect(chooser().value).toBe("");
+
+    findings = [savedFinding("Exposed backup archive")];
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Detail" }));
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding Exposed backup archive · open"]));
+    expect(posts).toHaveLength(1);
+  });
+
   it("captures an objective as masked and submits as a distinct step", async () => {
     let objectives: unknown[] = [];
     vi.stubGlobal(

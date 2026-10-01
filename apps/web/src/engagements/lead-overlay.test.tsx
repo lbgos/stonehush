@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
+import { findingsQueryKey } from "./findings-query.js";
 import { leadQueryKey, leadAttemptsQueryKey } from "./leads-query.js";
 import { pathSelectionKey, serviceSelectionKey } from "./inspector.js";
 
@@ -92,6 +93,23 @@ function attempt(leadId: string, sequence: number, summary: string, extra: Recor
   };
 }
 
+function finding(id: string, engagementId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    contractVersion: 1,
+    id,
+    engagementId,
+    title: "Weak admin password",
+    severity: "high",
+    status: "open",
+    body: "Admin accepts the vendor default.",
+    evidenceArtifactIds: [],
+    revision: 0,
+    createdAt: TS,
+    updatedAt: TS,
+    ...overrides,
+  };
+}
+
 function response(payload: unknown, status = 200): Response {
   return { json: async () => payload, ok: status >= 200 && status < 300, status } as Response;
 }
@@ -100,6 +118,8 @@ interface Server {
   engagements: TestEngagement[];
   leads: Record<string, ReturnType<typeof lead>[]>;
   attempts: Record<string, ReturnType<typeof attempt>[]>;
+  findings?: Record<string, ReturnType<typeof finding>[]>;
+  readFindings?: (engagementId: string) => Response | Promise<Response> | undefined;
   readLead?: (leadId: string, engagementId: string) => Response | Promise<Response> | undefined;
   readAttempts?: (leadId: string) => Response | Promise<Response> | undefined;
   paths?: readonly Record<string, unknown>[];
@@ -128,6 +148,9 @@ function serve(server: Server) {
     if (rest === "/ffuf-results") return Promise.resolve(response(server.paths ?? []));
     if (rest === "/services") return Promise.resolve(response([service]));
     if (rest === "/leads") return Promise.resolve(response(server.leads[engagementId] ?? []));
+    if (rest === "/findings" && isRead(init)) {
+      return Promise.resolve(server.readFindings?.(engagementId) ?? response(server.findings?.[engagementId] ?? []));
+    }
     const leadMatch = /^\/leads\/([^/]+)(\/.*)?$/.exec(rest);
     if (leadMatch?.[1] !== undefined) {
       const leadId = leadMatch[1];
@@ -197,6 +220,18 @@ async function linkedLeadButton(name: RegExp) {
 
 function dialog() {
   return screen.getByRole("dialog");
+}
+
+function chooser() {
+  return within(dialog()).getByLabelText<HTMLSelectElement>("Finding, optional");
+}
+
+function findingOptions() {
+  return Array.from(chooser().options, (option) => option.textContent);
+}
+
+function linkedRows() {
+  return within(dialog()).queryAllByText(/^Linked finding/).map((node) => node.textContent);
 }
 
 function typeSummary(value: string) {
@@ -976,4 +1011,351 @@ describe("continue an evidence-linked lead from Surface", () => {
     expect(router.state.location.search.sel).toBe(pathSelectionKey(path.url, path.artifactId));
   });
 
+});
+
+const FINDING_A = "50000000-0000-4000-8000-00000000000a";
+const FINDING_B = "50000000-0000-4000-8000-00000000000b";
+const FINDING_GONE = "50000000-0000-4000-8000-00000000000c";
+
+describe("link a saved finding while recording a lead attempt from Surface", () => {
+  it("distinguishes same-title findings whose short ids collide", async () => {
+    const collision = "60000000-0000-4000-8000-00000000000a";
+    serve({
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: {},
+      findings: { [engagement.id]: [finding(FINDING_A, engagement.id), finding(collision, engagement.id)] },
+    });
+    await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await waitFor(() => expect(findingOptions()).toEqual([
+      "None", `Weak admin password · open · ${FINDING_A}`, `Weak admin password · open · ${collision}`,
+    ]));
+    fireEvent.change(chooser(), { target: { value: collision } });
+    expect(chooser().value).toBe(collision);
+  });
+
+  it("keeps a failed refresh distinct from an unavailable saved reference", async () => {
+    let fail = false;
+    const seeded: { client?: QueryClient } = {};
+    serve({
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: { [OPEN_ID]: [attempt(OPEN_ID, 1, "Earlier check", { linkedFindingId: FINDING_GONE })] },
+      readFindings: () => fail ? response({ code: "storage_busy" }, 503) : response([]),
+    });
+    await renderAt(engagement.id, { seed: (client) => { seeded.client = client; } });
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding 0000000c · unavailable in this engagement"]));
+    fail = true;
+    void seeded.client?.invalidateQueries({ queryKey: findingsQueryKey(engagement.id) });
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding 0000000c · could not be read · refresh failed"]));
+    expect(within(dialog()).queryByText(/unavailable/)).toBeNull();
+    fail = false;
+    fireEvent.click(within(dialog()).getAllByRole("button", { name: "Retry findings" })[0]!);
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding 0000000c · unavailable in this engagement"]));
+  });
+
+  it("sends one exactly chosen same-title finding and shows its current saved state", async () => {
+    const markup = '<img src=x onerror="alert(1)"> reused on /admin';
+    const server: Server = {
+      engagements: [engagement, otherEngagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: {},
+      findings: {
+        [engagement.id]: [finding(FINDING_A, engagement.id), finding(FINDING_B, engagement.id, { status: "resolved", body: markup })],
+        [otherEngagement.id]: [finding(FINDING_GONE, otherEngagement.id, { title: "Other lab finding" })],
+      },
+      recordAttempt: (leadId, body) => {
+        const saved = attempt(leadId, 1, String(body["summary"]), { outcome: body["outcome"], linkedFindingId: body["linkedFindingId"] ?? null });
+        server.attempts[leadId] = [saved];
+        return response(saved, 201);
+      },
+    };
+    const fetchMock = serve(server);
+    const router = await renderAt(engagement.id);
+    const searchBefore = { ...router.state.location.search };
+    const opener = await linkedLeadButton(/Default creds/);
+    fireEvent.click(opener);
+
+    await waitFor(() =>
+      expect(findingOptions()).toEqual(["None", "Weak admin password · open · 0000000a", "Weak admin password · resolved · 0000000b"]),
+    );
+    expect(chooser().value).toBe("");
+    fireEvent.change(chooser(), { target: { value: FINDING_B } });
+    typeSummary("Default password works on admin");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+
+    expect(await within(dialog()).findByText("1. Default password works on admin")).toBeTruthy();
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding Weak admin password · resolved"]));
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0]![1]!.body))).toEqual({
+      summary: "Default password works on admin",
+      outcome: "observed",
+      evidenceArtifactIds: [],
+      linkedFindingId: FINDING_B,
+    });
+    expect(chooser().value).toBe("");
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Show current body" }));
+    expect(within(dialog()).getByText(markup)).toBeTruthy();
+    expect(dialog().querySelector("img")).toBeNull();
+    expect(within(dialog()).getByRole("button", { name: "Hide body" }).getAttribute("aria-expanded")).toBe("true");
+    expect(within(dialog()).queryByText(/Other lab finding/)).toBeNull();
+
+    // Reading the saved body leaves no draft and changes no Surface context.
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(opener));
+    expect(router.state.location.search).toEqual(searchBefore);
+    expect(writes(fetchMock)).toEqual([`/api/v1/engagements/${engagement.id}/leads/${OPEN_ID}/attempts`]);
+
+    await router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "leads" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Detail" }));
+    expect(await screen.findByText("1. Default password works on admin")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.queryAllByText(/^Linked finding/).map((node) => node.textContent)).toEqual(["Linked finding Weak admin password · resolved"]),
+    );
+  });
+
+  it("holds a finding-only choice, keeps it through a failed save, and continues the waiting route after retry", async () => {
+    const finishes: ((value: Response) => void)[] = [];
+    const bodies: Record<string, unknown>[] = [];
+    const server: Server = {
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: {},
+      findings: { [engagement.id]: [finding(FINDING_A, engagement.id)] },
+      recordAttempt: (_leadId, body) => {
+        bodies.push(body);
+        return new Promise<Response>((resolve) => { finishes.push(resolve); });
+      },
+    };
+    serve(server);
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await waitFor(() => expect(findingOptions()).toEqual(["None", "Weak admin password · open"]));
+
+    fireEvent.change(chooser(), { target: { value: FINDING_A } });
+    fireEvent.keyDown(dialog(), { key: "Escape" });
+    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
+    expect(chooser().value).toBe(FINDING_A);
+
+    typeSummary("Vendor default accepted");
+    fireEvent.change(within(dialog()).getByLabelText("Conditions, optional"), { target: { value: "Over HTTP only" } });
+    fireEvent.change(within(dialog()).getByLabelText("Outcome"), { target: { value: "inconclusive" } });
+    fireEvent.change(within(dialog()).getByLabelText("Evidence artifact ids, comma separated"), { target: { value: "proof-1, proof-2" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    await waitFor(() => expect(finishes).toHaveLength(1));
+    expect(chooser().disabled).toBe(true);
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    expect(within(dialog()).queryByRole("button", { name: "Discard" })).toBeNull();
+
+    finishes[0]?.(response({ code: "storage_busy" }, 503));
+    expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(chooser().value).toBe(FINDING_A);
+    expect(within(dialog()).getByDisplayValue("Vendor default accepted")).toBeTruthy();
+    expect(within(dialog()).getByDisplayValue("Over HTTP only")).toBeTruthy();
+    expect(within(dialog()).getByLabelText<HTMLSelectElement>("Outcome").value).toBe("inconclusive");
+    expect(within(dialog()).getByDisplayValue("proof-1, proof-2")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    const saved = attempt(OPEN_ID, 1, "Vendor default accepted", { linkedFindingId: FINDING_A });
+    server.attempts[OPEN_ID] = [saved];
+    finishes[1]?.(response(saved, 201));
+    await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(bodies).toEqual([1, 2].map(() => ({
+      summary: "Vendor default accepted",
+      outcome: "inconclusive",
+      conditions: "Over HTTP only",
+      evidenceArtifactIds: ["proof-1", "proof-2"],
+      linkedFindingId: FINDING_A,
+    })));
+  });
+
+  it("records without a finding when findings fail and sends a chosen one only after a current read lists it", async () => {
+    let findingsMode: "fail" | "ok" | "gone" = "fail";
+    const seeded: { client?: QueryClient } = {};
+    const bodies: Record<string, unknown>[] = [];
+    const server: Server = {
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: {},
+      readFindings: (engagementId) => {
+        if (findingsMode === "fail") return response({ code: "storage_busy" }, 503);
+        return response(findingsMode === "ok" ? [finding(FINDING_A, engagementId)] : [finding(FINDING_B, engagementId, { title: "Other claim" })]);
+      },
+      recordAttempt: (leadId, body) => {
+        bodies.push(body);
+        const saved = attempt(leadId, bodies.length, String(body["summary"]));
+        server.attempts[leadId] = [...(server.attempts[leadId] ?? []), saved];
+        return response(saved, 201);
+      },
+    };
+    serve(server);
+    await renderAt(engagement.id, { seed: (client) => { seeded.client = client; } });
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+
+    expect(await within(dialog()).findByText("Findings could not be read. Attempts without a finding can still be recorded.")).toBeTruthy();
+    expect(findingOptions()).toEqual(["None"]);
+    expect(chooser().disabled).toBe(true);
+    typeSummary("Unlinked while findings fail");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    expect(await within(dialog()).findByText("1. Unlinked while findings fail")).toBeTruthy();
+
+    findingsMode = "ok";
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Retry findings" }));
+    await waitFor(() => expect(findingOptions()).toEqual(["None", "Weak admin password · open"]));
+    fireEvent.change(chooser(), { target: { value: FINDING_A } });
+    typeSummary("Linked only after a current read");
+
+    // A finding write elsewhere refreshes this opening's read. It fails.
+    findingsMode = "fail";
+    void seeded.client?.invalidateQueries({ queryKey: findingsQueryKey(engagement.id) });
+    expect(await within(dialog()).findByText("Finding 0000000a could not be checked. Retry, or choose None to record without a link.")).toBeTruthy();
+    expect(within(dialog()).getByRole<HTMLButtonElement>("button", { name: "Record attempt" }).disabled).toBe(true);
+    expect(chooser().value).toBe(FINDING_A);
+    expect(within(dialog()).getByDisplayValue("Linked only after a current read")).toBeTruthy();
+
+    findingsMode = "gone";
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Retry findings" }));
+    expect(await within(dialog()).findByText("Finding 0000000a is not in this engagement's current findings. Retry, or choose None to record without a link.")).toBeTruthy();
+    expect(findingOptions()).toEqual(["None", "Other claim · open", "Finding 0000000a, not checked"]);
+    expect(chooser().value).toBe(FINDING_A);
+    expect(within(dialog()).getByRole<HTMLButtonElement>("button", { name: "Record attempt" }).disabled).toBe(true);
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Choose None" }));
+    expect(chooser().value).toBe("");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    expect(await within(dialog()).findByText("2. Linked only after a current read")).toBeTruthy();
+    expect(bodies.map((body) => "linkedFindingId" in body)).toEqual([false, false]);
+  });
+
+  it.each<[string, (engagementId: string) => Response]>([
+    ["a record owned by another engagement", (engagementId) =>
+      response([finding(FINDING_A, engagementId), finding(FINDING_B, otherEngagement.id, { title: "Other lab finding" })])],
+    ["a malformed record", (engagementId) =>
+      response([{ ...finding(FINDING_B, engagementId, { title: "Other lab finding" }), status: "maybe" }])],
+    ["duplicate record identities", (engagementId) =>
+      response([finding(FINDING_B, engagementId), finding(FINDING_B, engagementId, { title: "Other lab finding" })])],
+  ])("treats %s as a failed findings read", async (_name, readFindings) => {
+    const fetchMock = serve({
+      engagements: [engagement, otherEngagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: { [OPEN_ID]: [attempt(OPEN_ID, 1, "Earlier check", { linkedFindingId: FINDING_B })] },
+      readFindings,
+    });
+    await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+
+    expect(await within(dialog()).findByText("Findings could not be read. Attempts without a finding can still be recorded.")).toBeTruthy();
+    expect(findingOptions()).toEqual(["None"]);
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding 0000000b · could not be read"]));
+    expect(within(dialog()).queryByText(/Other lab finding|Weak admin password|unavailable/)).toBeNull();
+    expect(writes(fetchMock)).toEqual([]);
+  });
+
+  it("never shows a late findings answer from a closed opening in another engagement", async () => {
+    const late: ((value: Response) => void)[] = [];
+    serve({
+      engagements: [engagement, otherEngagement],
+      leads: {
+        [engagement.id]: [lead(OPEN_ID, engagement.id)],
+        [otherEngagement.id]: [lead(ELSEWHERE_ID, otherEngagement.id, { title: "Second lab creds" })],
+      },
+      attempts: {},
+      readFindings: (engagementId) =>
+        engagementId === engagement.id
+          ? new Promise<Response>((resolve) => { late.push(resolve); })
+          : response([finding(FINDING_B, engagementId, { title: "Second lab claim" })]),
+    });
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await waitFor(() => expect(late).toHaveLength(1));
+    expect(await within(dialog()).findByText("Loading findings")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await router.navigate({ to: "/engagements/$engagementId", params: { engagementId: otherEngagement.id }, search: { sel: SEL } });
+    fireEvent.click(await linkedLeadButton(/Second lab creds/));
+    await waitFor(() => expect(findingOptions()).toEqual(["None", "Second lab claim · open"]));
+    late[0]?.(response([finding(FINDING_A, engagement.id, { title: "First lab claim" })]));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(findingOptions()).toEqual(["None", "Second lab claim · open"]);
+    expect(screen.queryByText(/First lab claim/)).toBeNull();
+  });
+
+  it("shows each saved reference's current finding on reopen, unavailable when absent, and a failure when unread", async () => {
+    let failFindings = false;
+    const server: Server = {
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: {
+        [OPEN_ID]: [
+          attempt(OPEN_ID, 1, "Default password worked", { linkedFindingId: FINDING_A }),
+          attempt(OPEN_ID, 2, "Reset link leaked", { linkedFindingId: FINDING_GONE }),
+        ],
+      },
+      // Same title as the reference that is gone. It must never stand in for it.
+      findings: { [engagement.id]: [finding(FINDING_A, engagement.id), finding(FINDING_B, engagement.id)] },
+      readFindings: () => (failFindings ? response({ code: "storage_busy" }, 503) : undefined),
+    };
+    const fetchMock = serve(server);
+    await renderAt(engagement.id);
+    const opener = await linkedLeadButton(/Default creds/);
+    const reopen = async (rows: string[]) => {
+      fireEvent.click(opener);
+      await waitFor(() => expect(linkedRows()).toEqual(rows));
+    };
+    const current = ["Linked finding Weak admin password · open", "Linked finding 0000000c · unavailable in this engagement"];
+
+    await reopen(current);
+    fireEvent.keyDown(dialog(), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    server.findings![engagement.id] = [
+      finding(FINDING_A, engagement.id, { title: "Admin password reused", status: "resolved", revision: 2 }),
+      finding(FINDING_B, engagement.id),
+    ];
+    const renamed = ["Linked finding Admin password reused · resolved", "Linked finding 0000000c · unavailable in this engagement"];
+    await reopen(renamed);
+    fireEvent.keyDown(dialog(), { key: "Escape" });
+
+    failFindings = true;
+    await reopen(["Linked finding 0000000a · could not be read", "Linked finding 0000000c · could not be read"]);
+    failFindings = false;
+    fireEvent.click(within(dialog()).getAllByRole("button", { name: "Retry findings" })[0]!);
+    await waitFor(() => expect(linkedRows()).toEqual(renamed));
+    expect(writes(fetchMock)).toEqual([]);
+  });
+
+  it("reads a linked finding body in an archived engagement without a chooser or writes", async () => {
+    const fetchMock = serve({
+      engagements: [archivedEngagement],
+      leads: { [archivedEngagement.id]: [lead(PARKED_ID, archivedEngagement.id, { disposition: "parked", parkReason: "No creds yet" })] },
+      attempts: {
+        [PARKED_ID]: [attempt(PARKED_ID, 1, "Default password worked", { engagementId: archivedEngagement.id, linkedFindingId: FINDING_A })],
+      },
+      findings: { [archivedEngagement.id]: [finding(FINDING_A, archivedEngagement.id, { body: "Saved proof steps" })] },
+    });
+    await renderAt(archivedEngagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding Weak admin password · open"]));
+    expect(within(dialog()).queryByLabelText("Finding, optional")).toBeNull();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Show current body" }));
+    expect(within(dialog()).getByText("Saved proof steps")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Hide body" }));
+    expect(within(dialog()).queryByText("Saved proof steps")).toBeNull();
+    fireEvent.keyDown(dialog(), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(writes(fetchMock)).toEqual([]);
+  });
 });

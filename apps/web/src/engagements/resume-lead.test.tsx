@@ -79,7 +79,7 @@ function lead(id: string, engagementId: string, overrides: Record<string, unknow
   };
 }
 
-function attempt(leadId: string, sequence: number, summary: string) {
+function attempt(leadId: string, sequence: number, summary: string, extra: Record<string, unknown> = {}) {
   return {
     contractVersion: 1,
     id: `30000000-0000-4000-8000-00000000000${String(sequence)}`,
@@ -93,6 +93,24 @@ function attempt(leadId: string, sequence: number, summary: string) {
     linkedFindingId: null,
     linkedObjectiveId: null,
     createdAt: TS,
+    ...extra,
+  };
+}
+
+function finding(id: string, engagementId: string, overrides: Record<string, unknown> = {}) {
+  return {
+    contractVersion: 1,
+    id,
+    engagementId,
+    title: "Weak admin password",
+    severity: "high",
+    status: "open",
+    body: "Admin accepts the vendor default.",
+    evidenceArtifactIds: [],
+    revision: 0,
+    createdAt: TS,
+    updatedAt: TS,
+    ...overrides,
   };
 }
 
@@ -104,6 +122,8 @@ interface Server {
   engagements: TestEngagement[];
   leads: Record<string, ReturnType<typeof lead>[]>;
   attempts: Record<string, ReturnType<typeof attempt>[]>;
+  findings?: Record<string, ReturnType<typeof finding>[]>;
+  readFindings?: (engagementId: string) => Response | Promise<Response> | undefined;
   readLead?: (leadId: string, engagementId: string) => Response | Promise<Response> | undefined;
   recordAttempt?: (leadId: string, body: Record<string, unknown>) => Response | Promise<Response>;
   readAttempts?: (leadId: string) => Response | Promise<Response> | undefined;
@@ -129,6 +149,9 @@ function serve(server: Server) {
     if (rest === "") return Promise.resolve(response({ engagement: owner, activeScopeRevision: null }));
     if (rest === "/services") return Promise.resolve(response([service]));
     if (rest === "/leads") return Promise.resolve(response(server.leads[engagementId] ?? []));
+    if (rest === "/findings" && isRead(init)) {
+      return Promise.resolve(server.readFindings?.(engagementId) ?? response(server.findings?.[engagementId] ?? []));
+    }
     const leadMatch = /^\/leads\/([^/]+)(\/.*)?$/.exec(rest);
     if (leadMatch?.[1] !== undefined) {
       const leadId = leadMatch[1];
@@ -218,6 +241,18 @@ async function linkedLeadButton(name: RegExp) {
 
 function dialog() {
   return screen.getByRole("dialog");
+}
+
+function chooser() {
+  return within(dialog()).getByLabelText<HTMLSelectElement>("Finding, optional");
+}
+
+function findingOptions() {
+  return Array.from(chooser().options, (option) => option.textContent);
+}
+
+function linkedRows() {
+  return within(dialog()).queryAllByText(/^Linked finding/).map((node) => node.textContent);
 }
 
 beforeEach(() => {
@@ -904,5 +939,133 @@ describe("resume the last inspected lead from Surface", () => {
     expect(within(band()).queryByRole("region", { name: "Last lead" })).toBeNull();
     expect(window.localStorage.getItem(workspaceStateKey(engagement.id))).toBeNull();
     expect(writes(fetchMock)).toEqual([`/api/v1/engagements/${engagement.id}/leads/${FIRST_ID}/attempts`]);
+  });
+});
+
+const FINDING_A = "50000000-0000-4000-8000-00000000000a";
+const FINDING_B = "50000000-0000-4000-8000-00000000000b";
+
+describe("link a saved finding while recording a lead attempt from Resume", () => {
+  it("records one linked attempt and reads the same relation with the finding's current state after reload", async () => {
+    const body = "Reused on <b>/admin</b>";
+    const server: Server = {
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(FIRST_ID, engagement.id)] },
+      attempts: {},
+      findings: { [engagement.id]: [finding(FINDING_A, engagement.id), finding(FINDING_B, engagement.id, { body })] },
+      recordAttempt: (leadId, payload) => {
+        const saved = attempt(leadId, 1, String(payload["summary"]), { linkedFindingId: payload["linkedFindingId"] ?? null });
+        server.attempts[leadId] = [saved];
+        return response(saved, 201);
+      },
+    };
+    const fetchMock = serve(server);
+    remember(engagement.id, FIRST_ID);
+    await renderAt(engagement.id);
+    const open = await within(await lastLeadRow()).findByRole("button", { name: /Default creds/ });
+    fireEvent.click(open);
+
+    await waitFor(() =>
+      expect(findingOptions()).toEqual(["None", "Weak admin password · open · 0000000a", "Weak admin password · open · 0000000b"]),
+    );
+    fireEvent.change(chooser(), { target: { value: FINDING_B } });
+    fireEvent.change(within(dialog()).getByLabelText("Attempt summary"), { target: { value: "Admin accepted the vendor default" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    expect(await within(dialog()).findByText("1. Admin accepted the vendor default")).toBeTruthy();
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding Weak admin password · open"]));
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0]![1]!.body))).toEqual({
+      summary: "Admin accepted the vendor default",
+      outcome: "observed",
+      evidenceArtifactIds: [],
+      linkedFindingId: FINDING_B,
+    });
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(open));
+    const raw = window.localStorage.getItem(workspaceStateKey(engagement.id)) ?? "";
+    for (const copied of [FINDING_B, "Weak admin password", "Admin accepted"]) expect(raw).not.toContain(copied);
+
+    reload();
+    server.findings![engagement.id] = [
+      finding(FINDING_A, engagement.id),
+      finding(FINDING_B, engagement.id, { title: "Admin password reused", status: "resolved", body, revision: 1 }),
+    ];
+    const router = await renderAt(engagement.id);
+    const again = await within(await lastLeadRow()).findByRole("button", { name: /Default creds/ });
+    fireEvent.click(again);
+    expect(await within(dialog()).findByText("1. Admin accepted the vendor default")).toBeTruthy();
+    await waitFor(() => expect(linkedRows()).toEqual(["Linked finding Admin password reused · resolved"]));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Show current body" }));
+    expect(within(dialog()).getByText(body)).toBeTruthy();
+    expect(dialog().querySelector("b")).toBeNull();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(again));
+    expect(router.state.location.search).toEqual({});
+    expect(writes(fetchMock)).toEqual([`/api/v1/engagements/${engagement.id}/leads/${FIRST_ID}/attempts`]);
+  });
+
+  it("holds a finding-only choice, keeps it through a failed save, and continues the waiting route after retry", async () => {
+    const finishes: ((value: Response) => void)[] = [];
+    const bodies: Record<string, unknown>[] = [];
+    const server: Server = {
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(FIRST_ID, engagement.id)] },
+      attempts: {},
+      findings: { [engagement.id]: [finding(FINDING_A, engagement.id)] },
+      recordAttempt: (_leadId, payload) => {
+        bodies.push(payload);
+        return new Promise<Response>((resolve) => { finishes.push(resolve); });
+      },
+    };
+    serve(server);
+    remember(engagement.id, FIRST_ID);
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await within(await lastLeadRow()).findByRole("button", { name: /Default creds/ }));
+    await waitFor(() => expect(findingOptions()).toEqual(["None", "Weak admin password · open"]));
+
+    fireEvent.change(chooser(), { target: { value: FINDING_A } });
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    expect(await within(dialog()).findByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
+    await waitFor(() => expect(router.state.location.search.tab).toBeUndefined());
+    expect(chooser().value).toBe(FINDING_A);
+
+    fireEvent.change(within(dialog()).getByLabelText("Attempt summary"), { target: { value: "Vendor default accepted" } });
+    fireEvent.change(within(dialog()).getByLabelText("Conditions, optional"), { target: { value: "Over HTTP only" } });
+    fireEvent.change(within(dialog()).getByLabelText("Outcome"), { target: { value: "inconclusive" } });
+    fireEvent.change(within(dialog()).getByLabelText("Evidence artifact ids, comma separated"), { target: { value: "proof-1, proof-2" } });
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    await waitFor(() => expect(finishes).toHaveLength(1));
+    expect(within(dialog()).getByRole<HTMLButtonElement>("button", { name: "Saving" }).disabled).toBe(true);
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    finishes[0]?.(response({ code: "storage_busy" }, 503));
+    expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(chooser().value).toBe(FINDING_A);
+    expect(within(dialog()).getByDisplayValue("Vendor default accepted")).toBeTruthy();
+    expect(within(dialog()).getByDisplayValue("Over HTTP only")).toBeTruthy();
+    expect(within(dialog()).getByLabelText<HTMLSelectElement>("Outcome").value).toBe("inconclusive");
+    expect(within(dialog()).getByDisplayValue("proof-1, proof-2")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    const saved = attempt(FIRST_ID, 1, "Vendor default accepted", { linkedFindingId: FINDING_A });
+    server.attempts[FIRST_ID] = [saved];
+    finishes[1]?.(response(saved, 201));
+    await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(bodies).toEqual([1, 2].map(() => ({
+      summary: "Vendor default accepted",
+      outcome: "inconclusive",
+      conditions: "Over HTTP only",
+      evidenceArtifactIds: ["proof-1", "proof-2"],
+      linkedFindingId: FINDING_A,
+    })));
   });
 });

@@ -34,6 +34,8 @@ import {
   useSecretsQuery,
   useSuggestRevisitMutation,
 } from "./leads-query.js";
+import { AttemptFindingChooser, LinkedFinding, findingLinkProblem } from "./attempt-finding.js";
+import { openingFindingsRead, useOpeningFindingsQuery } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
 
 const LEAD_SOURCE_KINDS = [
@@ -380,7 +382,9 @@ export interface LeadDraftState {
 // One lead's attempts, outline, park and transition controls. The Leads tab
 // renders it inline. The Surface lead overlay passes overlay to read attempts
 // and outline again on open, drop the frame and heading it already supplies,
-// and receive draft state through onDraftChange for its close guard.
+// and receive draft state through onDraftChange for its close guard. Both
+// read the engagement's findings again on open for the optional finding a new
+// attempt names and the current state of findings saved attempts named.
 export function LeadDetail({
   archived,
   engagementId,
@@ -404,6 +408,9 @@ export function LeadDetail({
   const dismiss = useLeadTransitionMutation(engagementId, "revisit/dismiss");
   const suggest = useSuggestRevisitMutation(engagementId);
   const record = useRecordAttemptMutation(engagementId, lead.id);
+  const findingsQuery = useOpeningFindingsQuery(engagementId);
+  const findings = openingFindingsRead(findingsQuery);
+  const retryFindings = () => void findingsQuery.refetch();
   const mutations = { park, transition, close, dismiss, record };
   const [activeMutation, setActiveMutation] = useState<keyof typeof mutations>();
 
@@ -415,13 +422,16 @@ export function LeadDetail({
   const [savedOutcome, setSavedOutcome] = useState<(typeof ATTEMPT_OUTCOMES)[number]>("observed");
   const [conditions, setConditions] = useState("");
   const [evidence, setEvidence] = useState("");
+  const [findingId, setFindingId] = useState("");
   const [detailError, setDetailError] = useState<string | undefined>(undefined);
 
   // In the overlay, attempts cached before it opened are not shown as current.
   const records = overlay && !attempts.isFetchedAfterMount ? [] : attempts.data ?? [];
   const parkDraft =
     parkReason.trim().length > 0 || testedConditions.trim().length > 0;
-  const attemptDraft = summary.trim().length > 0 || conditions.trim().length > 0 || evidence.trim().length > 0 || outcome !== savedOutcome;
+  const attemptDraft =
+    summary.trim().length > 0 || conditions.trim().length > 0 || evidence.trim().length > 0 || outcome !== savedOutcome || findingId !== "";
+  const linkProblem = findingLinkProblem(findings, findingId);
   const dirty = !archived && (parkDraft || attemptDraft);
   const pending =
     park.isPending || transition.isPending || close.isPending || dismiss.isPending || suggest.isPending || record.isPending;
@@ -467,6 +477,7 @@ export function LeadDetail({
       setDetailError("Describe the attempt.");
       return;
     }
+    if (linkProblem !== undefined) return;
     setActiveMutation("record");
     record.mutate(
       {
@@ -474,6 +485,7 @@ export function LeadDetail({
         outcome,
         ...(conditions.trim().length === 0 ? {} : { conditions: conditions.trim() }),
         evidenceArtifactIds: parseEvidenceInput(evidence),
+        ...(findingId === "" ? {} : { linkedFindingId: findingId }),
       },
       {
         onSuccess: () => {
@@ -481,6 +493,7 @@ export function LeadDetail({
           setSavedOutcome(outcome);
           setConditions("");
           setEvidence("");
+          setFindingId("");
         },
       },
     );
@@ -606,6 +619,9 @@ export function LeadDetail({
                     ))}
                   </p>
                 ) : null}
+                {attempt.linkedFindingId !== null ? (
+                  <LinkedFinding findingId={attempt.linkedFindingId} read={findings} onRetry={retryFindings} />
+                ) : null}
               </li>
             ))}
           </ul>
@@ -729,8 +745,16 @@ export function LeadDetail({
               onChange={(event) => setConditions(event.target.value)}
             />
           </label>
+          <AttemptFindingChooser
+            id={`attempt-finding-${lead.id}`}
+            read={findings}
+            value={findingId}
+            disabled={readOnly || record.isPending}
+            onChange={setFindingId}
+            onRetry={retryFindings}
+          />
           <div className="flex justify-end">
-            <Button type="button" disabled={readOnly || record.isPending} onClick={doRecord}>
+            <Button type="button" disabled={readOnly || record.isPending || linkProblem !== undefined} onClick={doRecord}>
               {record.isPending ? "Saving" : "Record attempt"}
             </Button>
           </div>
