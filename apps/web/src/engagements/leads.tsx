@@ -34,6 +34,7 @@ import {
   useSecretsQuery,
   useSuggestRevisitMutation,
 } from "./leads-query.js";
+import { AttemptEvidencePicker, parseEvidenceInput } from "./attempt-evidence.js";
 import { AttemptFindingChooser, LinkedFinding, findingLinkProblem } from "./attempt-finding.js";
 import { openingFindingsRead, useOpeningFindingsQuery } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
@@ -66,13 +67,6 @@ const OBJECTIVE_KINDS: readonly ObjectiveKind[] = [
   "single_proof",
   "custom",
 ];
-
-function parseEvidenceInput(value: string): string[] {
-  return value
-    .split(/[\s,]+/)
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-}
 
 // Attempt evidence may be typed by hand, so both path segments are encoded.
 function artifactContentHref(engagementId: string, artifactId: string): string {
@@ -384,7 +378,8 @@ export interface LeadDraftState {
 // and outline again on open, drop the frame and heading it already supplies,
 // and receive draft state through onDraftChange for its close guard. Both
 // read the engagement's findings again on open for the optional finding a new
-// attempt names and the current state of findings saved attempts named.
+// attempt names and the current state of findings saved attempts named. The
+// saved-evidence picker reads its catalog only when the operator opens it.
 export function LeadDetail({
   archived,
   engagementId,
@@ -733,6 +728,13 @@ export function LeadDetail({
               />
             </label>
           </div>
+          <AttemptEvidencePicker
+            engagementId={engagementId}
+            evidenceInputId={`attempt-evidence-${lead.id}`}
+            value={evidence}
+            disabled={readOnly || record.isPending}
+            onChange={setEvidence}
+          />
           <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor={`attempt-conditions-${lead.id}`}>
             <span>Conditions, optional</span>
             <input
