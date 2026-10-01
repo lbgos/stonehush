@@ -34,9 +34,10 @@ import {
 import { EngagementAccessSection } from "./access.js";
 import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
+import { createResumeFindingDestination, type FindingDestination } from "./finding-arrival.js";
 import { ResumeLeadRow, useRememberedLead } from "./resume-lead.js";
 import { EngagementResumeView } from "./resume-view.js";
-import type { SearchDestination } from "./search-destination.js";
+import type { NoteSearchDestination } from "./search-destination.js";
 import { EngagementSearchDialog, type SearchSelection } from "./search-view.js";
 import { RunHistoryPanel } from "./run-history-panel.js";
 import { SavedScopeEditor } from "./scope-editor.js";
@@ -246,7 +247,10 @@ function EngagementSummaryLink({ engagement }: { engagement: Engagement }) {
   );
 }
 
-function destinationTab(destination: SearchDestination): EngagementTabId {
+// One-shot arrival for Notes (from Search) or Findings (from Search or Resume).
+type WorkspaceDestination = NoteSearchDestination | FindingDestination;
+
+function destinationTab(destination: WorkspaceDestination): EngagementTabId {
   return destination.kind === "note" ? "notes" : "findings";
 }
 
@@ -314,14 +318,19 @@ function EngagementDetail({
   const searchFocusEpoch = useRef(0);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [destination, setDestination] = useState<SearchDestination | null>(null);
+  const [destination, setDestination] = useState<WorkspaceDestination | null>(null);
   const destinationNonce = useRef(0);
+  const resumeArrivalContext = useRef({ run: runId, target: selectedTargetId, sel: selectedItemKey, action: pendingActionId });
+  // Back to Resume waits here for Surface to commit, then focuses the band.
+  // It holds the engagement it was started in and nothing else.
+  const [resumeReturn, setResumeReturn] = useState<string | null>(null);
   useEffect(() => {
     searchReturnRef.current = null;
     searchFocusEpoch.current += 1;
     setSearchOpen(false);
     setSearchQuery("");
     setDestination(null);
+    setResumeReturn(null);
   }, [displayed.id]);
   // Leaving the destination tab ends the destination, so returning to the
   // tab later never replays it.
@@ -330,6 +339,14 @@ function EngagementDetail({
       current === null || destinationTab(current) === activeTab ? current : null,
     );
   }, [activeTab]);
+  // Resume's return belongs to the investigation that opened it. A committed
+  // context change ends it even when the Findings tab remains mounted.
+  useEffect(() => {
+    const context = resumeArrivalContext.current;
+    if (context.run === runId && context.target === selectedTargetId && context.sel === selectedItemKey && context.action === pendingActionId) return;
+    setDestination((current) => current?.kind === "finding" && current.source === "resume" ? null : current);
+    setResumeReturn(null);
+  }, [runId, selectedTargetId, selectedItemKey, pendingActionId]);
 
   const closeSearch = () => {
     const trigger = searchReturnRef.current ?? searchTriggerRef.current;
@@ -358,10 +375,10 @@ function EngagementDetail({
   const openSearchResult = ({ query, result, target }: SearchSelection) => {
     destinationNonce.current += 1;
     const base = { nonce: destinationNonce.current, engagementId: displayed.id, query, result };
-    const next: SearchDestination =
+    const next: WorkspaceDestination =
       target.kind === "note"
         ? { ...base, kind: "note", codePointOffset: target.codePointOffset }
-        : { ...base, kind: "finding", findingId: target.findingId };
+        : { ...base, kind: "finding", source: "search", findingId: target.findingId };
     setSearchOpen(false);
     setDestination(next);
     const tab = destinationTab(next);
@@ -381,6 +398,56 @@ function EngagementDetail({
     });
   };
   const dismissDestination = () => setDestination(null);
+
+  // Route context every arrival and return carries unchanged.
+  const contextSearch = {
+    ...(runId === undefined ? {} : { run: runId }),
+    ...(selectedTargetId === undefined ? {} : { target: selectedTargetId }),
+    ...(selectedItemKey === undefined ? {} : { sel: selectedItemKey }),
+    ...actionSearch,
+  };
+
+  // A Resume finding row opens that exact saved finding. Invalid identities
+  // never become a destination. Back to Resume exists only for this arrival:
+  // leaving Findings any other way, switching engagement or reloading ends it.
+  const openResumeFinding = (identity: { engagementId: string; findingId: string }) => {
+    if (identity.engagementId !== displayed.id) return;
+    const next = createResumeFindingDestination({ ...identity, nonce: destinationNonce.current + 1 });
+    if (next === null) return;
+    destinationNonce.current = next.nonce;
+    resumeArrivalContext.current = { run: runId, target: selectedTargetId, sel: selectedItemKey, action: pendingActionId };
+    setResumeReturn(null);
+    setDestination(next);
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: displayed.id },
+      search: { tab: "findings", ...contextSearch },
+    });
+  };
+  const backToResume = () => {
+    setResumeReturn(displayed.id);
+    // A finding draft or pending save may hold this; Stay clears the return.
+    void navigate({
+      to: "/engagements/$engagementId",
+      params: { engagementId: displayed.id },
+      search: { tab: "surface", ...contextSearch },
+    });
+  };
+  // Stay on a held Back to Resume keeps the arrival; any other Stay drops it.
+  const stayOnFindings = () => {
+    if (resumeReturn !== null) setResumeReturn(null);
+    else dismissDestination();
+  };
+  useEffect(() => {
+    if (resumeReturn === null) return;
+    if (resumeReturn !== displayed.id || (activeTab !== "surface" && activeTab !== "findings")) {
+      setResumeReturn(null);
+      return;
+    }
+    if (activeTab !== "surface") return;
+    setResumeReturn(null);
+    document.querySelector<HTMLElement>("[data-resume-band]")?.focus();
+  }, [activeTab, displayed.id, resumeReturn]);
   const noteDestination =
     destination?.kind === "note" && destination.engagementId === displayed.id ? destination : undefined;
   const findingDestination =
@@ -625,6 +692,7 @@ function EngagementDetail({
                 />
               )
             }
+            onOpenFinding={openResumeFinding}
             onOpenRun={openRunFromTray}
           />
 
@@ -719,7 +787,8 @@ function EngagementDetail({
           archived={archived}
           engagementId={displayed.id}
           destination={findingDestination}
-          onNavigationStay={dismissDestination}
+          onBackToResume={backToResume}
+          onNavigationStay={stayOnFindings}
           onDismissDestination={dismissDestination}
           onSearchAgain={reopenSearch}
           {...(advisorDraft.open

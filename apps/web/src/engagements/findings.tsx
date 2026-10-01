@@ -12,17 +12,16 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 
 import { findingMutationMessage, isFindingRevisionConflict } from "./errors.js";
+import { readFindingDestination, resolveFindingDestination, type FindingDestination } from "./finding-arrival.js";
 import {
   useCreateFindingMutation,
   useFindingTransitionMutation,
   useFindingsQuery,
   useUpdateFindingMutation,
   findingsQueryKey,
-  fetchFindings,
 } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
 import { takePendingFindingExcerpt, useExcerptsQuery } from "./run-output-query.js";
-import { resolveFindingMatch, type FindingSearchDestination } from "./search-destination.js";
 import { useNotesDraftGuard } from "./notes-guard.js";
 import { SearchDestinationNotice } from "./search-view.js";
 
@@ -35,9 +34,10 @@ const SEVERITY_OPTIONS = ["info", "low", "medium", "high", "critical"] as const;
 // submit. Prefill inherits the operator target note, the stable source
 // reference, and the masked excerpt text.
 
-// A search destination names one finding id. The list is refetched first so
-// a finding deleted since the search reads as unavailable instead of
-// landing on a stale row or on another finding.
+// A Search or Resume destination names one finding id. The list is
+// refetched first so a finding deleted since then reads as unavailable
+// instead of landing on a stale row or on another finding. Search also
+// requires its matched passage; Resume opens the current saved record.
 interface FindingArrival {
   readonly nonce: number;
   readonly findingId: string;
@@ -49,6 +49,7 @@ export function EngagementFindingsSection({
   engagementId,
   selection,
   destination,
+  onBackToResume,
   onDismissDestination,
   onSearchAgain,
   onNavigationStay,
@@ -62,7 +63,8 @@ export function EngagementFindingsSection({
       }
     | undefined;
   onNavigationStay?: (() => void) | undefined;
-  destination?: FindingSearchDestination | undefined;
+  destination?: FindingDestination | undefined;
+  onBackToResume?: (() => void) | undefined;
   onDismissDestination?: (() => void) | undefined;
   onSearchAgain?: ((query: string) => void) | undefined;
 }) {
@@ -78,23 +80,22 @@ export function EngagementFindingsSection({
   useEffect(() => {
     if (destination === undefined) {
       setArrival(null);
+      // Dismissing an arrival without records restores the ordinary list
+      // request that its validation cancelled.
+      if (arrival !== null && findings.data === undefined) void findings.refetch();
       return;
     }
     const controller = new AbortController();
     const { nonce, findingId } = destination;
     setArrival({ nonce, findingId, status: "checking" });
-    void fetchFindings(engagementId, controller.signal)
-      .then((records) => {
-        if (controller.signal.aborted) return;
-        if (records.some((finding) => finding.engagementId !== engagementId)) throw new Error("Findings engagement mismatch");
-        const found = records.find((finding) => finding.id === findingId && finding.engagementId === engagementId);
-        const status = found === undefined ? "missing" : resolveFindingMatch(found, destination) ? "found" : "changed";
-        queryClient.setQueryData(findingsQueryKey(engagementId), records);
-        setArrival({ nonce, findingId, status });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setArrival({ nonce, findingId, status: "error" });
-      });
+    // An older ordinary list request must not replace this arrival's fresh
+    // validated records after they are published to the shared cache.
+    void queryClient.cancelQueries({ queryKey: findingsQueryKey(engagementId), exact: true });
+    void readFindingDestination(engagementId, destination, controller.signal).then((read) => {
+      if (read === null || controller.signal.aborted) return;
+      if (read.status !== "error") queryClient.setQueryData(findingsQueryKey(engagementId), read.records);
+      setArrival({ nonce, findingId, status: read.status });
+    });
     return () => {
       controller.abort();
     };
@@ -110,9 +111,23 @@ export function EngagementFindingsSection({
     if (typeof notice.scrollIntoView === "function") notice.scrollIntoView({ block: "nearest" });
   }, [noticeKey]);
 
+  // Focus only while the displayed list still resolves this exact arrival.
   const focus =
-    arrival?.status === "found" && arrival.nonce === destination?.nonce && findings.data?.some((finding) =>
-      resolveFindingMatch(finding, destination)) ? { findingId: arrival.findingId, nonce: arrival.nonce } : undefined;
+    arrival?.status === "found" && destination !== undefined && arrival.nonce === destination.nonce &&
+    findings.data !== undefined && resolveFindingDestination(findings.data, destination, engagementId).status === "found"
+      ? { findingId: arrival.findingId, nonce: arrival.nonce }
+      : undefined;
+  const retryArrival = () => setCheckSeq((current) => current + 1);
+  const arrivalMessage = arrival === null || arrival.status === "found" || arrival.nonce !== destination?.nonce ? null : (
+    <p className={`m-0 ${arrival.status === "error" ? "text-destructive" : ""}`}>
+      {arrival.status === "checking"
+        ? "Checking saved findings"
+        : arrival.status === "error"
+          ? "Saved findings could not be loaded."
+          : arrival.status === "changed" ? "Match changed. The saved finding no longer has this passage."
+          : "Finding unavailable. It is no longer saved in this engagement."}
+    </p>
+  );
 
   const body = findings.data !== undefined ? (
     <FindingsBody
@@ -127,33 +142,49 @@ export function EngagementFindingsSection({
 
   return (
     <section aria-label="Findings" className="mt-5 border-t border-border pt-4">
-      <header className="mb-3">
-        <h2 className="m-0 text-[13px] font-semibold">Findings</h2>
-        <p className="mt-1 mb-0 text-[12px] leading-5 text-muted-foreground">
-          Compact finding list for CTF reporting. Create, edit, resolve, and reopen per
-          engagement.
-        </p>
+      <header className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="m-0 text-[13px] font-semibold">Findings</h2>
+          <p className="mt-1 mb-0 text-[12px] leading-5 text-muted-foreground">
+            Compact finding list for CTF reporting. Create, edit, resolve, and reopen per
+            engagement.
+          </p>
+        </div>
+        {destination?.source === "resume" && onBackToResume !== undefined ? (
+          <Button type="button" variant="secondary" className="shrink-0" onClick={onBackToResume}>
+            Back to Resume
+          </Button>
+        ) : null}
       </header>
-      {destination !== undefined && arrival !== null && arrival.status !== "found" ? (
+      {destination?.source === "search" && arrivalMessage !== null ? (
         <SearchDestinationNotice
           noticeRef={noticeRef}
           onDismiss={() => onDismissDestination?.()}
-          onRetry={arrival.status === "error" ? () => setCheckSeq((current) => current + 1) : undefined}
+          onRetry={arrival?.status === "error" ? retryArrival : undefined}
           onSearchAgain={
-            (arrival.status === "missing" || arrival.status === "changed") && onSearchAgain !== undefined
+            (arrival?.status === "missing" || arrival?.status === "changed") && onSearchAgain !== undefined
               ? () => onSearchAgain(destination.query)
               : undefined
           }
         >
-          <p className={`m-0 ${arrival.status === "error" ? "text-destructive" : ""}`}>
-            {arrival.status === "checking"
-              ? "Checking saved findings"
-              : arrival.status === "error"
-                ? "Saved findings could not be loaded."
-                : arrival.status === "changed" ? "Match changed. The saved finding no longer has this passage."
-                : "Finding unavailable. It is no longer saved in this engagement."}
-          </p>
+          {arrivalMessage}
         </SearchDestinationNotice>
+      ) : null}
+      {destination?.source === "resume" && arrivalMessage !== null ? (
+        <div
+          ref={noticeRef}
+          role="status"
+          aria-label="Finding from Resume"
+          tabIndex={-1}
+          className="mb-3 flex min-h-11 flex-wrap items-center gap-x-3 text-[12px] leading-5 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {arrivalMessage}
+          {arrival?.status === "error" ? (
+            <Button type="button" variant="quiet" onClick={retryArrival}>
+              Retry
+            </Button>
+          ) : null}
+        </div>
       ) : null}
       {!hasData && findings.isFetching ? (
         <LoadingRegion label="Loading findings" className="space-y-3">
@@ -277,7 +308,7 @@ function FindingsBody({
 
   return (
     <div className="grid gap-4">
-      <FindingDraftGuard active={!archived && (create.isPending || title.length > 0 || body.length > 0 || severity !== "medium" || linkedExcerpt !== null)} onStay={onNavigationStay} />
+      <FindingDraftGuard active={!archived && (create.isPending || title.length > 0 || body.length > 0 || severity !== "medium" || linkedExcerpt !== null)} pending={create.isPending} onStay={onNavigationStay} />
       <div>
         {records.length === 0 ? (
           <div className="rounded-[10px] border border-border px-4 py-8 text-center">
@@ -456,7 +487,7 @@ function FindingRow({
   archived: boolean;
   engagementId: string;
   finding: Finding;
-  /** Set while this row is a search destination; each new value focuses it once. */
+  /** Set while this row is the arrival destination; each new value focuses it once. */
   focusNonce?: number | undefined;
   onNavigationStay?: (() => void) | undefined;
   pending: boolean;
@@ -552,7 +583,7 @@ function FindingRow({
       aria-current={focusNonce === undefined ? undefined : "true"}
       className={`rounded-[10px] border px-3 py-2.5 ${focusNonce === undefined ? "border-border" : "border-foreground"}`}
     >
-      <FindingDraftGuard active={!archived && editing && (update.isPending || draftTitle !== editBase.current.title || draftSeverity !== editBase.current.severity || draftBody !== editBase.current.body)} onStay={onNavigationStay} />
+      <FindingDraftGuard active={!archived && editing && (update.isPending || draftTitle !== editBase.current.title || draftSeverity !== editBase.current.severity || draftBody !== editBase.current.body)} pending={update.isPending} onStay={onNavigationStay} />
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p
@@ -717,16 +748,16 @@ function FindingRow({
 }
 
 /** Protect create and edit drafts when routing out of Findings. */
-function FindingDraftGuard({ active, onStay }: { active: boolean; onStay?: (() => void) | undefined }) {
+function FindingDraftGuard({ active, pending, onStay }: { active: boolean; pending: boolean; onStay?: (() => void) | undefined }) {
   const blocker = useNotesDraftGuard(active);
   if (blocker.status !== "blocked") return null;
   return (
     <section role="alertdialog" aria-label="Unsaved finding" className="mb-3 border border-border px-3 py-3">
       <h3 className="m-0 text-[13px] font-semibold">Unsaved finding</h3>
-      <p className="mt-1 text-[12px] text-muted-foreground">Leaving now will discard this finding draft.</p>
+      <p className="mt-1 text-[12px] text-muted-foreground">{pending ? "Saving. Leave is available after the save finishes." : "Leaving now will discard this finding draft."}</p>
       <div className="flex gap-2">
         <Button type="button" autoFocus onClick={() => { onStay?.(); blocker.reset?.(); }}>Stay</Button>
-        <Button type="button" variant="secondary" onClick={() => blocker.proceed?.()}>Leave</Button>
+        <Button type="button" variant="secondary" disabled={pending} onClick={() => { if (!pending) blocker.proceed?.(); }}>Leave</Button>
       </div>
     </section>
   );
