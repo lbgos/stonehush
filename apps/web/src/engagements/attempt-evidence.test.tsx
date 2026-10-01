@@ -260,6 +260,21 @@ async function openFromSurface(engagementId = engagement.id) {
   return { router, opener };
 }
 
+async function openFocusForm(origin: "inline" | "resume") {
+  if (origin === "inline") {
+    await renderAt(engagement.id, "?tab=leads");
+    fireEvent.click(await screen.findByRole("button", { name: "Detail" }));
+    return (await screen.findByText("Lead detail")).parentElement!.parentElement!;
+  }
+  window.localStorage.setItem(workspaceStateKey(engagement.id), JSON.stringify({ version: 1, lastLeadId: LEAD_ID }));
+  await renderAt(engagement.id, "");
+  const resume = await screen.findByRole("region", { name: "Resume" });
+  const lastLead = await within(resume).findByRole("region", { name: "Last lead" });
+  fireEvent.click(await within(lastLead).findByRole("button", { name: /Default creds/ }));
+  await within(dialog()).findByLabelText("Attempt summary");
+  return dialog();
+}
+
 function dialog() {
   return screen.getByRole("dialog");
 }
@@ -593,6 +608,98 @@ describe("choose saved evidence while recording a lead attempt", () => {
     await waitFor(() => expect(rowButton(picker, "Add", TWIN_B).disabled).toBe(false));
     expect(evidenceField(dialog()).value).toBe(TWIN_A);
     expect(within(picker).getByText(/1 typed ID is not in this list and stays as typed\./)).toBeTruthy();
+  });
+
+  it.each(["inline", "resume"] as const)("keeps focused Retry inside the %s picker through loading and success", async (origin) => {
+    let retry = false;
+    let finishRead: (value: Response) => void = () => undefined;
+    const fetchMock = serve({
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(LEAD_ID, engagement.id)] },
+      attempts: {},
+      readReport: () => retry ? new Promise<Response>((resolve) => { finishRead = resolve; }) : response({ code: "storage_busy" }, 503),
+    });
+    const form = await openFocusForm(origin);
+    fireEvent.change(evidenceField(form), { target: { value: "manual-ref" } });
+    const picker = await openPicker(form);
+    await within(picker).findByText("Saved evidence could not be read. Typed IDs can still be recorded.");
+    const button = within(picker).getByRole("button", { name: "Retry saved evidence" });
+    button.focus();
+    retry = true;
+    fireEvent.click(button, { detail: 0 });
+    await within(picker).findByText("Loading saved evidence");
+    const filter = within(picker).getByLabelText("Filter saved evidence");
+    expect(document.activeElement).toBe(filter);
+    finishRead(response(report(engagement.id, [artifact(TWIN_A)])));
+    await within(picker).findByRole("button", { name: `Add ${TWIN_A}` });
+    expect(document.activeElement).toBe(filter);
+    expect(evidenceField(form).value).toBe("manual-ref");
+    expect(writes(fetchMock)).toEqual([]);
+  });
+
+  it.each(["inline", "resume"] as const)("keeps focused Remove on its metadata when the %s picker refresh failed", async (origin) => {
+    let failRead = false;
+    const fetchMock = serve({
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(LEAD_ID, engagement.id)] },
+      attempts: {},
+      readReport: () => failRead ? response({ code: "storage_busy" }, 503) : response(report(engagement.id, [artifact(TWIN_A), artifact(TWIN_B)])),
+    });
+    const form = await openFocusForm(origin);
+    let picker = await openPicker(form);
+    await within(picker).findByText("2 saved artifacts.");
+    fireEvent.change(evidenceField(form), { target: { value: `manual-ref, ${TWIN_A}` } });
+    failRead = true;
+    fireEvent.click(within(form).getByRole("button", { name: "Hide saved evidence" }));
+    picker = await openPicker(form);
+    await within(picker).findByText("Refresh failed. Showing the list as last read. Retry to add from it.");
+    const remove = rowButton(picker, "Remove", TWIN_A);
+    const row = remove.closest("li");
+    remove.focus();
+    fireEvent.click(remove, { detail: 0 });
+    expect(rowButton(picker, "Add", TWIN_A).disabled).toBe(true);
+    expect(document.activeElement).toBe(row);
+    expect(evidenceField(form).value).toBe("manual-ref");
+    expect(writes(fetchMock)).toEqual([]);
+  });
+
+  it("does not move manual input focus on a programmatic Retry, Remove or later read completion", async () => {
+    let failRead = false;
+    let finishRead: (value: Response) => void = () => undefined;
+    let holdRead = false;
+    serve({
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(LEAD_ID, engagement.id)] },
+      attempts: {},
+      readReport: () => holdRead ? new Promise<Response>((resolve) => { finishRead = resolve; }) : failRead ? response({ code: "storage_busy" }, 503) : response(report(engagement.id, [artifact(TWIN_A)])),
+    });
+    const form = await openFocusForm("inline");
+    let picker = await openPicker(form);
+    const add = await within(picker).findByRole("button", { name: `Add ${TWIN_A}` });
+    add.focus();
+    fireEvent.click(add);
+    expect(document.activeElement).toBe(rowButton(picker, "Remove", TWIN_A));
+    fireEvent.click(rowButton(picker, "Remove", TWIN_A));
+    expect(document.activeElement).toBe(rowButton(picker, "Add", TWIN_A));
+    fireEvent.change(evidenceField(form), { target: { value: `manual-ref, ${TWIN_A}` } });
+    failRead = true;
+    fireEvent.click(within(form).getByRole("button", { name: "Hide saved evidence" }));
+    picker = await openPicker(form);
+    await within(picker).findByText("Refresh failed. Showing the list as last read. Retry to add from it.");
+    const field = evidenceField(form);
+    field.focus();
+    fireEvent.click(rowButton(picker, "Remove", TWIN_A));
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe("manual-ref");
+    holdRead = true;
+    fireEvent.click(within(picker).getByRole("button", { name: "Retry saved evidence" }));
+    await within(picker).findByText("Checking saved evidence. Showing the list as last read.");
+    expect(document.activeElement).toBe(field);
+    fireEvent.change(field, { target: { value: "manual-ref, outside-window" } });
+    finishRead(response(report(engagement.id, [artifact(TWIN_B)])));
+    await within(picker).findByRole("button", { name: `Add ${TWIN_B}` });
+    expect(document.activeElement).toBe(field);
+    expect(field.value).toBe("manual-ref, outside-window");
   });
 
   it("aborts a read when the picker hides and ignores its late answer", async () => {

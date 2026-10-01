@@ -238,7 +238,15 @@ export function AttemptEvidencePicker({
             <div className="flex flex-wrap items-center justify-between gap-2" role="status">
               <p className="m-0 min-w-0 flex-1 text-[11px] leading-5 text-muted-foreground">{status.text}</p>
               {status.retry ? (
-                <Button type="button" variant="secondary" className="min-h-11 md:min-h-11" onClick={read}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-11 md:min-h-11"
+                  onClick={(event) => {
+                    if (document.activeElement === event.currentTarget) filterRef.current?.focus();
+                    read();
+                  }}
+                >
                   Retry saved evidence
                 </Button>
               ) : null}
@@ -289,8 +297,11 @@ export function AttemptEvidencePicker({
                       aria-label={`${chosen ? "Remove" : "Add"} ${row.artifactId}`}
                       aria-controls={evidenceInputId}
                       disabled={disabled || (!chosen && (!fresh || atLimit))}
-                      onClick={() => {
+                      onClick={(event) => {
                         if (chosen) {
+                          if (!fresh && document.activeElement === event.currentTarget) {
+                            event.currentTarget.closest<HTMLLIElement>("li")?.focus();
+                          }
                           onChange(removeEvidenceId(value, row.artifactId));
                           return;
                         }
