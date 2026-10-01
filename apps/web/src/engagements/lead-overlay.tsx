@@ -13,53 +13,64 @@ import { createPortal } from "react-dom";
 
 import { focusSurfaceRow, restoreSurfacePosition, type LeadOpenRequest } from "./inspector.js";
 import { LeadDetail, type LeadDraftState } from "./leads.js";
-import { LeadNotFoundError, useLeadQuery } from "./leads-query.js";
+import { exactLeadRead, useLeadQuery } from "./leads-query.js";
 
-// Continue an evidence-linked lead from the Surface inspector. The inspector
-// stays mounted underneath. The overlay reads the exact lead again before
-// showing its detail, reuses the Leads tab detail for attempts and park, and
-// returns focus to the linked lead button that opened it. An unsaved draft,
-// an in-flight write, or a failed held route guards Close, Escape, the backdrop,
-// and route changes.
+// Continue a lead over Surface, from an inspector's linked lead button or from
+// the Resume band. Surface stays mounted underneath with its route unchanged.
+// The overlay reads the exact lead again before showing its detail, reuses
+// the Leads tab detail for attempts and park, and returns focus to its
+// opener. An unsaved draft, an in-flight write, or a failed held route guards
+// Close, Escape, the backdrop, and route changes.
 
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 const NO_DRAFT: LeadDraftState = { dirty: false, pending: false, failed: false };
 
-type LeadView =
-  | { readonly state: "loading" }
-  | { readonly state: "missing" }
-  | { readonly state: "failed" }
-  | { readonly state: "moved" }
-  | { readonly state: "ready"; readonly lead: Lead; readonly stale: boolean };
+// Who opened the overlay. A Surface opener names the evidence the lead must
+// still reference and the row focus returns to. Resume names only the lead
+// and its button; it never stands in for an inspector selection.
+export type LeadOverlayOrigin =
+  | { readonly kind: "surface"; readonly request: LeadOpenRequest }
+  | {
+      readonly kind: "resume";
+      readonly leadId: string;
+      readonly trigger: HTMLElement | null;
+      // Drops the remembered pointer after the server says the lead is gone.
+      readonly onForget: () => void;
+    };
+
+export function overlayLeadId(origin: LeadOverlayOrigin): string {
+  return origin.kind === "surface" ? origin.request.leadId : origin.leadId;
+}
+
+type LeadView = ReturnType<typeof exactLeadRead> | { readonly state: "moved" };
 
 // The query belongs to this opening. A different id or engagement, or a
-// lead whose source no longer names this evidence, cannot become editable.
+// Surface lead whose source no longer names its evidence, cannot become
+// editable.
 function leadView(
   query: ReturnType<typeof useLeadQuery>,
-  request: LeadOpenRequest,
+  origin: LeadOverlayOrigin,
   engagementId: string,
 ): LeadView {
-  if (query.isError && query.error instanceof LeadNotFoundError) return { state: "missing" };
-  const lead = query.data;
-  if (lead !== undefined) {
-    if (lead.id !== request.leadId || lead.engagementId !== engagementId) return { state: "failed" };
-    if (lead.source.ref !== request.artifactId) return { state: "moved" };
-    return { state: "ready", lead, stale: query.isError };
+  const read = exactLeadRead(query, engagementId, overlayLeadId(origin));
+  if (read.state === "ready" && origin.kind === "surface" && read.lead.source.ref !== origin.request.artifactId) {
+    return { state: "moved" };
   }
-  if (query.isFetching || !query.isError) return { state: "loading" };
-  return query.error instanceof LeadNotFoundError ? { state: "missing" } : { state: "failed" };
+  return read;
 }
 
 export interface LeadOverlayProps {
   readonly archived: boolean;
   readonly engagementId: string;
-  readonly request: LeadOpenRequest;
+  readonly origin: LeadOverlayOrigin;
   readonly onClose: () => void;
+  // Called with the lead each time a fresh read validates for this origin.
+  readonly onValidRead?: ((lead: Lead) => void) | undefined;
 }
 
-export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOverlayProps) {
+export function LeadOverlay({ archived, engagementId, origin, onClose, onValidRead }: LeadOverlayProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const resumeFocusRef = useRef<HTMLElement | null>(null);
@@ -68,8 +79,8 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
   const [draft, setDraft] = useState<LeadDraftState>(NO_DRAFT);
   const [confirmClose, setConfirmClose] = useState(false);
   const [failedNavigation, setFailedNavigation] = useState(false);
-  const query = useLeadQuery(engagementId, request.leadId);
-  const view = leadView(query, request, engagementId);
+  const query = useLeadQuery(engagementId, overlayLeadId(origin));
+  const view = leadView(query, origin, engagementId);
   const validatedLead = useRef<Lead | undefined>(undefined);
   if (view.state === "ready") validatedLead.current = view.lead;
   // Keep the mounted form and its draft during later invalid reads, but
@@ -78,6 +89,11 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
   // Draft state belongs to the mounted detail; without it nothing is held.
   const held = lead === undefined ? NO_DRAFT : draft;
   const guarded = held.dirty || held.pending || failedNavigation;
+  const fresh = view.state === "ready" && !view.stale && !query.isFetching ? view.lead : undefined;
+
+  useEffect(() => {
+    if (fresh !== undefined) onValidRead?.(fresh);
+  }, [fresh, onValidRead]);
 
   const shouldBlockFn = useCallback(() => guarded, [guarded]);
   const blocker = useBlocker({
@@ -106,11 +122,20 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
     }
   }, [navigationBlocked, held.dirty, held.pending, held.failed, blocker, onClose]);
 
-  // The opening button first, then the inspector it lived in, then its row.
+  // Surface: the opening button first, then the inspector it lived in, then
+  // its row. Resume: its lead button, then the Resume band.
   const close = () => {
     onClose();
     requestAnimationFrame(() => {
       restoreSurfacePosition(scrollY, undefined);
+      if (origin.kind === "resume") {
+        const target = origin.trigger?.isConnected === true
+          ? origin.trigger
+          : document.querySelector<HTMLElement>("[data-resume-lead-open]") ?? document.querySelector<HTMLElement>("[data-resume-band]");
+        target?.focus({ preventScroll: true });
+        return;
+      }
+      const request = origin.request;
       const context = request.returnContext;
       if (context?.trigger?.isConnected !== true) {
         const inspector = document.querySelector<HTMLElement>('[aria-label="Selection inspector"]');
@@ -209,6 +234,12 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
   });
 
   const retry = () => void query.refetch();
+  // The lead is gone, so the pointer goes at once. A draft still asks first.
+  const forget = () => {
+    if (origin.kind !== "resume" || held.pending) return;
+    origin.onForget();
+    attemptClose();
+  };
 
   return createPortal(
     <div className="fixed inset-0 z-[70] grid place-items-center p-4 sm:p-6">
@@ -252,16 +283,25 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
               <span>{lead.disposition}</span>
               <span aria-hidden="true">·</span>
               <span className="font-mono" title={lead.id}>
-                {request.idSuffix ?? lead.id.slice(-8)}
+                {(origin.kind === "surface" ? origin.request.idSuffix : undefined) ?? lead.id.slice(-8)}
               </span>
-              <span aria-hidden="true">·</span>
+              {origin.kind === "surface" ? <span aria-hidden="true">·</span> : null}
             </>
           ) : null}
-          <span className="min-w-0 break-all font-mono">evidence {request.artifactId}</span>
+          {origin.kind === "surface" ? (
+            <span className="min-w-0 break-all font-mono">evidence {origin.request.artifactId}</span>
+          ) : null}
         </p>
-        <p className="m-0 mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={request.sourceText}>
-          Opened from {request.sourceText}
-        </p>
+        {origin.kind === "surface" ? (
+          <p className="m-0 mt-0.5 truncate font-mono text-[11px] text-muted-foreground" title={origin.request.sourceText}>
+            Opened from {origin.request.sourceText}
+          </p>
+        ) : (
+          <p className="m-0 mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+            Opened from Resume
+            {lead !== undefined ? ` · saved source ${lead.source.label ?? `${lead.source.kind}:${lead.source.ref}`}` : null}
+          </p>
+        )}
 
         {prompt ? (
           <div className="mt-3 rounded-md border border-border px-3 py-2" role="alert">
@@ -298,17 +338,25 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
               <Skeleton className="h-16 w-full" />
             </LoadingRegion>
           ) : null}
-          {view.state === "missing" ? (
+          {view.state === "missing" && origin.kind === "surface" ? (
             <RecoverableError
               title="Lead not found"
               description="This lead is no longer in this engagement. Close to return to the inspector."
               onRetry={retry}
             />
           ) : null}
-          {view.state === "moved" ? (
+          {view.state === "missing" && origin.kind === "resume" ? (
+            <RecoverableError
+              title="Lead not found"
+              description="This remembered lead is no longer in this engagement."
+              retryLabel="Forget lead"
+              onRetry={forget}
+            />
+          ) : null}
+          {view.state === "moved" && origin.kind === "surface" ? (
             <RecoverableError
               title="Lead source changed"
-              description={`This lead no longer references evidence ${request.artifactId}.`}
+              description={`This lead no longer references evidence ${origin.request.artifactId}.`}
               onRetry={retry}
             />
           ) : null}
