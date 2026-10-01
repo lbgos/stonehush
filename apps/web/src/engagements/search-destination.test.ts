@@ -109,8 +109,11 @@ describe("resolveNotePassage", () => {
     });
   });
 
-  it("names a title-only match instead of inventing a passage", () => {
+  it("keeps the API title anchor even when the body also matches", () => {
     expect(resolveAgainst(saved, saved, "notes")).toEqual({ status: "title" });
+    const bodyMatch = "environment leak on /admin";
+    expect(noteResult(bodyMatch, "ment").anchor).toBe("note:notes@0");
+    expect(resolveAgainst(bodyMatch, bodyMatch, "ment")).toEqual({ status: "title" });
   });
 });
 

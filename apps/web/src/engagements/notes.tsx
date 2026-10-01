@@ -291,7 +291,7 @@ function NoteArrivalCopy({ arrival }: { arrival: NoteArrival }) {
     );
   }
   const { passage, saved } = arrival;
-  if (passage.status === "title") return <p className="m-0">Only the notes title matches. No saved passage.</p>;
+  if (passage.status === "title") return <p className="m-0">Match is in the notes title. Search a longer phrase to open a passage.</p>;
   if (passage.status === "changed") {
     return <p className="m-0">Match changed. The saved notes no longer have this passage.</p>;
   }
