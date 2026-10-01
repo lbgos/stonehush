@@ -785,7 +785,9 @@ export function SurfaceInspector({
 
   useEffect(() => {
     setCopied(undefined);
-    asideRef.current?.focus({ preventScroll: true });
+    // A retained inspector can mount after a Resume return has focused the
+    // band. Preserve that explicit return target, including delayed reads.
+    if (!document.activeElement?.hasAttribute("data-resume-band")) asideRef.current?.focus({ preventScroll: true });
   }, [selectionKey]);
 
   const onAsideKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {

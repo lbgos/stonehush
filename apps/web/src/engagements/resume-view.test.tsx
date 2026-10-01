@@ -86,13 +86,24 @@ function stub(
   return fetchMock;
 }
 
-function renderView(props: { archived?: boolean; onOpenRun?: (runId: string) => void } = {}) {
+function renderView(
+  props: {
+    archived?: boolean;
+    onOpenFinding?: (identity: { engagementId: string; findingId: string }) => void;
+    onOpenRun?: (runId: string) => void;
+  } = {},
+) {
   const client = createAppQueryClient();
   clients.add(client);
   return render(
     <ThemeProvider>
       <QueryClientProvider client={client}>
-        <EngagementResumeView engagementId={id} archived={props.archived ?? false} onOpenRun={props.onOpenRun} />
+        <EngagementResumeView
+          engagementId={id}
+          archived={props.archived ?? false}
+          onOpenFinding={props.onOpenFinding}
+          onOpenRun={props.onOpenRun}
+        />
       </QueryClientProvider>
     </ThemeProvider>,
   );
@@ -133,6 +144,28 @@ describe("EngagementResumeView", () => {
     fireEvent.click(within(list).getByRole("button", { name: `Run ${runId} succeeded.` }));
     expect(onOpenRun).toHaveBeenCalledWith(runId);
     expect(within(list).getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("opens finding rows by exact id with their recorded time and keeps invalid ids plain", async () => {
+    const findingId = "20000000-0000-4000-8000-000000000002";
+    const changes: EngagementResumeResponse["changes"] = [
+      { kind: "finding", id: findingId, at: "2026-08-13T12:00:00.000Z", summary: "Finding recorded: Admin panel.", snapshot: false },
+      { kind: "finding", id: "20000000-0000-4000-8000-000000000001", at: "2026-08-13T11:00:00.000Z", summary: "Finding recorded: Admin panel.", snapshot: false },
+      { kind: "finding", id: "../findings", at: "2026-08-13T10:00:00.000Z", summary: "Finding recorded: Bad id.", snapshot: false },
+      { kind: "note", id: "notes", at: "2026-08-13T09:00:00.000Z", summary: "Engagement notes updated.", snapshot: false },
+    ];
+    stub(() => response(resume({ changes })));
+    const onOpenFinding = vi.fn();
+    renderView({ onOpenFinding });
+    const list = await screen.findByRole("list");
+    const sameTitle = within(list).getAllByRole("button", { name: "Finding recorded: Admin panel." });
+    expect(sameTitle).toHaveLength(2);
+    fireEvent.click(sameTitle[0]!);
+    expect(onOpenFinding).toHaveBeenCalledExactlyOnceWith({ engagementId: id, findingId });
+    expect(within(list).getAllByRole("button")).toHaveLength(2);
+    expect(within(list).getByText("Finding recorded: Bad id.").tagName).toBe("SPAN");
+    expect(within(list).getByText("Engagement notes updated.").tagName).toBe("SPAN");
+    expect(within(list).getByText("13 Aug 2026, 12:00 UTC").getAttribute("datetime")).toBe("2026-08-13T12:00:00.000Z");
   });
 
   it("saves with Enter from the next-step input", async () => {

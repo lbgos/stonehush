@@ -1,4 +1,4 @@
-import { EngagementNextStepSchema, type EngagementResumeResponse } from "@stonehush/contracts";
+import { EngagementNextStepSchema, FindingIdParamsSchema, type EngagementResumeResponse } from "@stonehush/contracts";
 import { Button } from "@stonehush/ui";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -52,15 +52,18 @@ function RecentChangesHeader({ children }: { children?: ReactNode }) {
 /**
  * Newest changes first, eight by default. The toggle sits above the list so
  * collapsing a long list keeps it, and its focus, in place. Run ids are the
- * run store ids the Runs tab selects by, so run rows open that run; other
- * kinds have no exact destination and stay plain.
+ * run store ids the Runs tab selects by, so run rows open that run. Finding
+ * rows with a valid id open that saved finding. Other kinds have no exact
+ * destination and stay plain. A finding's time is when it was recorded.
  */
 export function ResumeChangeList({
   resume,
+  onOpenFinding,
   onOpenRun,
   status,
 }: {
   resume: EngagementResumeResponse;
+  onOpenFinding?: ((identity: { engagementId: string; findingId: string }) => void) | undefined;
   onOpenRun?: ((runId: string) => void) | undefined;
   status?: ReactNode;
 }) {
@@ -95,32 +98,41 @@ export function ResumeChangeList({
         <p className="m-0 text-[12px] leading-5 text-muted-foreground">No changes recorded.</p>
       ) : (
         <ol id={listId} className="m-0 list-none p-0">
-          {visible.map((change) => (
-            <li
-              key={`${change.kind}:${change.id}`}
-              className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-baseline gap-x-3 text-[12px] leading-[22px]"
-            >
-              <span className="text-muted-foreground">{changeKindLabel(change.kind)}</span>
-              {change.kind === "run" && onOpenRun !== undefined ? (
-                <button
-                  type="button"
-                  title={change.summary}
-                  onClick={() => onOpenRun(change.id)}
-                  className="min-h-11 min-w-0 truncate rounded-sm md:pointer-fine:min-h-0 text-left text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  {change.summary}
-                </button>
-              ) : (
-                <span className="min-w-0 truncate text-foreground" title={change.summary}>
-                  {change.summary}
+          {visible.map((change) => {
+            const open =
+              change.kind === "run" && onOpenRun !== undefined
+                ? () => onOpenRun(change.id)
+                : change.kind === "finding" && onOpenFinding !== undefined &&
+                    FindingIdParamsSchema.safeParse({ engagementId: resume.engagementId, findingId: change.id }).success
+                  ? () => onOpenFinding({ engagementId: resume.engagementId, findingId: change.id })
+                  : undefined;
+            return (
+              <li
+                key={`${change.kind}:${change.id}`}
+                className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-baseline gap-x-3 text-[12px] leading-[22px]"
+              >
+                <span className="text-muted-foreground">{changeKindLabel(change.kind)}</span>
+                {open !== undefined ? (
+                  <button
+                    type="button"
+                    title={change.summary}
+                    onClick={open}
+                    className="min-h-11 min-w-0 truncate rounded-sm md:pointer-fine:min-h-0 text-left text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    {change.summary}
+                  </button>
+                ) : (
+                  <span className="min-w-0 truncate text-foreground" title={change.summary}>
+                    {change.summary}
+                  </span>
+                )}
+                <span className="flex shrink-0 items-baseline gap-2 font-mono text-[11px] text-muted-foreground">
+                  {change.snapshot ? <span title="Point-in-time observation">snapshot</span> : null}
+                  <time dateTime={change.at}>{formatEngagementTimestamp(change.at)}</time>
                 </span>
-              )}
-              <span className="flex shrink-0 items-baseline gap-2 font-mono text-[11px] text-muted-foreground">
-                {change.snapshot ? <span title="Point-in-time observation">snapshot</span> : null}
-                <time dateTime={change.at}>{formatEngagementTimestamp(change.at)}</time>
-              </span>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       )}
       {resume.complete === false && visible.length === total ? (
@@ -134,12 +146,14 @@ export function EngagementResumeView({
   engagementId,
   archived,
   lead,
+  onOpenFinding,
   onOpenRun,
 }: {
   engagementId: string;
   archived: boolean;
   // Row for the remembered lead, after the deadline. Absent when none is kept.
   lead?: ReactNode;
+  onOpenFinding?: ((identity: { engagementId: string; findingId: string }) => void) | undefined;
   onOpenRun?: ((runId: string) => void) | undefined;
 }) {
   const resume = useEngagementResumeQuery(engagementId);
@@ -197,6 +211,7 @@ export function EngagementResumeView({
           <ResumeChangeList
             key={engagementId}
             resume={data}
+            onOpenFinding={onOpenFinding}
             onOpenRun={onOpenRun}
             status={
               resume.isError ? (
