@@ -1,3 +1,4 @@
+import { useId } from "react";
 import {
   CreateFindingRequestSchema,
   FindingListResponseSchema,
@@ -116,6 +117,45 @@ export function findingsQueryOptions(engagementId: string) {
 
 export function useFindingsQuery(engagementId: string) {
   return useQuery(findingsQueryOptions(engagementId));
+}
+
+// One lead detail's own read of its engagement's findings, made again on each
+// opening and never shared through the cache. A record owned by another
+// engagement fails the whole read. Finding writes still refresh it through
+// the findings key prefix.
+export function useOpeningFindingsQuery(engagementId: string) {
+  const readId = useId();
+  return useQuery({
+    queryKey: [...findingsQueryKey(engagementId), "read", readId],
+    gcTime: 0,
+    queryFn: async ({ signal }) => {
+      const findings = await fetchFindings(engagementId, signal);
+      if (
+        findings.some((finding) => finding.engagementId !== engagementId) ||
+        new Set(findings.map((finding) => finding.id)).size !== findings.length
+      ) throw new FindingsQueryError();
+      return findings;
+    },
+  });
+}
+
+// What one opening's findings read can show. `stale` marks a failed refresh
+// over records this read already returned; `checking` an unfinished one.
+export type OpeningFindingsRead =
+  | { readonly state: "loading" }
+  | { readonly state: "failed" }
+  | {
+      readonly state: "ready";
+      readonly findings: readonly Finding[];
+      readonly stale: boolean;
+      readonly checking: boolean;
+    };
+
+export function openingFindingsRead(query: ReturnType<typeof useOpeningFindingsQuery>): OpeningFindingsRead {
+  if (query.data !== undefined) {
+    return { state: "ready", findings: query.data, stale: query.isError, checking: query.isFetching };
+  }
+  return query.isError && !query.isFetching ? { state: "failed" } : { state: "loading" };
 }
 
 export function useCreateFindingMutation(engagementId: string) {
