@@ -105,6 +105,8 @@ interface Server {
   paths?: readonly Record<string, unknown>[];
   parkLead?: (leadId: string) => Response | Promise<Response>;
   closeLead?: (leadId: string) => Response | Promise<Response>;
+  reopenLead?: (leadId: string) => Response | Promise<Response>;
+  dismissRevisit?: (leadId: string) => Response | Promise<Response>;
   recordAttempt?: (leadId: string, body: Record<string, unknown>) => Response | Promise<Response>;
 }
 
@@ -148,6 +150,12 @@ function serve(server: Server) {
       }
       if (tail === "/close" && init?.method === "POST") {
         return Promise.resolve(server.closeLead?.(leadId) ?? response({ code: "invalid_request" }, 400));
+      }
+      if (tail === "/reopen" && init?.method === "POST") {
+        return Promise.resolve(server.reopenLead?.(leadId) ?? response({ code: "invalid_request" }, 400));
+      }
+      if (tail === "/revisit/dismiss" && init?.method === "POST") {
+        return Promise.resolve(server.dismissRevisit?.(leadId) ?? response({ code: "invalid_request" }, 400));
       }
       if (tail === "/outline") return Promise.resolve(response({ outline: "" }));
     }
@@ -699,6 +707,154 @@ describe("continue an evidence-linked lead from Surface", () => {
     expect(writes(fetchMock)).toHaveLength(1);
   });
 
+
+  it.each([
+    ["Close lead", "closeLead", "open"],
+    ["Reopen", "reopenLead", "parked"],
+    ["Dismiss", "dismissRevisit", "parked"],
+  ] as const)("keeps a failed draft-free %s navigation until Stay or Leave", async (operation, handler, disposition) => {
+    const finishes: ((value: Response) => void)[] = [];
+    const current = lead(OPEN_ID, engagement.id, {
+      disposition,
+      parkReason: disposition === "parked" ? "No access yet" : null,
+      revisitSuggestion: operation === "Dismiss"
+        ? { trigger: "new_access", reason: "New access may help", createdAt: TS, dismissed: false }
+        : null,
+    });
+    const server: Server = {
+      engagements: [engagement], leads: { [engagement.id]: [current] }, attempts: {},
+      [handler]: () => new Promise<Response>((resolve) => { finishes.push(resolve); }),
+    };
+    const fetchMock = serve(server);
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await within(dialog()).findByLabelText("Attempt summary");
+    const navigate = () => router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+
+    // First acknowledge with Stay, then prove a historical error does not
+    // hold a clean route or prevent the same overlay opening again.
+    fireEvent.click(within(dialog()).getByRole("button", { name: operation }));
+    await waitFor(() => expect(finishes).toHaveLength(1));
+    void navigate();
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    expect(within(dialog()).queryByRole("button", { name: "Leave" })).toBeNull();
+    expect(within(dialog()).queryByRole("button", { name: "Discard" })).toBeNull();
+    finishes[0]?.(response({ code: "storage_busy" }, 503));
+    expect(await within(dialog()).findByText("The change failed. Leave without applying it?")).toBeTruthy();
+    expect(within(dialog()).getByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Close" }));
+    expect(within(dialog()).getByText("The change failed. Leave without applying it?")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
+    await waitFor(() => expect(within(dialog()).queryByText("The change failed. Leave without applying it?")).toBeNull());
+    expect(within(dialog()).getByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+    await navigate();
+    expect(router.state.location.search.tab).toBe("notes");
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { sel: SEL } });
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await within(dialog()).findByLabelText("Attempt summary");
+    fireEvent.click(within(dialog()).getByRole("button", { name: operation }));
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    void navigate();
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    finishes[1]?.(response({ code: "storage_busy" }, 503));
+    expect(await within(dialog()).findByText("The change failed. Leave without applying it?")).toBeTruthy();
+    expect(within(dialog()).getByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Leave" }));
+    await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(writes(fetchMock)).toHaveLength(2);
+  });
+
+  it.each([
+    ["Close lead", "closeLead", "open", "closed"],
+    ["Reopen", "reopenLead", "parked", "open"],
+    ["Dismiss", "dismissRevisit", "parked", "parked"],
+  ] as const)("continues waiting navigation after a successful draft-free %s", async (operation, handler, disposition, nextDisposition) => {
+    let finish: ((value: Response) => void) | undefined;
+    const current = lead(OPEN_ID, engagement.id, {
+      disposition,
+      parkReason: disposition === "parked" ? "No access yet" : null,
+      revisitSuggestion: operation === "Dismiss"
+        ? { trigger: "new_access", reason: "New access may help", createdAt: TS, dismissed: false }
+        : null,
+    });
+    const server: Server = {
+      engagements: [engagement], leads: { [engagement.id]: [current] }, attempts: {},
+      [handler]: () => new Promise<Response>((resolve) => { finish = resolve; }),
+    };
+    serve(server);
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await within(dialog()).findByLabelText("Attempt summary");
+    fireEvent.click(within(dialog()).getByRole("button", { name: operation }));
+    await waitFor(() => expect(finish).toBeDefined());
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    const saved = { ...current, disposition: nextDisposition, revisitSuggestion: null };
+    server.leads[engagement.id] = [saved];
+    finish?.(response(saved));
+    await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("continues a new successful operation despite an older mutation error", async () => {
+    let finish: ((value: Response) => void) | undefined;
+    const current = lead(OPEN_ID, engagement.id, { disposition: "parked", parkReason: "No access yet" });
+    const server: Server = {
+      engagements: [engagement], leads: { [engagement.id]: [current] }, attempts: {},
+      closeLead: () => Promise.resolve(response({ code: "storage_busy" }, 503)),
+      reopenLead: () => new Promise<Response>((resolve) => { finish = resolve; }),
+    };
+    serve(server);
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await within(dialog()).findByLabelText("Attempt summary");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Close lead" }));
+    expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Reopen" }));
+    await waitFor(() => expect(finish).toBeDefined());
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    const saved = { ...current, disposition: "open", parkReason: null };
+    server.leads[engagement.id] = [saved];
+    finish?.(response(saved));
+    await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("continues waiting navigation when a typed failed attempt succeeds on retry", async () => {
+    const finishes: ((value: Response) => void)[] = [];
+    const server: Server = {
+      engagements: [engagement], leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] }, attempts: {},
+      recordAttempt: () => new Promise<Response>((resolve) => { finishes.push(resolve); }),
+    };
+    serve(server);
+    const router = await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await within(dialog()).findByLabelText("Attempt summary");
+    typeSummary("Retry the saved attempt");
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    await waitFor(() => expect(finishes).toHaveLength(1));
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
+    finishes[0]?.(response({ code: "storage_busy" }, 503));
+    expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(router.state.location.search.tab).toBeUndefined();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
+    await waitFor(() => expect(finishes).toHaveLength(2));
+    const saved = attempt(OPEN_ID, 1, "Retry the saved attempt");
+    server.attempts[OPEN_ID] = [saved];
+    finishes[1]?.(response(saved));
+    await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 
   it("hides cached attempts until their fresh read settles", async () => {
     let finish: ((value: Response) => void) | undefined;

@@ -24,7 +24,7 @@ import { LeadNotFoundError, useLeadQuery } from "./leads-query.js";
 const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-const NO_DRAFT: LeadDraftState = { dirty: false, pending: false };
+const NO_DRAFT: LeadDraftState = { dirty: false, pending: false, failed: false };
 
 type LeadView =
   | { readonly state: "loading" }
@@ -62,9 +62,11 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const resumeFocusRef = useRef<HTMLElement | null>(null);
+  const acknowledgedNavigationRef = useRef<(() => void) | undefined>(undefined);
   const [scrollY] = useState(() => window.scrollY);
   const [draft, setDraft] = useState<LeadDraftState>(NO_DRAFT);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [failedNavigation, setFailedNavigation] = useState(false);
   const query = useLeadQuery(engagementId, request.leadId);
   const view = leadView(query, request, engagementId);
   const validatedLead = useRef<Lead | undefined>(undefined);
@@ -74,7 +76,7 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
   const lead = view.state === "ready" ? view.lead : validatedLead.current;
   // Draft state belongs to the mounted detail; without it nothing is held.
   const held = lead === undefined ? NO_DRAFT : draft;
-  const guarded = held.dirty || held.pending;
+  const guarded = held.dirty || held.pending || failedNavigation;
 
   const shouldBlockFn = useCallback(() => guarded, [guarded]);
   const blocker = useBlocker({
@@ -93,11 +95,15 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
   // A route change held only for an in-flight write continues once the
   // write lands and nothing typed remains. A failed write keeps the prompt.
   useEffect(() => {
-    if (navigationBlocked && !held.dirty && !held.pending) {
+    if (!navigationBlocked || held.pending) return;
+    if (blocker.reset === acknowledgedNavigationRef.current) return;
+    if (held.failed) {
+      if (!held.dirty) setFailedNavigation(true);
+    } else if (!held.dirty && !failedNavigation) {
       blocker.proceed?.();
       onClose();
     }
-  }, [navigationBlocked, held.dirty, held.pending, blocker, onClose]);
+  }, [navigationBlocked, held.dirty, held.pending, held.failed, failedNavigation, blocker, onClose]);
 
   // The opening button first, then the inspector it lived in, then its row.
   const close = () => {
@@ -118,7 +124,7 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
 
   const attemptClose = () => {
     if (held.pending) return;
-    if (held.dirty) {
+    if (held.dirty || navigationBlocked) {
       resumeFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       setConfirmClose(true);
       return;
@@ -127,7 +133,13 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
   };
 
   const stay = () => {
-    if (navigationBlocked) blocker.reset?.();
+    if (navigationBlocked) {
+      // The resolver becomes idle asynchronously. Do not hold this same
+      // canceled navigation again while that update is still settling.
+      acknowledgedNavigationRef.current = blocker.reset;
+      blocker.reset?.();
+    }
+    setFailedNavigation(false);
     setConfirmClose(false);
     const resume = resumeFocusRef.current;
     resumeFocusRef.current = null;
@@ -255,7 +267,9 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
             <p className="m-0 text-[12px] text-foreground">
               {held.pending
                 ? "Saving. Leaving continues after the save finishes."
-                : "Discard the unsaved attempt or park reason?"}
+                : failedNavigation && !held.dirty
+                  ? "The change failed. Leave without applying it?"
+                  : "Discard the unsaved attempt or park reason?"}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <Button type="button" variant="secondary" autoFocus onClick={stay}>
@@ -263,7 +277,7 @@ export function LeadOverlay({ archived, engagementId, request, onClose }: LeadOv
               </Button>
               {held.pending ? null : (
                 <Button type="button" variant="quiet" onClick={discard}>
-                  Discard
+                  {failedNavigation && !held.dirty ? "Leave" : "Discard"}
                 </Button>
               )}
             </div>

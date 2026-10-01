@@ -370,10 +370,11 @@ function LeadsBody({
   );
 }
 
-/** Unsaved typed text and in-flight writes inside one LeadDetail. */
+/** Unsaved text and the active mutation inside one LeadDetail. */
 export interface LeadDraftState {
   readonly dirty: boolean;
   readonly pending: boolean;
+  readonly failed: boolean;
 }
 
 // One lead's attempts, outline, park and transition controls. The Leads tab
@@ -403,6 +404,8 @@ export function LeadDetail({
   const dismiss = useLeadTransitionMutation(engagementId, "revisit/dismiss");
   const suggest = useSuggestRevisitMutation(engagementId);
   const record = useRecordAttemptMutation(engagementId, lead.id);
+  const mutations = { park, transition, close, dismiss, record };
+  const [activeMutation, setActiveMutation] = useState<keyof typeof mutations>();
 
   const [parkReason, setParkReason] = useState("");
   const [testedConditions, setTestedConditions] = useState("");
@@ -422,9 +425,11 @@ export function LeadDetail({
   const dirty = !archived && (parkDraft || attemptDraft);
   const pending =
     park.isPending || transition.isPending || close.isPending || dismiss.isPending || suggest.isPending || record.isPending;
+  // A previous operation's error must not hold a later successful write.
+  const failed = activeMutation !== undefined && mutations[activeMutation].isError;
   useEffect(() => {
-    onDraftChange?.({ dirty, pending });
-  }, [dirty, pending, onDraftChange]);
+    onDraftChange?.({ dirty, pending, failed });
+  }, [dirty, pending, failed, onDraftChange]);
   const error =
     detailError ??
     (park.isError || transition.isError || close.isError || dismiss.isError || suggest.isError || record.isError
@@ -440,6 +445,7 @@ export function LeadDetail({
       setDetailError("Parking needs a reason.");
       return;
     }
+    setActiveMutation("park");
     park.mutate(
       {
         leadId: lead.id,
@@ -461,6 +467,7 @@ export function LeadDetail({
       setDetailError("Describe the attempt.");
       return;
     }
+    setActiveMutation("record");
     record.mutate(
       {
         summary: summary.trim(),
@@ -489,7 +496,10 @@ export function LeadDetail({
               type="button"
               variant="secondary"
               disabled={archived || readOnly || transition.isPending}
-              onClick={() => transition.mutate({ leadId: lead.id })}
+              onClick={() => {
+                setActiveMutation("transition");
+                transition.mutate({ leadId: lead.id });
+              }}
             >
               Reopen
             </Button>
@@ -499,7 +509,10 @@ export function LeadDetail({
               type="button"
               variant="secondary"
               disabled={archived || readOnly || close.isPending}
-              onClick={() => close.mutate({ leadId: lead.id })}
+              onClick={() => {
+                setActiveMutation("close");
+                close.mutate({ leadId: lead.id });
+              }}
             >
               Close lead
             </Button>
@@ -528,7 +541,10 @@ export function LeadDetail({
                 type="button"
                 variant="secondary"
                 disabled={archived || readOnly || dismiss.isPending}
-                onClick={() => dismiss.mutate({ leadId: lead.id })}
+                onClick={() => {
+                  setActiveMutation("dismiss");
+                  dismiss.mutate({ leadId: lead.id });
+                }}
               >
                 Dismiss
               </Button>
