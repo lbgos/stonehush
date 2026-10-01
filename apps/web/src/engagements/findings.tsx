@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Excerpt, Finding } from "@stonehush/contracts";
 import { buildFindingPrefillBody, formatExcerptSourceLabel } from "@stonehush/domain";
@@ -18,9 +18,13 @@ import {
   useFindingsQuery,
   useUpdateFindingMutation,
   findingsQueryKey,
+  fetchFindings,
 } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
 import { takePendingFindingExcerpt, useExcerptsQuery } from "./run-output-query.js";
+import { resolveFindingMatch, type FindingSearchDestination } from "./search-destination.js";
+import { useNotesDraftGuard } from "./notes-guard.js";
+import { SearchDestinationNotice } from "./search-view.js";
 
 const SEVERITY_OPTIONS = ["info", "low", "medium", "high", "critical"] as const;
 
@@ -31,10 +35,23 @@ const SEVERITY_OPTIONS = ["info", "low", "medium", "high", "critical"] as const;
 // submit. Prefill inherits the operator target note, the stable source
 // reference, and the masked excerpt text.
 
+// A search destination names one finding id. The list is refetched first so
+// a finding deleted since the search reads as unavailable instead of
+// landing on a stale row or on another finding.
+interface FindingArrival {
+  readonly nonce: number;
+  readonly findingId: string;
+  readonly status: "checking" | "error" | "missing" | "changed" | "found";
+}
+
 export function EngagementFindingsSection({
   archived,
   engagementId,
   selection,
+  destination,
+  onDismissDestination,
+  onSearchAgain,
+  onNavigationStay,
 }: {
   archived: boolean;
   engagementId: string;
@@ -44,15 +61,65 @@ export function EngagementFindingsSection({
         onToggleFinding: (findingId: string) => void;
       }
     | undefined;
+  onNavigationStay?: (() => void) | undefined;
+  destination?: FindingSearchDestination | undefined;
+  onDismissDestination?: (() => void) | undefined;
+  onSearchAgain?: ((query: string) => void) | undefined;
 }) {
   const findings = useFindingsQuery(engagementId);
   const retry = () => void findings.refetch();
   const hasData = findings.data !== undefined;
+  const queryClient = useQueryClient();
+  const noticeRef = useRef<HTMLDivElement | null>(null);
+  const [arrival, setArrival] = useState<FindingArrival | null>(null);
+  const [checkSeq, setCheckSeq] = useState(0);
+  const destinationNonce = destination?.nonce;
+
+  useEffect(() => {
+    if (destination === undefined) {
+      setArrival(null);
+      return;
+    }
+    const controller = new AbortController();
+    const { nonce, findingId } = destination;
+    setArrival({ nonce, findingId, status: "checking" });
+    void fetchFindings(engagementId, controller.signal)
+      .then((records) => {
+        if (controller.signal.aborted) return;
+        if (records.some((finding) => finding.engagementId !== engagementId)) throw new Error("Findings engagement mismatch");
+        const found = records.find((finding) => finding.id === findingId && finding.engagementId === engagementId);
+        const status = found === undefined ? "missing" : resolveFindingMatch(found, destination) ? "found" : "changed";
+        queryClient.setQueryData(findingsQueryKey(engagementId), records);
+        setArrival({ nonce, findingId, status });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setArrival({ nonce, findingId, status: "error" });
+      });
+    return () => {
+      controller.abort();
+    };
+    // The nonce identifies the destination; checkSeq retries a failed load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [destinationNonce, checkSeq, engagementId, queryClient]);
+
+  const noticeKey = arrival === null || arrival.status === "found" ? undefined : `${arrival.nonce}:${arrival.status}`;
+  useEffect(() => {
+    const notice = noticeRef.current;
+    if (noticeKey === undefined || notice === null) return;
+    notice.focus({ preventScroll: true });
+    if (typeof notice.scrollIntoView === "function") notice.scrollIntoView({ block: "nearest" });
+  }, [noticeKey]);
+
+  const focus =
+    arrival?.status === "found" && arrival.nonce === destination?.nonce && findings.data?.some((finding) =>
+      resolveFindingMatch(finding, destination)) ? { findingId: arrival.findingId, nonce: arrival.nonce } : undefined;
 
   const body = findings.data !== undefined ? (
     <FindingsBody
       archived={archived}
       engagementId={engagementId}
+      focus={focus}
+      onNavigationStay={onNavigationStay}
       records={findings.data}
       selection={selection}
     />
@@ -67,6 +134,27 @@ export function EngagementFindingsSection({
           engagement.
         </p>
       </header>
+      {destination !== undefined && arrival !== null && arrival.status !== "found" ? (
+        <SearchDestinationNotice
+          noticeRef={noticeRef}
+          onDismiss={() => onDismissDestination?.()}
+          onRetry={arrival.status === "error" ? () => setCheckSeq((current) => current + 1) : undefined}
+          onSearchAgain={
+            (arrival.status === "missing" || arrival.status === "changed") && onSearchAgain !== undefined
+              ? () => onSearchAgain(destination.query)
+              : undefined
+          }
+        >
+          <p className={`m-0 ${arrival.status === "error" ? "text-destructive" : ""}`}>
+            {arrival.status === "checking"
+              ? "Checking saved findings"
+              : arrival.status === "error"
+                ? "Saved findings could not be loaded."
+                : arrival.status === "changed" ? "Match changed. The saved finding no longer has this passage."
+                : "Finding unavailable. It is no longer saved in this engagement."}
+          </p>
+        </SearchDestinationNotice>
+      ) : null}
       {!hasData && findings.isFetching ? (
         <LoadingRegion label="Loading findings" className="space-y-3">
           <Skeleton className="h-3 w-40" />
@@ -87,10 +175,10 @@ export function EngagementFindingsSection({
           description="The latest refresh failed. Existing findings are still available."
           onRetry={retry}
         >
-          {body}
+          {null}
         </StaleDataState>
       ) : null}
-      {hasData && !findings.isError ? body : null}
+      {hasData ? body : null}
     </section>
   );
 }
@@ -98,11 +186,15 @@ export function EngagementFindingsSection({
 function FindingsBody({
   archived,
   engagementId,
+  focus,
+  onNavigationStay,
   records,
   selection,
 }: {
   archived: boolean;
   engagementId: string;
+  focus: { findingId: string; nonce: number } | undefined;
+  onNavigationStay?: (() => void) | undefined;
   records: readonly Finding[];
   selection?:
     | {
@@ -185,6 +277,7 @@ function FindingsBody({
 
   return (
     <div className="grid gap-4">
+      <FindingDraftGuard active={!archived && (create.isPending || title.length > 0 || body.length > 0 || severity !== "medium" || linkedExcerpt !== null)} onStay={onNavigationStay} />
       <div>
         {records.length === 0 ? (
           <div className="rounded-[10px] border border-border px-4 py-8 text-center">
@@ -205,6 +298,8 @@ function FindingsBody({
                   archived={archived}
                   engagementId={engagementId}
                   finding={finding}
+                  focusNonce={finding.id === focus?.findingId ? focus.nonce : undefined}
+                  onNavigationStay={onNavigationStay}
                   pending={resolve.isPending || reopen.isPending}
                   selectedForAdvisor={
                     selection === undefined ? undefined : selection.selectedIds.includes(finding.id)
@@ -350,6 +445,8 @@ function FindingRow({
   archived,
   engagementId,
   finding,
+  focusNonce,
+  onNavigationStay,
   pending,
   onResolve,
   onReopen,
@@ -359,6 +456,9 @@ function FindingRow({
   archived: boolean;
   engagementId: string;
   finding: Finding;
+  /** Set while this row is a search destination; each new value focuses it once. */
+  focusNonce?: number | undefined;
+  onNavigationStay?: (() => void) | undefined;
   pending: boolean;
   onResolve: () => void;
   onReopen: () => void;
@@ -373,10 +473,19 @@ function FindingRow({
     useState<(typeof SEVERITY_OPTIONS)[number]>("medium");
   const [draftBody, setDraftBody] = useState("");
   const [baseRevision, setBaseRevision] = useState(0);
+  const editBase = useRef({ title: "", severity: "medium", body: "" });
   const [localError, setLocalError] = useState<string | undefined>(undefined);
   const isOpen = finding.status === "open";
+  const titleRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => {
+    const title = titleRef.current;
+    if (focusNonce === undefined || title === null) return;
+    if (typeof title.scrollIntoView === "function") title.scrollIntoView({ block: "center" });
+    title.focus({ preventScroll: true });
+  }, [focusNonce]);
 
   const openEditor = () => {
+    editBase.current = { title: finding.title, severity: finding.severity, body: finding.body };
     setDraftTitle(finding.title);
     setDraftSeverity(finding.severity);
     setDraftBody(finding.body);
@@ -406,6 +515,7 @@ function FindingRow({
           setLocalError("The latest finding could not be loaded. Try again.");
           return;
         }
+        editBase.current = { title: fresh.title, severity: fresh.severity, body: fresh.body };
         setDraftTitle(fresh.title);
         setDraftSeverity(fresh.severity);
         setDraftBody(fresh.body);
@@ -437,10 +547,20 @@ function FindingRow({
   const editError = update.isError ? findingMutationMessage(update.error) : localError;
   const showReload = update.isError && isFindingRevisionConflict(update.error);
   return (
-    <li className="rounded-[10px] border border-border px-3 py-2.5">
+    <li
+      data-finding-id={finding.id}
+      aria-current={focusNonce === undefined ? undefined : "true"}
+      className={`rounded-[10px] border px-3 py-2.5 ${focusNonce === undefined ? "border-border" : "border-foreground"}`}
+    >
+      <FindingDraftGuard active={!archived && editing && (update.isPending || draftTitle !== editBase.current.title || draftSeverity !== editBase.current.severity || draftBody !== editBase.current.body)} onStay={onNavigationStay} />
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <p className="m-0 flex items-start gap-2 truncate text-[13px] font-semibold" title={finding.title}>
+          <p
+            ref={titleRef}
+            tabIndex={focusNonce === undefined ? undefined : -1}
+            className="m-0 flex items-start gap-2 truncate text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            title={finding.title}
+          >
             {onToggleAdvisor !== undefined ? (
               <input
                 type="checkbox"
@@ -593,5 +713,21 @@ function FindingRow({
         </div>
       ) : null}
     </li>
+  );
+}
+
+/** Protect create and edit drafts when routing out of Findings. */
+function FindingDraftGuard({ active, onStay }: { active: boolean; onStay?: (() => void) | undefined }) {
+  const blocker = useNotesDraftGuard(active);
+  if (blocker.status !== "blocked") return null;
+  return (
+    <section role="alertdialog" aria-label="Unsaved finding" className="mb-3 border border-border px-3 py-3">
+      <h3 className="m-0 text-[13px] font-semibold">Unsaved finding</h3>
+      <p className="mt-1 text-[12px] text-muted-foreground">Leaving now will discard this finding draft.</p>
+      <div className="flex gap-2">
+        <Button type="button" autoFocus onClick={() => { onStay?.(); blocker.reset?.(); }}>Stay</Button>
+        <Button type="button" variant="secondary" onClick={() => blocker.proceed?.()}>Leave</Button>
+      </div>
+    </section>
   );
 }

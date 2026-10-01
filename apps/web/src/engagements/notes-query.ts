@@ -13,6 +13,7 @@ import {
 } from "./errors.js";
 import { engagementResumeQueryKey } from "./resume-query.js";
 import { reportQueryKey } from "./report-query.js";
+import { engagementSearchQueryKey } from "./search-query.js";
 
 export const ENGAGEMENT_NOTES_QUERY_ERROR_MESSAGE = "The notes request failed.";
 
@@ -102,6 +103,7 @@ export function useSaveEngagementNotesMutation(engagementId: string) {
         engagementNotesQueryKey(engagementId),
         notes,
       );
+      void queryClient.invalidateQueries({ queryKey: engagementSearchQueryKey(engagementId) });
       void queryClient.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
       void queryClient.invalidateQueries({ queryKey: engagementResumeQueryKey(engagementId) });
     },
