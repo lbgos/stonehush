@@ -11,12 +11,12 @@ I'm building it for my own security work: keep targets, scans, evidence, notes, 
 - Runs with cancel and retry, raw output viewing, and immutable evidence per engagement.
 - Leads with attempts, kept excerpts, park reasons, and linked findings. Surface keeps the source under the form.
 - Findings with saved evidence references, and a report that exports Markdown or JSON with a sharing preview.
-- Resume with a saved next step and recent changes, engagement search over notes and findings, and per-engagement techniques saved from selected lead attempts with review, editable placeholders, and copy replay. Known secret patterns show as [redacted]; review the rest before saving.
+- Resume with a saved next step and recent changes, engagement search over notes and findings, and per-engagement techniques saved from selected lead attempts with review. Open the engagement's Techniques tab to search saved procedures, fill placeholders, and copy a replay. Known secret patterns show as [redacted]; review the rest before saving.
 - Optional [AI evidence explanations](docs/operator/advisor-setup.md) using your own compatible endpoint. The model receives your question plus the excerpts and findings you select, with bounded prior succeeded turns in the same engagement.
 
 Runs on your Linux machine with a browser UI, SQLite, and local evidence files. Scratchpad text, credentials, secret values, note history, and raw artifact bytes stay out of model requests.
 
-**Early development.** Local, single-user use. Some screens are unfinished, and runner setup is still manual. No packaged installer yet.
+**Early development.** Local, single-user use. Some screens are unfinished. No packaged installer yet.
 
 ## Screenshots
 
