@@ -466,7 +466,7 @@ function OutlineSection({
           <ol className="m-0 space-y-1 p-0 pl-4 text-[12px]">
             {outline.items.map((item, index) => (
               <li key={item.key} className="flex min-h-8 flex-wrap items-center gap-2">
-                <span className="min-w-0 flex-1">
+                <span className="min-w-0 flex-1 break-all">
                   <span className="font-mono text-[11px] text-muted-foreground">
                     {item.kind}
                   </span>{" "}
@@ -740,7 +740,7 @@ function ReviewSection({
       <div className="border-b border-border px-3 py-2">
         <h3 className="m-0 text-[13px] font-semibold">Review</h3>
       </div>
-      <div className="grid gap-1 px-3 py-2.5">
+      <div className="grid grid-cols-1 gap-1 px-3 py-2.5">
         <p className="m-0 text-[12px] text-muted-foreground">
           Finishing aid, not a compliance form. Fix flags before exporting.
         </p>
@@ -751,7 +751,7 @@ function ReviewSection({
         ) : (
           <ul className="m-0 list-none space-y-1 p-0">
             {flags.map((flag, index) => (
-              <li key={`${flag.code}-${index}`} className="text-[12px]">
+              <li key={`${flag.code}-${index}`} className="text-[12px] break-all">
                 <span className="font-mono text-[11px] text-muted-foreground">
                   {flag.code}
                 </span>{" "}
@@ -789,7 +789,7 @@ function SharingSection({
       <div className="border-b border-border px-3 py-2">
         <h3 className="m-0 text-[13px] font-semibold">Sharing and export</h3>
       </div>
-      <div className="grid gap-2 px-3 py-2.5">
+      <div className="grid grid-cols-1 gap-2 px-3 py-2.5">
         <p className="m-0 text-[12px] text-muted-foreground" aria-live="polite">
           {staleness.stale ? staleness.reason : `Exports current. ${staleness.reason}`}
         </p>
@@ -804,7 +804,7 @@ function SharingSection({
           ) : (
             <ul className="m-0 mt-1 list-none space-y-1 p-0">
               {sharing.included.map((entry, index) => (
-                <li key={index} className="text-[12px]">
+                <li key={index} className="text-[12px] break-all">
                   {entry.caption}
                   {entry.filename !== undefined ? (
                     <span className="font-mono text-[11px] text-muted-foreground">
