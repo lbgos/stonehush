@@ -19,8 +19,8 @@ import { LEAD_TECHNIQUE_SOURCES_MAX, resolveSourceAttempts, seedLeadTechnique } 
 
 // Save as technique from one lead's recorded attempts. Selecting and
 // drafting are local. Only an explicit Save posts, once, through the shared
-// technique save path into this engagement's Techniques, which Advisor
-// lists and replays. All state belongs to one engagement and lead: another
+// technique save path into this engagement's Techniques, which the Techniques
+// tab and Advisor list and replay. All state belongs to one engagement and lead: another
 // owner starts idle, and late answers for an earlier owner or draft are
 // dropped. Attempt refreshes change what can be selected, never an open
 // draft.
@@ -334,7 +334,7 @@ export function LeadTechniquePanel({ technique }: { technique: LeadTechnique }) 
           Saved &quot;{saved.name}&quot; to this engagement&apos;s techniques.
         </p>
         <ul className="m-0 grid list-none gap-2 p-0">
-          <TechniqueCard technique={saved} facts={[]} archived={technique.archived} />
+          <TechniqueCard technique={saved} facts={undefined} archived={technique.archived} />
         </ul>
         <div className="flex justify-end">
           <Button type="button" variant="secondary" className="min-h-11 md:min-h-11" onClick={technique.done}>

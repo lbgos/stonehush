@@ -39,6 +39,7 @@ import { ResumeLeadRow, useRememberedLead } from "./resume-lead.js";
 import { EngagementResumeView } from "./resume-view.js";
 import type { NoteSearchDestination } from "./search-destination.js";
 import { EngagementSearchDialog, type SearchSelection } from "./search-view.js";
+import { EngagementTechniquesSection } from "./techniques-library.js";
 import { RunHistoryPanel } from "./run-history-panel.js";
 import { SavedScopeEditor } from "./scope-editor.js";
 import { EngagementHttpProbesSection } from "./http-probe-surface.js";
@@ -57,6 +58,7 @@ export const ENGAGEMENT_TABS = [
   { id: "notes", label: "Notes" },
   { id: "findings", label: "Findings" },
   { id: "leads", label: "Leads" },
+  { id: "techniques", label: "Techniques" },
   { id: "report", label: "Report" },
 ] as const;
 
@@ -825,6 +827,14 @@ function EngagementDetail({
             engagementId={displayed.id}
           />
         </div>
+      ) : null}
+
+      {activeTab === "techniques" ? (
+        <EngagementTechniquesSection
+          key={`techniques-${displayed.id}`}
+          archived={archived}
+          engagementId={displayed.id}
+        />
       ) : null}
 
       {activeTab === "report" ? (

@@ -209,6 +209,7 @@ describe("engagement tab resolution", () => {
     expect(resolveEngagementTab("notes")).toBe("notes");
     expect(resolveEngagementTab("findings")).toBe("findings");
     expect(resolveEngagementTab("leads")).toBe("leads");
+    expect(resolveEngagementTab("techniques")).toBe("techniques");
     expect(resolveEngagementTab("report")).toBe("report");
   });
 });
