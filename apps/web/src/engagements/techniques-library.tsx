@@ -13,6 +13,12 @@ import { useFindingsQuery } from "./findings-query.js";
 // here posts runs, calls a model, or reads raw evidence.
 const filterCache = new Map<string, string>();
 
+// Reset the per-engagement filter memory. Tests only: keeps one test's
+// search text from leaking into the next render of the same engagement.
+export function clearTechniqueFilterCache(): void {
+  filterCache.clear();
+}
+
 export function filterTechniques(
   techniques: readonly Technique[],
   query: string,
@@ -47,12 +53,13 @@ export function EngagementTechniquesSection({
   }
 
   // Recorded engagement facts for matching: finding titles only. While
-  // findings are loading or failed, facts stay unknown so cards state that
-  // plainly instead of claiming Does not apply.
+  // findings are loading, failed, or stale after a failed refresh, facts
+  // stay unknown so cards state that plainly instead of claiming a verdict
+  // from outdated titles.
   const facts = useMemo(() => {
-    if (findings.data === undefined) return undefined;
+    if (findings.data === undefined || findings.isError) return undefined;
     return findings.data.map((finding) => finding.title);
-  }, [findings.data]);
+  }, [findings.data, findings.isError]);
 
   const filtered = useMemo(
     () => (techniques.data === undefined ? undefined : filterTechniques(techniques.data, query)),
@@ -126,33 +133,19 @@ export function EngagementTechniquesSection({
             description="The latest refresh failed. Existing techniques are still available."
             onRetry={retry}
           >
-            <TechniqueList techniques={filtered} facts={facts} archived={archived} />
+            {filtered.length > 0 ? (
+              <TechniqueList techniques={filtered} facts={facts} archived={archived} />
+            ) : (
+              <EmptyResults total={total} trimmed={trimmed} onClear={() => updateQuery("")} />
+            )}
           </StaleDataState>
         </div>
       ) : null}
 
       {filtered !== undefined && !(techniques.data !== undefined && techniques.isError) ? (
         <div className="mt-3">
-          {total === 0 && trimmed.length === 0 ? (
-            <p className="m-0 text-[12px] text-muted-foreground" role="status">
-              No saved techniques yet. Save a useful lead sequence; it stays in this engagement after reload.
-            </p>
-          ) : null}
-          {filtered.length === 0 && (total > 0 || trimmed.length > 0) ? (
-            <div className="grid gap-2">
-              <p className="m-0 text-[12px] text-muted-foreground" role="status">
-                {trimmed.length > 0
-                  ? `No techniques match "${trimmed}".`
-                  : "No techniques match this filter."}
-              </p>
-              {trimmed.length > 0 ? (
-                <div>
-                  <Button type="button" variant="secondary" className="min-h-11" onClick={() => updateQuery("")}>
-                    Clear search
-                  </Button>
-                </div>
-              ) : null}
-            </div>
+          {filtered.length === 0 ? (
+            <EmptyResults total={total} trimmed={trimmed} onClear={() => updateQuery("")} />
           ) : null}
           {filtered.length > 0 ? (
             <TechniqueList techniques={filtered} facts={facts} archived={archived} />
@@ -160,6 +153,56 @@ export function EngagementTechniquesSection({
         </div>
       ) : null}
     </section>
+  );
+}
+
+// Empty and filtered-empty copy shared by the normal and stale branches so
+// a failed refresh over an empty or fully filtered list still explains the
+// results instead of rendering an empty list under the warning.
+function EmptyResults({
+  total,
+  trimmed,
+  onClear,
+}: {
+  total: number;
+  trimmed: string;
+  onClear: () => void;
+}) {
+  if (total === 0 && trimmed.length === 0) {
+    return (
+      <p className="m-0 text-[12px] text-muted-foreground" role="status">
+        No saved techniques yet. Save a useful lead sequence; it stays in this engagement after reload.
+      </p>
+    );
+  }
+  return <FilteredEmpty total={total} trimmed={trimmed} onClear={onClear} />;
+}
+
+function FilteredEmpty({
+  total,
+  trimmed,
+  onClear,
+}: {
+  total: number;
+  trimmed: string;
+  onClear: () => void;
+}) {
+  if (!(total > 0 || trimmed.length > 0)) return null;
+  return (
+    <div className="grid gap-2">
+      <p className="m-0 text-[12px] text-muted-foreground" role="status">
+        {trimmed.length > 0
+          ? `No techniques match "${trimmed}".`
+          : "No techniques match this filter."}
+      </p>
+      {trimmed.length > 0 ? (
+        <div>
+          <Button type="button" variant="secondary" className="min-h-11" onClick={onClear}>
+            Clear search
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

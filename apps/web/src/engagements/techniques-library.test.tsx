@@ -6,7 +6,13 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
-import { EngagementTechniquesSection, filterTechniques } from "./techniques-library.js";
+import {
+  clearTechniqueFilterCache,
+  EngagementTechniquesSection,
+  filterTechniques,
+} from "./techniques-library.js";
+import { findingsQueryKey } from "./findings-query.js";
+import { techniquesQueryKey } from "../advisor/technique-query.js";
 
 const ENGAGEMENT_A = "10000000-0000-4000-8000-000000000001";
 const ENGAGEMENT_B = "10000000-0000-4000-8000-000000000002";
@@ -41,13 +47,14 @@ const testClients = new Set<QueryClient>();
 function renderLibrary(engagementId: string, archived = false) {
   const client = createAppQueryClient();
   testClients.add(client);
-  return render(
+  const view = render(
     <ThemeProvider>
       <QueryClientProvider client={client}>
         <EngagementTechniquesSection engagementId={engagementId} archived={archived} />
       </QueryClientProvider>
     </ThemeProvider>,
   );
+  return { ...view, queryClient: client };
 }
 
 interface StubOptions {
@@ -59,24 +66,25 @@ interface StubOptions {
 
 function stubFetch(options: StubOptions = {}) {
   const calls: { url: string; method: string }[] = [];
+  const state = { failTechniques: options.failTechniques ?? false, failFindings: options.failFindings ?? false };
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     calls.push({ url, method });
     if (url.includes("/techniques")) {
-      if (options.failTechniques) return Promise.resolve(response({ code: "storage_busy" }, 503));
+      if (state.failTechniques) return Promise.resolve(response({ code: "storage_busy" }, 503));
       const engagementId = url.includes(ENGAGEMENT_B) ? ENGAGEMENT_B : ENGAGEMENT_A;
       return Promise.resolve(response(options.techniquesByEngagement?.[engagementId] ?? []));
     }
     if (url.includes("/findings")) {
-      if (options.failFindings) return Promise.resolve(response({ code: "storage_busy" }, 503));
+      if (state.failFindings) return Promise.resolve(response({ code: "storage_busy" }, 503));
       const engagementId = url.includes(ENGAGEMENT_B) ? ENGAGEMENT_B : ENGAGEMENT_A;
       return Promise.resolve(response(options.findingsByEngagement?.[engagementId] ?? []));
     }
     return Promise.resolve(response([]));
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { calls, fetchMock };
+  return { calls, fetchMock, state };
 }
 
 beforeEach(() => {
@@ -94,6 +102,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  clearTechniqueFilterCache();
   for (const client of testClients) client.clear();
   testClients.clear();
   vi.restoreAllMocks();
@@ -205,6 +214,58 @@ describe("engagement techniques library", () => {
     });
     renderLibrary(ENGAGEMENT_A);
     expect(await screen.findByText(/Applies:/)).toBeTruthy();
+  });
+
+  it("treats a failed findings refresh as unavailable context", async () => {
+    const finding = {
+      contractVersion: 1 as const,
+      id: "40000000-0000-4000-8000-000000000001",
+      engagementId: ENGAGEMENT_A,
+      title: "HTTP service observed on 192.0.2.10",
+      severity: "info" as const,
+      status: "open" as const,
+      body: "observed",
+      evidenceArtifactIds: [],
+      revision: 0,
+      createdAt: TS,
+      updatedAt: TS,
+    };
+    const stub = stubFetch({
+      techniquesByEngagement: { [ENGAGEMENT_A]: [technique()] },
+      findingsByEngagement: { [ENGAGEMENT_A]: [finding] },
+    });
+    const { queryClient } = renderLibrary(ENGAGEMENT_A);
+    expect(await screen.findByText(/Applies:/)).toBeTruthy();
+
+    stub.state.failFindings = true;
+    await queryClient.refetchQueries({ queryKey: findingsQueryKey(ENGAGEMENT_A) });
+    expect(await screen.findByText("Applicability: context unavailable.")).toBeTruthy();
+    expect(screen.queryByText(/Applies:/)).toBe(null);
+  });
+
+  it("explains an empty list inside the stale-data warning", async () => {
+    const stub = stubFetch({ techniquesByEngagement: { [ENGAGEMENT_A]: [] } });
+    const { queryClient } = renderLibrary(ENGAGEMENT_A);
+    expect(await screen.findByText(/No saved techniques yet\./)).toBeTruthy();
+
+    stub.state.failTechniques = true;
+    await queryClient.refetchQueries({ queryKey: techniquesQueryKey(ENGAGEMENT_A) });
+    expect(await screen.findByText("Showing saved techniques")).toBeTruthy();
+    expect(await screen.findAllByText(/No saved techniques yet\./)).toBeTruthy();
+  });
+
+  it("explains no matches inside the stale-data warning", async () => {
+    const stub = stubFetch({ techniquesByEngagement: { [ENGAGEMENT_A]: [technique()] } });
+    const { queryClient } = renderLibrary(ENGAGEMENT_A);
+    expect(await screen.findByText("Default creds check")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Search techniques"), { target: { value: "no such technique" } });
+    expect(await screen.findByText(/No techniques match/)).toBeTruthy();
+
+    stub.state.failTechniques = true;
+    await queryClient.refetchQueries({ queryKey: techniquesQueryKey(ENGAGEMENT_A) });
+    expect(await screen.findByText("Showing saved techniques")).toBeTruthy();
+    expect(await screen.findAllByText(/No techniques match/)).toBeTruthy();
   });
 
   it("omits false engagement-wide denial for a saved preview without context", async () => {
