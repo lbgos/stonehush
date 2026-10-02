@@ -2,10 +2,9 @@ import { describePriorAttempt, diffRuns, type PriorAttemptInput, type RunDiffInp
 import { useMemo } from "react";
 
 /**
- * STONE-6 standalone run-diff view. Mounts via the STONE-2
- * `discovery.diff` slot after STONE-2 merges. Highlights new/changed
- * services, responses, and paths plus ports/options/auth/binding context.
- * Unscanned is never reported as closed; incomplete never disproves.
+ * Run comparison view, mounted in Runs history selected output. Highlights
+ * new/changed services, responses, and paths plus ports/options/auth/binding
+ * context. Unscanned is never reported as closed; incomplete never disproves.
  * Bounded next steps carry a visible rationale and never auto-expand.
  */
 

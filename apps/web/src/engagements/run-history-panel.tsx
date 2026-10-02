@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { formatEngagementTimestamp } from "./format.js";
+import { RunCompareSection } from "./run-compare-panel.js";
 import { RunLeadAttemptForm, runLeadEvidence } from "./run-lead-attempt.js";
 import { useRunHistoryQuery } from "./run-history-query.js";
 import { RunNotFoundError, useRunOutputQuery } from "./run-output-query.js";
@@ -719,6 +720,11 @@ function SelectedRunContent({
         <SelectedRunStream label="stdout" runId={output.run.id} stream={output.stdout} />
         <SelectedRunStream label="stderr" runId={output.run.id} stream={output.stderr} />
       </div>
+      <RunCompareSection
+        engagementId={engagementId}
+        selectedRunId={output.run.id}
+        selectedOutput={output}
+      />
     </section>
   );
 }
