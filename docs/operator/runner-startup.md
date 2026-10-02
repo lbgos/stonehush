@@ -1,34 +1,33 @@
 # Runner startup
 
-Normal startup runs two things: the app and the local runner. Enrollment is a
-one-time setup. A routine restart needs no enrollment tokens, no native build,
-and no port numbers.
+Normal startup runs two things: the app and the local runner. The dev
+starter enrolls each time and keeps the secret in process memory only.
 
-## First time only
+## First time and every restart
 
-Complete the [README quick start](../../README.md#quick-start), then enroll
-the runner once from the loopback UI with owner confirmation. The secret is
-shown once. Keep it where the runner process reads it. A lost credential is
-not recoverable: revoke the identity and enroll again.
+Complete the [README quick start](../../README.md#quick-start), then start
+the app with `pnpm dev` and wait for the API. In a second shell run
+`pnpm runner:dev`. The starter checks for `nmap`, waits for the dev API at
+`http://127.0.0.1:3001` by default, calls the existing enrollment challenge
+and confirm endpoints with owner confirmation, and starts the existing
+runner. It writes no credential file and prints no secret.
 
-## Every restart
+There is no enrollment screen in the web app. An earlier version of this
+page named one; that UI is not in the source.
 
-1. Start the app with `pnpm dev` from the repository root and open the printed
-   local address in the browser.
-2. Start the runner with its stored identity. The runner reconnects on its own
-   with a new session and reports abandoned work. The server keeps leases,
-   fences, and terminal results across a control-plane restart.
-
-No new challenge, no token paste, and no rebuild belong in this path. If a
-step asks for them, stop and treat it as a fresh enrollment, not a restart.
+If `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` are already set, the
+starter reuses them and skips enrollment. If only one of them is set, it
+stops with a clear error. A fresh shell without those variables enrolls
+again. A lost credential is not recoverable: stop the runner and enroll
+again.
 
 ## Same work after restart
 
 Queued runs wait for the runner instead of failing. The opening screen offers
 Resume for the last opened engagement, or the most recently updated one when
-the stored id no longer exists. The app to runner relationship is retained by
-the stored runner identity and the surviving leases, not by anything the
-tester re-enters.
+the stored id no longer exists. A restarted runner handshakes with a new
+session and reports abandoned work. The server keeps leases, fences, and
+terminal results across a control-plane restart.
 
 ## When a run does not move
 

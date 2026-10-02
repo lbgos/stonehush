@@ -48,7 +48,15 @@ pnpm dev
 
 Open <http://127.0.0.1:5173>. Data lives in `.stonehush/dev` by default. The native build is required for evidence and advisor turns.
 
-This starts the UI and API. Scans also need a separately [enrolled runner](docs/architecture/0002-actions-runs-runner-trust.md), installed tools, and a wordlist for ffuf. For a one-command isolated lab, see the [guided demo](docs/operator/demo.md) (`pnpm demo`). In the [runner configuration](apps/runner/src/config.ts), set `STONEHUSH_API_BASE_URL` to `http://127.0.0.1:3001` for development.
+Start the runner in a second shell once the API is up:
+
+```bash
+pnpm runner:dev
+```
+
+It checks for `nmap`, waits for the dev API at `http://127.0.0.1:3001`, enrolls with owner confirmation, and keeps the secret in memory only. If `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` are already set, it reuses them and skips enrollment. A fresh shell without those variables enrolls again. See [runner startup](docs/operator/runner-startup.md).
+
+This starts the UI, API, and runner. Scans also need installed tools and a wordlist for ffuf. For a one-command isolated lab, see the [guided demo](docs/operator/demo.md) (`pnpm demo`).
 
 ## Try it
 
