@@ -19,6 +19,13 @@ import {
   type OutlineTemplate,
   type ReportOutline,
 } from "./report-outline.js";
+import {
+  addFindingWithEvidence,
+  evidenceCatalog,
+  planFindingEvidence,
+  reportIdentityIssue,
+  type FindingEvidencePlan,
+} from "./report-evidence-selection.js";
 import { buildPrintHtml } from "./report-print.js";
 import { reviewOutline } from "./report-review.js";
 import {
@@ -91,10 +98,10 @@ export function EngagementReportSection({
           description="The latest refresh failed. The existing report is still available."
           onRetry={retry}
         >
-          {body}
+          {null}
         </StaleDataState>
       ) : null}
-      {hasData && !report.isError ? body : null}
+      {body}
     </section>
   );
 }
@@ -174,6 +181,10 @@ function ReportBody({
         notesMarkdown: bundle.notesMarkdown,
       }),
     [outline, bundle.findings, bundle.evidenceArtifacts.rows, bundle.notesMarkdown],
+  );
+  const identityIssue = useMemo(
+    () => reportIdentityIssue(bundle, engagementId),
+    [bundle, engagementId],
   );
   const staleness = describeSnapshotStaleness(snapshot, {
     bundleGeneratedAt: bundle.generatedAt,
@@ -332,9 +343,9 @@ function ReportBody({
       </div>
       <OutlineSection
         findings={bundle.findings}
-        evidenceArtifactIds={bundle.evidenceArtifacts.rows.map(
-          (artifact) => artifact.artifactId,
-        )}
+        evidence={bundle.evidenceArtifacts}
+        identityIssue={identityIssue}
+        refreshing={refreshing}
         notesAvailable={bundle.notesMarkdown.length > 0}
         outline={outline}
         onOutlineChange={setOutline}
@@ -357,27 +368,72 @@ function ReportBody({
 
 function OutlineSection({
   findings,
-  evidenceArtifactIds,
+  evidence,
+  identityIssue,
+  refreshing,
   notesAvailable,
   outline,
-  onOutlineChange,
+  onOutlineChange: commitOutline,
 }: {
   findings: readonly Finding[];
-  evidenceArtifactIds: readonly string[];
+  evidence: ReportBundle["evidenceArtifacts"];
+  identityIssue: string | null;
+  refreshing: boolean;
   notesAvailable: boolean;
   outline: ReportOutline;
   onOutlineChange: (outline: ReportOutline) => void;
 }) {
+  // Result line for the last combined add. Any other outline change
+  // clears it so it never describes an outline that no longer exists.
+  const [notice, setNotice] = useState<string | null>(null);
+  function onOutlineChange(next: ReportOutline) {
+    setNotice(null);
+    commitOutline(next);
+  }
   function setTemplate(template: OutlineTemplate) {
     onOutlineChange(setOutlineTemplate(outline, template));
   }
   const selectedKeys = new Set(outline.items.map((item) => item.key));
+  const evidenceIds = evidence.rows.map((artifact) => artifact.artifactId);
+  // Rederived from the displayed bundle on every refresh. The outline
+  // itself is never rewritten here, so removed items stay removed.
+  // Rejected responses expose saved refs without joining their catalog.
+  const plans = useMemo(
+    () => {
+      if (identityIssue !== null) return new Map<string, FindingEvidencePlan>();
+      const catalog = evidenceCatalog(evidence.rows);
+      return new Map(
+        findings.map((finding) => [finding.id, planFindingEvidence(finding, catalog, outline)]),
+      );
+    },
+    [findings, evidence.rows, identityIssue, outline],
+  );
+  const evidenceBlocked = refreshing || identityIssue !== null;
+  const anyRefs = findings.some((finding) => finding.evidenceArtifactIds.length > 0);
+
+  function addWithEvidence(finding: Finding, plan: FindingEvidencePlan) {
+    if (evidenceBlocked) return;
+    const next = addFindingWithEvidence(outline, finding, plan);
+    if (next === outline) return;
+    commitOutline(next);
+    const count = plan.pending.length;
+    const items = `${count} evidence ${count === 1 ? "item" : "items"}`;
+    const skipped =
+      plan.notInCatalog > 0
+        ? ` ${plan.notInCatalog} not in this report catalog, not added.`
+        : "";
+    setNotice(
+      plan.findingSelected
+        ? `Added ${items} to ${finding.title}.${skipped}`
+        : `Added ${finding.title} with ${items}.${skipped}`,
+    );
+  }
   return (
     <div className="min-w-0 overflow-hidden rounded-[10px] border border-border">
       <div className="border-b border-border px-3 py-2">
         <h3 className="m-0 text-[13px] font-semibold">Report outline</h3>
       </div>
-      <div className="grid gap-2 px-3 py-2.5">
+      <div className="grid min-w-0 grid-cols-1 gap-2 px-3 py-2.5">
         <p className="m-0 text-[12px] text-muted-foreground">
           Select findings, evidence, and notes into an ordered outline. Reordering
           never moves investigation records. Sections: {outlineSections(outline.template).join(" · ")}
@@ -410,7 +466,7 @@ function OutlineSection({
           <ol className="m-0 space-y-1 p-0 pl-4 text-[12px]">
             {outline.items.map((item, index) => (
               <li key={item.key} className="flex min-h-8 flex-wrap items-center gap-2">
-                <span className="min-w-0 flex-1">
+                <span className="min-w-0 flex-1 break-all">
                   <span className="font-mono text-[11px] text-muted-foreground">
                     {item.kind}
                   </span>{" "}
@@ -449,38 +505,62 @@ function OutlineSection({
             ))}
           </ol>
         )}
+        <p className="m-0 text-[12px] text-foreground empty:hidden" role="status">
+          {notice}
+        </p>
         <div>
           <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
             Findings
           </p>
+          {identityIssue !== null && anyRefs ? (
+            <p className="m-0 mt-1 text-[12px] text-foreground">
+              Add with evidence is off. {identityIssue}
+            </p>
+          ) : null}
           {findings.length === 0 ? (
             <p className="m-0 mt-1 text-[12px] text-muted-foreground">No findings yet.</p>
           ) : (
             <ul className="m-0 mt-1 list-none space-y-1 p-0">
               {findings.map((finding) => {
                 const selected = selectedKeys.has(`finding:${finding.id}`);
+                const plan = plans.get(finding.id);
                 return (
-                  <li key={finding.id} className="flex min-h-8 items-center gap-2 text-[12px]">
-                    <span className="min-w-0 flex-1 truncate" title={finding.title}>
-                      {finding.title}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      className="h-7 shrink-0 px-2 text-[12px]"
-                      disabled={selected}
-                      onClick={() =>
-                        onOutlineChange(
-                          addOutlineItem(outline, {
-                            kind: "finding",
-                            refId: finding.id,
-                            caption: finding.title,
-                          }),
-                        )
-                      }
-                    >
-                      {selected ? "Added" : "Add"}
-                    </Button>
+                  <li key={finding.id} className="grid min-w-0 gap-0.5 text-[12px]">
+                    <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-2">
+                      <span className="min-w-0 flex-[1_1_12rem] truncate" title={finding.title}>
+                        {finding.title}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="quiet"
+                        className="h-7 shrink-0 px-2 text-[12px]"
+                        disabled={selected}
+                        onClick={() =>
+                          onOutlineChange(
+                            addOutlineItem(outline, {
+                              kind: "finding",
+                              refId: finding.id,
+                              caption: finding.title,
+                            }),
+                          )
+                        }
+                      >
+                        {selected ? "Added" : "Add"}
+                      </Button>
+                      {finding.evidenceArtifactIds.length > 0 ? (
+                        <AddWithEvidenceButton
+                          title={finding.title}
+                          plan={plan}
+                          blocked={evidenceBlocked}
+                          onAdd={() => {
+                            if (plan !== undefined) addWithEvidence(finding, plan);
+                          }}
+                        />
+                      ) : null}
+                    </div>
+                    {finding.evidenceArtifactIds.length > 0 ? (
+                      <FindingEvidenceRefs savedIds={finding.evidenceArtifactIds} plan={plan} />
+                    ) : null}
                   </li>
                 );
               })}
@@ -491,14 +571,20 @@ function OutlineSection({
           <p className="m-0 text-[11px] font-semibold tracking-[0.08em] text-muted-foreground uppercase">
             Evidence
           </p>
-          {evidenceArtifactIds.length === 0 ? (
+          {evidence.truncated ? (
+            <p className="m-0 mt-1 text-[12px] text-foreground">
+              This report catalog lists the first {evidence.rows.length} of {evidence.total}{" "}
+              artifacts.
+            </p>
+          ) : null}
+          {evidenceIds.length === 0 ? (
             <p className="m-0 mt-1 text-[12px] text-muted-foreground">No evidence artifacts.</p>
           ) : (
             <ul className="m-0 mt-1 list-none space-y-1 p-0">
-              {evidenceArtifactIds.map((artifactId) => {
+              {evidenceIds.map((artifactId) => {
                 const selected = selectedKeys.has(`evidence:${artifactId}`);
                 return (
-                  <li key={artifactId} className="flex min-h-8 items-center gap-2 text-[12px]">
+                  <li key={artifactId} className="flex min-h-8 min-w-0 items-center gap-2 text-[12px]">
                     <span className="min-w-0 flex-1 truncate font-mono text-[12px]" title={artifactId}>
                       {artifactId}
                     </span>
@@ -549,6 +635,101 @@ function OutlineSection({
   );
 }
 
+function addWithEvidenceLabel(plan: FindingEvidencePlan): string {
+  switch (plan.action) {
+    case "add-remaining":
+      return `Add remaining evidence (${plan.pending.length})`;
+    case "done":
+      return "Evidence added";
+    default:
+      return `Add with evidence (${plan.pending.length})`;
+  }
+}
+
+function AddWithEvidenceButton({
+  title,
+  plan,
+  blocked,
+  onAdd,
+}: {
+  title: string;
+  plan: FindingEvidencePlan | undefined;
+  blocked: boolean;
+  onAdd: () => void;
+}) {
+  const label = plan === undefined ? "Add with evidence unavailable" : addWithEvidenceLabel(plan);
+  const actionable = plan?.action === "add" || plan?.action === "add-remaining";
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      className="min-h-11 shrink-0 px-2 text-[12px] md:min-h-11 md:pointer-fine:min-h-8"
+      disabled={blocked || !actionable}
+      onClick={(event) => {
+        const focused = document.activeElement === event.currentTarget;
+        onAdd();
+        // This control becomes disabled after adding. Keep its focused
+        // operator on the same finding's stable, inspectable summary.
+        if (focused) event.currentTarget.closest("li")?.querySelector("summary")?.focus();
+      }}
+      aria-label={`${label}: ${title}`}
+    >
+      {label}
+    </Button>
+  );
+}
+
+const REF_STATE_LABEL = {
+  selected: "In outline",
+  pending: "Will add",
+  "not-in-catalog": "Not in this report catalog. Will not be added.",
+} as const;
+
+// Exact saved IDs stay readable in place, so the operator can check what
+// the combined action will add without copying IDs into another view.
+function FindingEvidenceRefs({
+  savedIds,
+  plan,
+}: {
+  savedIds: Finding["evidenceArtifactIds"];
+  plan: FindingEvidencePlan | undefined;
+}) {
+  const ids = plan?.refs.map((ref) => ref.artifactId) ?? [...new Set(savedIds)];
+  const inOutline = plan?.refs.filter((ref) => ref.state === "selected").length ?? 0;
+  const parts = [`${ids.length} evidence ${ids.length === 1 ? "ref" : "refs"}`];
+  if (plan === undefined) parts.push("catalog unavailable");
+  if (inOutline > 0) parts.push(`${inOutline} in outline`);
+  if (plan !== undefined && plan.notInCatalog > 0) {
+    parts.push(`${plan.notInCatalog} not in this report catalog`);
+  }
+  return (
+    <details>
+      <summary className="min-h-11 cursor-pointer text-[12px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring md:pointer-fine:min-h-8">
+        {parts.join(" · ")}
+      </summary>
+      <ul className="m-0 mb-1 list-none space-y-1 p-0 pl-4">
+        {ids.map((artifactId, index) => {
+          const ref = plan?.refs[index];
+          return (
+            <li
+              key={artifactId}
+              className="flex min-w-0 flex-wrap items-baseline gap-x-3 text-[12px] text-foreground"
+            >
+              <span className="min-w-0 font-mono text-[11px] break-all">{artifactId}</span>
+              {ref?.artifact !== undefined ? (
+                <span className="min-w-0 font-mono text-[11px] break-all">
+                  {`${ref.artifact.kind} · ${ref.artifact.completeness} · ${ref.artifact.sizeBytes} bytes · run ${ref.artifact.runId}`}
+                </span>
+              ) : null}
+              <span>{ref === undefined ? "Catalog unavailable. Will not be added." : REF_STATE_LABEL[ref.state]}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
+  );
+}
+
 function ReviewSection({
   flags,
 }: {
@@ -559,7 +740,7 @@ function ReviewSection({
       <div className="border-b border-border px-3 py-2">
         <h3 className="m-0 text-[13px] font-semibold">Review</h3>
       </div>
-      <div className="grid gap-1 px-3 py-2.5">
+      <div className="grid grid-cols-1 gap-1 px-3 py-2.5">
         <p className="m-0 text-[12px] text-muted-foreground">
           Finishing aid, not a compliance form. Fix flags before exporting.
         </p>
@@ -570,7 +751,7 @@ function ReviewSection({
         ) : (
           <ul className="m-0 list-none space-y-1 p-0">
             {flags.map((flag, index) => (
-              <li key={`${flag.code}-${index}`} className="text-[12px]">
+              <li key={`${flag.code}-${index}`} className="text-[12px] break-all">
                 <span className="font-mono text-[11px] text-muted-foreground">
                   {flag.code}
                 </span>{" "}
@@ -608,7 +789,7 @@ function SharingSection({
       <div className="border-b border-border px-3 py-2">
         <h3 className="m-0 text-[13px] font-semibold">Sharing and export</h3>
       </div>
-      <div className="grid gap-2 px-3 py-2.5">
+      <div className="grid grid-cols-1 gap-2 px-3 py-2.5">
         <p className="m-0 text-[12px] text-muted-foreground" aria-live="polite">
           {staleness.stale ? staleness.reason : `Exports current. ${staleness.reason}`}
         </p>
@@ -623,7 +804,7 @@ function SharingSection({
           ) : (
             <ul className="m-0 mt-1 list-none space-y-1 p-0">
               {sharing.included.map((entry, index) => (
-                <li key={index} className="text-[12px]">
+                <li key={index} className="text-[12px] break-all">
                   {entry.caption}
                   {entry.filename !== undefined ? (
                     <span className="font-mono text-[11px] text-muted-foreground">
