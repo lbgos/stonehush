@@ -83,6 +83,17 @@ describe("saveTechniqueRequest", () => {
     expect(error).toMatchObject({ name: "TechniqueRequestError", code: "engagement_archived" });
   });
 
+  it("rejects contract-invalid input before posting", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await saveTechniqueRequest(ENGAGEMENT_ID, {
+      ...input,
+      procedure: [{ instruction: "x".repeat(501) }],
+    }).catch((value: unknown) => value);
+    expect(error).toMatchObject({ name: "TechniqueRequestError", code: "invalid_request" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("reports a network failure as request_failed for the unknown-outcome path", async () => {
     vi.stubGlobal(
       "fetch",

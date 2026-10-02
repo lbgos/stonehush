@@ -88,7 +88,7 @@ export async function saveTechniqueRequest(
   input: SaveTechniqueInput,
   signal?: AbortSignal,
 ): Promise<Technique> {
-  const body = CreateTechniqueRequestSchema.parse({
+  const parsedBody = CreateTechniqueRequestSchema.safeParse({
     name: input.name,
     whenUseful: input.whenUseful,
     prerequisites: [...input.prerequisites],
@@ -96,6 +96,8 @@ export async function saveTechniqueRequest(
     procedure: input.procedure.map((step) => ({ ...step })),
     meaning: input.meaning,
   });
+  if (!parsedBody.success) throw new TechniqueRequestError("invalid_request");
+  const body = parsedBody.data;
   let response: Response;
   try {
     response = await fetch(
