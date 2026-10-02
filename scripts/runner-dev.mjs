@@ -230,25 +230,57 @@ export async function enrollRunner({ apiBaseUrl, fingerprint, runnerName, stop, 
   if (typeof challenge?.challengeId !== "string" || challenge.challengeId.length === 0) {
     throw new Error("Enrollment challenge returned no id.");
   }
-  const confirmed = await fetchJson(
-    apiBaseUrl,
-    "POST",
-    `/api/v1/runners/enrollment-challenges/${encodeURIComponent(challenge.challengeId)}/confirm`,
-    {
-      body: { ownerConfirmed: true },
-      idempotencyKey: randomUUID(),
-      signal: stop.stopSignal,
-    },
-  );
-  const runnerId = confirmed?.runner?.id;
-  const runnerSecret = confirmed?.secret;
-  if (typeof runnerId !== "string" || runnerId.length === 0) {
-    throw new Error("Enrollment confirm returned no runner id.");
+  try {
+    const confirmed = await fetchJson(
+      apiBaseUrl,
+      "POST",
+      `/api/v1/runners/enrollment-challenges/${encodeURIComponent(challenge.challengeId)}/confirm`,
+      {
+        body: { ownerConfirmed: true },
+        idempotencyKey: randomUUID(),
+        signal: stop.stopSignal,
+      },
+    );
+    const runnerId = confirmed?.runner?.id;
+    const runnerRevision = confirmed?.runner?.revision;
+    const runnerSecret = confirmed?.secret;
+    if (typeof runnerId !== "string" || runnerId.length === 0 || runnerId.length > 255 || runnerId.includes("\0")) {
+      throw new Error("Enrollment confirm returned no runner id.");
+    }
+    if (
+      runnerRevision !== 1 ||
+      confirmed.runner.status !== "enabled" ||
+      confirmed.runner.installationFingerprint !== fingerprint ||
+      confirmed.runner.name !== runnerName
+    ) {
+      throw new Error("Enrollment confirm returned no matching newly created runner identity.");
+    }
+    if (typeof runnerSecret !== "string" || !SECRET_PATTERN.test(runnerSecret)) {
+      throw new Error("Enrollment confirm returned no usable runner secret.");
+    }
+    return { runnerId, runnerRevision, runnerSecret };
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} Confirmation may have enabled a runner. Inspect the API enrollment state and explicitly revoke only that identity before retrying; no identity was guessed or revoked.`,
+    );
   }
-  if (typeof runnerSecret !== "string" || !SECRET_PATTERN.test(runnerSecret)) {
-    throw new Error("Enrollment confirm returned no usable runner secret.");
+}
+
+// Call only for a successful enrollment owned by this launch, after stopping
+// its child. Reused or uncertain identities must never enter this cleanup.
+export async function revokeEnrolledRunner({ apiBaseUrl, runnerId, runnerRevision, fetchJson = apiJson }) {
+  const revoked = await fetchJson(apiBaseUrl, "POST", `/api/v1/runners/${encodeURIComponent(runnerId)}/revoke`, {
+    body: { expectedRevision: runnerRevision },
+    idempotencyKey: randomUUID(),
+  });
+  if (
+    revoked?.runner?.id !== runnerId ||
+    revoked.runner.status !== "revoked" ||
+    revoked.runner.revision !== runnerRevision + 1
+  ) {
+    throw new Error("Runner revocation returned no matching revoked identity.");
   }
-  return { runnerId, runnerSecret };
+  return revoked;
 }
 
 function spawnChild(command, args, { cwd, env }) {
@@ -260,7 +292,7 @@ function spawnChild(command, args, { cwd, env }) {
 // Enrollment and credentials are shared with the standalone starter.
 export async function startRunnerDev({
   plan, stop, registry, baseEnv, pnpmProgram, repositoryRoot,
-  tsxImport, spawnImplementation = spawnChild,
+  tsxImport, spawnImplementation = spawnChild, onEnrolled = () => {},
 }) {
   stop.throwIfStopping("runner directory setup");
   await mkdir(plan.runnerDataDir, { mode: 0o700, recursive: true });
@@ -273,9 +305,10 @@ export async function startRunnerDev({
       runnerName: plan.runnerName,
       stop,
     });
+  if (!plan.reuse) onEnrolled({ runnerId: credentials.runnerId, runnerRevision: credentials.runnerRevision });
   console.log(plan.reuse
     ? "Reusing existing runner credentials from the environment."
-    : `Runner enrolled as ${plan.runnerName}.`);
+    : `Runner enrolled as ${plan.runnerName}: ${credentials.runnerId}, revision ${credentials.runnerRevision}.`);
   stop.throwIfStopping("runner startup");
   const { command, args } = runnerSpawnArgs({
     pnpmProgram,
@@ -312,8 +345,18 @@ async function main() {
 
   const registry = createChildRegistry();
   const stop = createStopState();
+  let ownedEnrollment;
   const shutdown = createSharedCleanup(async () => {
     await registry.shutdown();
+    if (ownedEnrollment === undefined) return;
+    try {
+      await revokeEnrolledRunner({ apiBaseUrl: plan.apiBaseUrl, ...ownedEnrollment });
+      console.log(`Revoked temporary runner ${ownedEnrollment.runnerId}.`);
+    } catch {
+      console.error(
+        `Temporary runner cleanup could not confirm revocation. Explicitly recover runner ${ownedEnrollment.runnerId} at recorded revision ${ownedEnrollment.runnerRevision} through the configured API before enrolling again; do not revoke another identity.`,
+      );
+    }
   });
 
   let signalResolve = null;
@@ -323,7 +366,6 @@ async function main() {
   function handleSignal(name) {
     stop.requestStop(name);
     signalResolve?.(name);
-    void shutdown();
   }
   process.once("SIGINT", () => handleSignal("SIGINT"));
   process.once("SIGTERM", () => handleSignal("SIGTERM"));
@@ -348,6 +390,7 @@ async function main() {
 
     const tracked = await startRunnerDev({
       plan, stop, registry, baseEnv: process.env, pnpmProgram, repositoryRoot,
+      onEnrolled: (identity) => { ownedEnrollment = identity; },
     });
 
     console.log(`Runner connected to ${plan.apiBaseUrl}. Press Ctrl+C to stop; only runner-dev-owned processes are cleaned up.`);
@@ -367,6 +410,7 @@ async function main() {
     console.error(`runner-dev failed: ${error instanceof Error ? error.message : String(error)}`);
     await shutdown();
     process.exitCode = stop.signalName === "SIGTERM" ? 143 : stop.signalName === "SIGINT" ? 130 : 1;
+    if (stop.stopping) process.exit(process.exitCode);
   }
 }
 

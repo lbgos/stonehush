@@ -45,7 +45,8 @@ const server = createServer((req, res) => {
   if (req.url === "/health") return res.end(JSON.stringify({status:"ok"}));
   console.log("fixture enrollment request " + req.url);
   const body = req.url.endsWith("/confirm")
-    ? {runner:{id:"fixture-runner",revision:1},secret:"a".repeat(43)}
+    ? {runner:{id:"fixture-runner",revision:1,status:"enabled",installationFingerprint:process.env.STONEHUSH_INSTALLATION_FINGERPRINT || "sha256:" + "a".repeat(64),name:process.env.STONEHUSH_RUNNER_NAME},secret:"a".repeat(43)}
+    : req.url.endsWith("/revoke") ? {runner:{id:"fixture-runner",revision:2,status:"revoked"}}
     : {challengeId:"fixture-challenge"};
   if (process.env.FIXTURE_MODE === "enrollment-delay") setTimeout(() => res.end(JSON.stringify(body)), 2000);
   else res.end(JSON.stringify(body));
@@ -91,6 +92,7 @@ for (const signal of ["SIGINT","SIGTERM"]) process.on(signal, () => {
   const env = {
     ...process.env, STONEHUSH_API_PORT: String(apiPort), STONEHUSH_WEB_PORT: String(webPort),
     STONEHUSH_DATA_DIR: path.join(root, "data"), STONEHUSH_NMAP_EXECUTABLE: process.execPath,
+    STONEHUSH_INSTALLATION_FINGERPRINT: `sha256:${"a".repeat(64)}`, STONEHUSH_RUNNER_NAME: "process-fixture",
     npm_execpath: "/tmp/fixture-pnpm", ...extraEnv,
   };
   delete env.STONEHUSH_API_BASE_URL;
@@ -138,6 +140,7 @@ test("combined processes enroll and stop together without credential output", { 
   assert.ok(!process.output().includes(secret));
   process.child.kill("SIGINT");
   assert.equal((await process.exited).code, 130);
+  assert.ok(process.output().includes("Revoked temporary runner fixture-runner"));
   await assertReleased(lab.apiPort);
   await assertReleased(lab.webPort);
 });
@@ -150,6 +153,7 @@ test("reused credentials skip enrollment and stay out of API/web environments", 
   assert.ok(!process.output().includes(secret));
   process.child.kill("SIGTERM");
   assert.equal((await process.exited).code, 143);
+  assert.ok(!process.output().includes("/revoke"));
   await assertReleased(lab.apiPort);
 });
 

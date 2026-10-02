@@ -5,9 +5,9 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { readDevConfig } from "./dev-config.mjs";
 import { assertExecutablePresent, assertPortsFree } from "./demo-config.mjs";
-import { createChildRegistry, createSharedCleanup, createStopState } from "./demo-lifecycle.mjs";
+import { createChildRegistry, createSharedCleanup, createStopState, stopChild } from "./demo-lifecycle.mjs";
 import { probeApiHealth, waitForApiReadiness } from "./dev-readiness.mjs";
-import { resolveRunnerDevConfig, startRunnerDev } from "./runner-dev.mjs";
+import { resolveRunnerDevConfig, revokeEnrolledRunner, startRunnerDev } from "./runner-dev.mjs";
 
 export const COMBINED_READY_TIMEOUT_MS = 30_000;
 
@@ -83,10 +83,24 @@ export async function runCombinedDev({ repositoryRoot, env = process.env }) {
   const registry = createChildRegistry();
   const stop = createStopState();
   let runnerStartup;
+  let ownedEnrollment;
+  let apiBaseUrl;
   const shutdown = createSharedCleanup(async () => {
     // A stop may win the enrollment race. Settle its outcome before cleanup
     // so a successful confirmation cannot become a late, unowned identity.
-    await runnerStartup?.catch(() => {});
+    const running = await runnerStartup?.catch(() => undefined);
+    if (running !== undefined) {
+      try { await stopChild(running.child, running.exited); } catch { /* Continue owned cleanup. */ }
+    }
+    // Keep the API alive until the exact identity created by this launch is revoked.
+    if (ownedEnrollment !== undefined) {
+      try {
+        await revokeEnrolledRunner({ apiBaseUrl, ...ownedEnrollment });
+        console.log(`Revoked temporary runner ${ownedEnrollment.runnerId}.`);
+      } catch {
+        console.error(`Temporary runner cleanup could not confirm revocation. Explicitly recover runner ${ownedEnrollment.runnerId} at recorded revision ${ownedEnrollment.runnerRevision} through the configured API before enrolling again; do not revoke another identity.`);
+      }
+    }
     await registry.shutdown();
   });
   const onSignal = (name) => {
@@ -99,6 +113,7 @@ export async function runCombinedDev({ repositoryRoot, env = process.env }) {
 
   try {
     const { dev, runner } = resolveCombinedConfig(env, repositoryRoot);
+    apiBaseUrl = runner.apiBaseUrl;
     const require = createRequire(path.join(repositoryRoot, "apps/api/package.json"));
     const tsxImport = require.resolve("tsx");
     const pnpmProgram = env.npm_execpath;
@@ -148,6 +163,7 @@ export async function runCombinedDev({ repositoryRoot, env = process.env }) {
     await superviseWait(waitForWebReadiness({ url: webUrl, signal: stop.stopSignal }), { registry, stop });
     runnerStartup = startRunnerDev({
       plan: runner, stop, registry, baseEnv: environment, pnpmProgram, repositoryRoot, tsxImport,
+      onEnrolled: (identity) => { ownedEnrollment = identity; },
       spawnImplementation: (command, args, options) => spawnOwned(command, args, options, "runner"),
     });
     const startedRunner = await superviseWait(runnerStartup, { registry, stop });
