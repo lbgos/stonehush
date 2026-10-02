@@ -345,10 +345,10 @@ describe("resume the last inspected lead from Surface", () => {
     fireEvent.change(within(dialog()).getByLabelText("Attempt summary"), { target: { value: "Half typed" } });
 
     fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: otherEngagement.id } });
-    expect(await within(dialog()).findByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(await within(dialog()).findByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(`/engagements/${engagement.id}`));
     expect(within(dialog()).getByDisplayValue("Half typed")).toBeTruthy();
@@ -624,7 +624,7 @@ describe("resume the last inspected lead from Surface", () => {
     await waitFor(() => expect(summary.disabled).toBe(false));
     expect(summary.value).toBe("Draft stays local");
     fireEvent.keyDown(document.body, { key: "Escape" });
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Discard" }));
     expect(writes(fetchMock)).toEqual([]);
     expect(window.localStorage.getItem(workspaceStateKey(engagement.id))).not.toContain("Draft stays local");
@@ -647,7 +647,7 @@ describe("resume the last inspected lead from Surface", () => {
     expect(await within(dialog()).findByText("Lead not found")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Forget lead" }));
     expect(stored(engagement.id)).toBeNull();
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     expect(within(dialog()).getByDisplayValue("Still unsaved")).toBeTruthy();
     fireEvent.keyDown(document.body, { key: "Escape" });
@@ -879,7 +879,7 @@ describe("resume the last inspected lead from Surface", () => {
     expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
     finishes[0]?.(response({ code: "storage_busy" }, 503));
     expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     expect(router.state.location.search.tab).toBeUndefined();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
     await waitFor(() => expect(finishes).toHaveLength(2));
@@ -1030,7 +1030,7 @@ describe("link a saved finding while recording a lead attempt from Resume", () =
 
     fireEvent.change(chooser(), { target: { value: FINDING_A } });
     void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
-    expect(await within(dialog()).findByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(await within(dialog()).findByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     await waitFor(() => expect(router.state.location.search.tab).toBeUndefined());
     expect(chooser().value).toBe(FINDING_A);

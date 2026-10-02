@@ -38,6 +38,7 @@ import { AttemptEvidencePicker, parseEvidenceInput } from "./attempt-evidence.js
 import { AttemptFindingChooser, LinkedFinding, findingLinkProblem } from "./attempt-finding.js";
 import { openingFindingsRead, useOpeningFindingsQuery } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
+import { LeadTechniquePanel, LeadTechniqueStart, LeadTechniqueToggle, useLeadTechnique } from "./lead-technique.js";
 
 const LEAD_SOURCE_KINDS = [
   "nmap_service",
@@ -278,6 +279,9 @@ function LeadsBody({
           lead={selected}
         />
       ) : null}
+      {/* Inline Detail unmounts on Hide or lead switch without a prompt.
+          Only the Surface and Resume overlays guard an open draft, including
+          the technique draft. */}
 
       <div className="border border-border">
         <div className="border-b border-border px-3 py-2">
@@ -380,6 +384,8 @@ export interface LeadDraftState {
 // read the engagement's findings again on open for the optional finding a new
 // attempt names and the current state of findings saved attempts named. The
 // saved-evidence picker reads its catalog only when the operator opens it.
+// Save as technique selects saved attempts and opens a local draft; that
+// draft and its save join the same draft state.
 export function LeadDetail({
   archived,
   engagementId,
@@ -427,11 +433,20 @@ export function LeadDetail({
   const attemptDraft =
     summary.trim().length > 0 || conditions.trim().length > 0 || evidence.trim().length > 0 || outcome !== savedOutcome || findingId !== "";
   const linkProblem = findingLinkProblem(findings, findingId);
-  const dirty = !archived && (parkDraft || attemptDraft);
+  const technique = useLeadTechnique({
+    engagementId,
+    lead,
+    records,
+    archived,
+    readOnly,
+    outcomeLabel: (value) => ATTEMPT_OUTCOME_LABELS[value],
+  });
+  // An open technique draft stays held after archiving so its text is kept.
+  const dirty = (!archived && (parkDraft || attemptDraft)) || technique.draft.dirty;
   const pending =
-    park.isPending || transition.isPending || close.isPending || dismiss.isPending || suggest.isPending || record.isPending;
+    park.isPending || transition.isPending || close.isPending || dismiss.isPending || suggest.isPending || record.isPending || technique.draft.pending;
   // A previous operation's error must not hold a later successful write.
-  const failed = activeMutation !== undefined && mutations[activeMutation].isError;
+  const failed = (activeMutation !== undefined && mutations[activeMutation].isError) || technique.draft.failed;
   useEffect(() => {
     onDraftChange?.({ dirty, pending, failed });
   }, [dirty, pending, failed, onDraftChange]);
@@ -562,7 +577,10 @@ export function LeadDetail({
       ) : null}
 
       <div>
-        <h4 className="m-0 mb-2 text-[12px] font-semibold">Attempts</h4>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h4 className="m-0 text-[12px] font-semibold">Attempts</h4>
+          <LeadTechniqueStart technique={technique} />
+        </div>
         {attempts.isFetching && records.length === 0 ? (
           <LoadingRegion label="Loading attempts">
             <Skeleton className="h-10 w-full" />
@@ -589,38 +607,45 @@ export function LeadDetail({
           <p className="m-0 text-[12px] text-muted-foreground">No attempts recorded.</p>
         ) : (
           <ul className="m-0 grid list-none gap-2 p-0">
-            {records.map((attempt: LeadAttempt) => (
-              <li key={attempt.id} className="border border-border px-2.5 py-2">
-                <p className="m-0 text-[12px] font-semibold">
-                  {attempt.sequence}. {attempt.summary}
-                </p>
-                <p className="m-0 mt-1 text-[11px] text-muted-foreground">
-                  {ATTEMPT_OUTCOME_LABELS[attempt.outcome]}
-                  {attempt.conditions !== null ? ` under ${attempt.conditions}` : ""}
-                </p>
-                {attempt.evidenceArtifactIds.length > 0 ? (
-                  <p className="m-0 mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-                    <span>Evidence</span>
-                    {attempt.evidenceArtifactIds.map((artifactId, index) => (
-                      <a
-                        key={artifactId}
-                        href={artifactContentHref(engagementId, artifactId)}
-                        title={artifactId}
-                        aria-label={`Download evidence ${index + 1} (${artifactId})`}
-                        className="text-foreground underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        {index + 1}
-                      </a>
-                    ))}
+            {records.map((attempt: LeadAttempt, index) => (
+              <li
+                key={attempt.id}
+                className={`flex items-start gap-2 border border-border px-2.5 py-2 ${technique.marked(attempt.id) ? "border-l-foreground" : ""}`}
+              >
+                <LeadTechniqueToggle technique={technique} attempt={attempt} first={index === 0} />
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 text-[12px] font-semibold">
+                    {attempt.sequence}. {attempt.summary}
                   </p>
-                ) : null}
-                {attempt.linkedFindingId !== null ? (
-                  <LinkedFinding findingId={attempt.linkedFindingId} read={findings} onRetry={retryFindings} />
-                ) : null}
+                  <p className="m-0 mt-1 text-[11px] text-muted-foreground">
+                    {ATTEMPT_OUTCOME_LABELS[attempt.outcome]}
+                    {attempt.conditions !== null ? ` under ${attempt.conditions}` : ""}
+                  </p>
+                  {attempt.evidenceArtifactIds.length > 0 ? (
+                    <p className="m-0 mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
+                      <span>Evidence</span>
+                      {attempt.evidenceArtifactIds.map((artifactId, evidenceIndex) => (
+                        <a
+                          key={artifactId}
+                          href={artifactContentHref(engagementId, artifactId)}
+                          title={artifactId}
+                          aria-label={`Download evidence ${evidenceIndex + 1} (${artifactId})`}
+                          className="text-foreground underline underline-offset-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          {evidenceIndex + 1}
+                        </a>
+                      ))}
+                    </p>
+                  ) : null}
+                  {attempt.linkedFindingId !== null ? (
+                    <LinkedFinding findingId={attempt.linkedFindingId} read={findings} onRetry={retryFindings} />
+                  ) : null}
+                </div>
               </li>
             ))}
           </ul>
         )}
+        <LeadTechniquePanel technique={technique} />
       </div>
 
       {outline.isError ? (

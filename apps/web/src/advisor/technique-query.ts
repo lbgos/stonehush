@@ -1,6 +1,7 @@
 import {
   CreateTechniqueRequestSchema,
   TechniqueListResponseSchema,
+  TechniqueMutationErrorSchema,
   TechniqueResponseSchema,
   type Technique,
 } from "@stonehush/contracts";
@@ -26,6 +27,24 @@ export class TechniqueRequestError extends Error {
   }
 }
 
+export function parseTechniqueMutationError(payload: unknown): TechniqueRequestError {
+  const parsed = TechniqueMutationErrorSchema.safeParse(payload);
+  if (parsed.success) return new TechniqueRequestError(parsed.data.code);
+  return new TechniqueRequestError("request_failed");
+}
+
+// Server refusals that definitely did not create a technique, so a later
+// retry is a new save rather than a possible duplicate. Anything else,
+// including a network failure or an unreadable response, leaves the create
+// outcome unknown: the operator checks Techniques before saving again.
+export function isTechniqueSaveRefused(code: string): boolean {
+  return (
+    code === "invalid_request" ||
+    code === "engagement_not_found" ||
+    code === "engagement_archived" ||
+    code === "storage_busy"
+  );
+}
 export function techniquesQueryKey(engagementId: string) {
   return ["engagements", engagementId, "techniques"] as const;
 }
@@ -96,11 +115,11 @@ export async function saveTechniqueRequest(
   try {
     payload = await response.json();
   } catch {
-    throw new TechniqueRequestError();
+    throw new TechniqueRequestError("request_failed");
   }
-  if (response.status !== 201) throw new TechniqueRequestError();
+  if (response.status !== 201) throw parseTechniqueMutationError(payload);
   const result = TechniqueResponseSchema.safeParse(payload);
-  if (!result.success) throw new TechniqueRequestError();
+  if (!result.success) throw new TechniqueRequestError("invalid_persisted_data");
   return result.data;
 }
 
