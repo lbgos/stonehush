@@ -1,4 +1,5 @@
 import type {
+  ActionSnapshot,
   FfufProjected,
   HttpProbeProjected,
   NmapProjectedService,
@@ -6,23 +7,14 @@ import type {
   RunHistorySummary,
   RunOutputResponse,
 } from "@stonehush/contracts";
-import type { PriorAttemptInput, RunDiffContext, RunDiffInput } from "@stonehush/domain";
+import { hasFfufMarker, hasVhostMarker, isFfufSnapshot, isHttpProbeSnapshot, type PriorAttemptInput, type RunDiffContext, type RunDiffInput } from "@stonehush/domain";
 
-import { formatCanonicalTarget, latestActionSnapshot } from "./action-targets.js";
+import { formatCanonicalTarget } from "./action-targets.js";
 import { splitOriginUrl } from "./inspector.js";
 
-// Honest run-to-run comparison inputs, composed only from data the client
-// already reads: engagement projections keyed by exact run id, run history
-// summaries, exact per-run output, and persisted action snapshots. Nothing is
-// parsed out of stdout, titles are never treated as context, and the current
-// target selection is never consulted: tool and origin come from typed
-// projection fields only. When those fields cannot name exactly one tool and
-// one origin, resolution refuses instead of guessing.
-
-export const RUN_COMPARE_OPTIONS_UNAVAILABLE =
-  "Options unavailable: the action record failed to load.";
-export const RUN_COMPARE_BINDING_UNAVAILABLE =
-  "Binding unavailable: the action record failed to load.";
+// Comparison uses exact run-owned projections and the action's queued snapshot.
+// Queued snapshots stay fixed across retries. Current selection and output text
+// never supply execution context.
 
 export type RunCompareTool = "nmap" | "http-probe" | "ffuf";
 
@@ -31,6 +23,7 @@ export interface ResolvedRunComparison {
   readonly tool: RunCompareTool;
   readonly origin: string;
   readonly observationCount: number;
+  readonly snapshot: ActionSnapshot;
 }
 
 export type ResolveRunComparisonResult =
@@ -51,9 +44,21 @@ function uniqueSorted(values: readonly string[]): string[] {
 // projection list has nothing to compare. Rows in two tool lists mean the
 // join is ambiguous, so the comparison refuses rather than picking a tool.
 export function resolveRunComparison(
-  runId: string,
+  run: RunHistorySummary,
   projections: RunProjections,
+  action: PersistedAction,
+  engagementId: string,
 ): ResolveRunComparisonResult {
+  const snapshot = action.action.snapshots.find(
+    (candidate) => candidate.version === action.action.queuedSnapshotVersion,
+  );
+  if (
+    action.engagementId !== engagementId || action.action.actionId !== run.actionId ||
+    snapshot === undefined || snapshot.actionId !== run.actionId
+  ) {
+    return { ok: false, reason: "Recorded execution context is unavailable for this run." };
+  }
+  const runId = run.id;
   const serviceRows = projections.services.filter((row) => row.runId === runId);
   const probeRows = projections.probes.filter((row) => row.runId === runId);
   const resultRows = projections.results.filter((row) => row.runId === runId);
@@ -74,14 +79,24 @@ export function resolveRunComparison(
     };
   }
   const tool = populated[0]!.tool;
+  if (hasVhostMarker(snapshot) || (hasFfufMarker(snapshot) ? tool !== "ffuf" || !isFfufSnapshot(snapshot) :
+    tool === "ffuf" || (tool === "http-probe" && !isHttpProbeSnapshot(snapshot)))) {
+    return { ok: false, reason: "Observations do not match the recorded tool context." };
+  }
   if (tool === "nmap") {
-    const addresses = uniqueSorted(serviceRows.map((row) => row.address));
+    if (snapshot.canonicalTargets.some((target) => target.kind === "url")) {
+      return { ok: false, reason: "Nmap observations do not match the recorded target context." };
+    }
+    const addresses = uniqueSorted(snapshot.canonicalTargets.map(formatCanonicalTarget));
     return {
       ok: true,
-      value: { runId, tool, origin: addresses.join(", "), observationCount: serviceRows.length },
+      value: { runId, tool, origin: addresses.join(", "), observationCount: serviceRows.length, snapshot },
     };
   }
-  const urls = tool === "http-probe" ? probeRows.map((row) => row.url) : resultRows.map((row) => row.url);
+  const urls = snapshot.canonicalTargets.flatMap((target) => target.kind === "url" ? [target.url] : []);
+  if (urls.length !== snapshot.canonicalTargets.length) {
+    return { ok: false, reason: "Web observations do not match the recorded target context." };
+  }
   const origins: string[] = [];
   for (const url of urls) {
     const parts = splitOriginUrl(url);
@@ -100,8 +115,12 @@ export function resolveRunComparison(
       reason: "This run spans more than one origin; the comparison refuses ambiguous origin context.",
     };
   }
+  const observationUrls = tool === "http-probe" ? probeRows.map((row) => row.url) : resultRows.map((row) => row.url);
+  if (observationUrls.some((url) => splitOriginUrl(url)?.origin !== unique[0])) {
+    return { ok: false, reason: "Observations do not match the recorded origin." };
+  }
   const count = tool === "http-probe" ? probeRows.length : resultRows.length;
-  return { ok: true, value: { runId, tool, origin: unique[0]!, observationCount: count } };
+  return { ok: true, value: { runId, tool, origin: unique[0]!, observationCount: count, snapshot } };
 }
 
 // Deterministic display summary of typed action options. Object keys sort so
@@ -121,17 +140,21 @@ function canonicalizeJsonValue(value: unknown): unknown {
   return value;
 }
 
-export function actionOptionsSummary(action: PersistedAction | undefined): string {
-  if (action === undefined) return RUN_COMPARE_OPTIONS_UNAVAILABLE;
-  return stableStringifyOptions(latestActionSnapshot(action).typedOptions);
+export function actionOptionsSummary(snapshot: ActionSnapshot): string {
+  return stableStringifyOptions(snapshot.typedOptions);
 }
 
-export function actionBindingSummary(action: PersistedAction | undefined): string {
-  if (action === undefined) return RUN_COMPARE_BINDING_UNAVAILABLE;
-  return latestActionSnapshot(action)
-    .canonicalTargets.map((target) => formatCanonicalTarget(target))
-    .sort()
-    .join(", ");
+// Ignore action IDs, digest IDs, resolution timestamps and TTLs. Compare the
+// recorded targets, concrete destinations and DNS answers instead.
+export function actionBindingSummary(snapshot: ActionSnapshot): string {
+  const targets = uniqueSorted(snapshot.canonicalTargets.map(formatCanonicalTarget)).join(", ");
+  const destinations = uniqueSorted(snapshot.concreteDestinations.map(formatCanonicalTarget));
+  const resolutions = snapshot.resolutionSnapshots.map((resolution) => {
+    const answers = uniqueSorted(resolution.answers.map((answer) => answer.address));
+    return `${resolution.canonicalQueryName}: ${answers.join(", ")}${resolution.cnameChain.length > 0 ? ` via ${resolution.cnameChain.join(" -> ")}` : ""}`;
+  }).sort();
+  return [targets, destinations.length > 0 ? `destinations ${destinations.join(", ")}` : null,
+    resolutions.length > 0 ? `DNS ${resolutions.join("; ")}` : null].filter((part) => part !== null).join("; ");
 }
 
 // Factual outcome line for the prior-attempt copy. A finished run still does
@@ -154,7 +177,9 @@ export function runSideComplete(
 ): boolean {
   if (run.state !== "succeeded") return false;
   if (output === undefined || output.run.id !== run.id) return false;
-  return output.stdout.truncated === false && output.stderr.truncated === false;
+  const streams = [output.stdout, output.stderr];
+  return output.run.state === "succeeded" && streams.some((stream) => stream.present) &&
+    streams.every((stream) => !stream.present || (stream.completeness === "complete" && !stream.truncated));
 }
 
 export interface RunCompareSide {
@@ -163,14 +188,8 @@ export interface RunCompareSide {
   readonly complete: boolean;
 }
 
-function observationsForRun(runId: string, projections: RunProjections): RunDiffInput["after"] {
+function observationsForRun(runId: string, projections: RunProjections): Pick<RunDiffInput["after"], "services" | "responses" | "paths"> {
   return {
-    context: {
-      tool: "unknown",
-      origin: "unknown",
-      optionsSummary: "unknown",
-      binding: "unknown",
-    },
     services: projections.services
       .filter((row) => row.runId === runId)
       .map((row) => ({
@@ -187,7 +206,6 @@ function observationsForRun(runId: string, projections: RunProjections): RunDiff
     paths: projections.results
       .filter((row) => row.runId === runId)
       .map((row) => ({ url: row.url, status: row.status, fuzz: row.fuzz })),
-    complete: true,
   };
 }
 

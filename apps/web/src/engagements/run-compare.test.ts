@@ -1,349 +1,115 @@
-import type {
-  FfufProjected,
-  HttpProbeProjected,
-  NmapProjectedService,
-  PersistedAction,
-  RunHistorySummary,
-  RunOutputResponse,
-} from "@stonehush/contracts";
-import { diffRuns } from "@stonehush/domain";
+import type { ActionSnapshot, NmapProjectedService, PersistedAction, RunHistorySummary, RunOutputResponse } from "@stonehush/contracts";
+import { diffRuns, normalizeTarget } from "@stonehush/domain";
 import { describe, expect, it } from "vitest";
 
-import {
-  actionBindingSummary,
-  actionOptionsSummary,
-  buildPriorAttempt,
-  buildRunCompareInput,
-  describeRunOutcome,
-  resolveRunComparison,
-  runSideComplete,
-  stableStringifyOptions,
-  RUN_COMPARE_BINDING_UNAVAILABLE,
-  RUN_COMPARE_OPTIONS_UNAVAILABLE,
-} from "./run-compare.js";
+import { actionBindingSummary, actionOptionsSummary, buildPriorAttempt, buildRunCompareInput, resolveRunComparison, runSideComplete, stableStringifyOptions } from "./run-compare.js";
+import { priorComparisonRuns } from "./run-compare-panel.js";
 
-const DIGEST_A = `sha256:${"a".repeat(64)}`;
-
-function nmapService(
-  runId: string,
-  overrides: Partial<NmapProjectedService> = {},
-): NmapProjectedService {
-  return {
-    address: "192.0.2.10",
-    port: 80,
-    protocol: "tcp",
-    hostname: null,
-    serviceName: "http",
-    product: null,
-    version: null,
-    source: "nmap",
-    parserVersion: "nmap-xml-v1",
-    runId,
-    artifactId: "artifact-1",
-    artifactDigest: DIGEST_A,
-    observedAt: "2026-08-13T12:00:00.000Z",
-    ...overrides,
-  };
+const digest = `sha256:${"a".repeat(64)}`;
+const run: RunHistorySummary = { id: "new", actionId: "action", state: "succeeded", terminalKind: "succeeded", terminalReason: null,
+  createdAt: "2026-08-10T11:00:00.000Z", updatedAt: "2026-08-10T12:00:00.000Z", attempt: 1 };
+function snapshot(target = "192.0.2.10"): ActionSnapshot {
+  const normalized = normalizeTarget(target);
+  if (!normalized.ok) throw new Error(normalized.error.code);
+  return { normalizationProfile: "d1-v1", orchestrationProfile: "d2-v1", snapshotId: "snapshot", version: 1,
+    binding: digest, actionId: "action", canonicalTargets: [normalized.target], concreteDestinations: [], typedOptions: { declaredPorts: [80, 443] },
+    resolutionSnapshots: [], scopeRevisionId: null, warningState: { reasonCodes: [], knownAdditions: [], acknowledgment: null } };
+}
+function action(recorded = snapshot()): PersistedAction {
+  return { contractVersion: 1, engagementId: "eng", revision: 1, warningAcknowledgmentId: null, createdAt: run.createdAt, updatedAt: run.updatedAt,
+    action: { orchestrationProfile: "d2-v1", actionId: "action", state: "succeeded", snapshots: [recorded], queuedSnapshotVersion: 1,
+      warningAcknowledgment: null, pendingWarning: null, coveredDestinations: [], warningInteractions: 0, runState: null,
+      resumeRequested: false, cleanupRequired: false, capabilityErrorCode: null } };
+}
+function service(runId: string, port = 80): NmapProjectedService {
+  return { source: "nmap", parserVersion: "nmap-xml-v1", address: "192.0.2.10", port, protocol: "tcp", hostname: null,
+    serviceName: "http", product: null, version: null, runId, artifactId: `artifact-${runId}-${port}`, artifactDigest: digest, observedAt: run.updatedAt };
+}
+const empty = { services: [], probes: [], results: [] };
+function output(): RunOutputResponse {
+  return { run, stdout: { present: true, artifactId: "stdout", sizeBytes: 4, digest, completeness: "complete", truncated: false, content: "text" },
+    stderr: { present: false, truncated: false, content: "" } };
 }
 
-function ffufResult(runId: string, url: string, overrides: Partial<FfufProjected> = {}): FfufProjected {
-  return {
-    source: "ffuf",
-    parserVersion: "ffuf-json-v1",
-    url,
-    status: 200,
-    length: 100,
-    words: 10,
-    lines: 5,
-    redirectlocation: null,
-    fuzz: "admin",
-    runId,
-    artifactId: "artifact-9",
-    artifactDigest: DIGEST_A,
-    observedAt: "2026-08-13T12:00:00.000Z",
-    ...overrides,
-  };
-}
-
-function httpProbe(runId: string, url: string, overrides: Partial<HttpProbeProjected> = {}): HttpProbeProjected {
-  return {
-    parserVersion: "http-probe-raw-v1",
-    url,
-    fetchedAt: "2026-08-13T12:00:00.000Z",
-    finalUrl: url,
-    status: 200,
-    title: "lab",
-    selectedHeaders: { contentType: "text/html", server: null, poweredBy: null },
-    hops: [],
-    error: null,
-    source: "http-probe",
-    runId,
-    artifactId: "artifact-7",
-    artifactDigest: DIGEST_A,
-    observedAt: "2026-08-13T12:00:00.000Z",
-    ...overrides,
-  };
-}
-
-const EMPTY = { services: [], probes: [], results: [] } as const;
-
-function historyRun(id: string, overrides: Partial<RunHistorySummary> = {}): RunHistorySummary {
-  return {
-    id,
-    actionId: "action-1",
-    state: "succeeded",
-    terminalKind: "succeeded",
-    terminalReason: null,
-    updatedAt: "2026-08-10T12:00:00.000Z",
-    createdAt: "2026-08-10T11:00:00.000Z",
-    attempt: 1,
-    ...overrides,
-  };
-}
-
-function runOutput(runId: string, truncated: boolean): RunOutputResponse {
-  return {
-    run: {
-      id: runId,
-      actionId: "action-1",
-      state: "succeeded",
-      terminalKind: "succeeded",
-      terminalReason: null,
-      updatedAt: "2026-08-10T12:00:00.000Z",
-    },
-    stdout: {
-      present: true,
-      artifactId: "artifact-out",
-      sizeBytes: 4,
-      digest: DIGEST_A,
-      completeness: "complete",
-      truncated,
-      content: "bytes",
-    },
-    stderr: { present: false, truncated: false, content: "" },
-  } as RunOutputResponse;
-}
-
-describe("resolveRunComparison", () => {
-  it("resolves an nmap run to its observed addresses", () => {
-    const resolved = resolveRunComparison("run-1", {
-      ...EMPTY,
-      services: [nmapService("run-1"), nmapService("run-1", { address: "192.0.2.11", port: 22, artifactId: "artifact-2" })],
-    });
-    expect(resolved).toEqual({
-      ok: true,
-      value: { runId: "run-1", tool: "nmap", origin: "192.0.2.10, 192.0.2.11", observationCount: 2 },
-    });
+describe("recorded comparison context", () => {
+  it("uses queued target context even when observed addresses disappear", () => {
+    const recorded = snapshot("192.0.2.0/24");
+    const projections = { ...empty, services: [service("new"), service("old", 443)] };
+    const before = resolveRunComparison({ ...run, id: "old" }, projections, action(recorded), "eng");
+    const after = resolveRunComparison(run, projections, action(recorded), "eng");
+    expect(before).toMatchObject({ ok: true, value: { tool: "nmap", origin: "192.0.2.0/24" } });
+    expect(after).toMatchObject({ ok: true, value: { origin: "192.0.2.0/24" } });
   });
-
-  it("resolves ffuf and probe runs to the URL origin", () => {
-    const ffuf = resolveRunComparison("run-f", {
-      ...EMPTY,
-      results: [
-        ffufResult("run-f", "http://target.test:8080/admin"),
-        ffufResult("run-f", "http://target.test:8080/login", { fuzz: "login", artifactId: "artifact-10" }),
-      ],
-    });
-    expect(ffuf).toEqual({
-      ok: true,
-      value: { runId: "run-f", tool: "ffuf", origin: "http://target.test:8080", observationCount: 2 },
-    });
-    const probe = resolveRunComparison("run-p", {
-      ...EMPTY,
-      probes: [httpProbe("run-p", "https://target.test/")],
-    });
-    expect(probe).toEqual({
-      ok: true,
-      value: { runId: "run-p", tool: "http-probe", origin: "https://target.test", observationCount: 1 },
-    });
+  it("refuses missing observations, ambiguous tools, and foreign action ownership", () => {
+    expect(resolveRunComparison(run, empty, action(), "eng").ok).toBe(false);
+    expect(resolveRunComparison(run, { ...empty, services: [service("new")] }, action(), "other").ok).toBe(false);
+    expect(resolveRunComparison({ ...run, actionId: "foreign" }, { ...empty, services: [service("new")] }, action(), "eng").ok).toBe(false);
   });
-
-  it("refuses runs with no observations instead of guessing", () => {
-    expect(resolveRunComparison("run-9", EMPTY)).toEqual({
-      ok: false,
-      reason: "No recorded observations for this run in the current projections.",
-    });
-    // Rows for other runs never leak into this run.
-    expect(
-      resolveRunComparison("run-9", { ...EMPTY, services: [nmapService("run-1")] }),
-    ).toEqual({
-      ok: false,
-      reason: "No recorded observations for this run in the current projections.",
-    });
+  it("selects the queued snapshot, not an unrelated higher version", () => {
+    const persisted = action();
+    persisted.action.snapshots.push({ ...snapshot("192.0.2.11"), version: 2 });
+    expect(resolveRunComparison(run, { ...empty, services: [service("new")] }, persisted, "eng"))
+      .toMatchObject({ ok: true, value: { origin: "192.0.2.10" } });
+    persisted.action.queuedSnapshotVersion = null;
+    expect(resolveRunComparison(run, { ...empty, services: [service("new")] }, persisted, "eng").ok).toBe(false);
   });
-
-  it("refuses multi-tool and multi-origin runs as ambiguous", () => {
-    expect(
-      resolveRunComparison("run-1", {
-        ...EMPTY,
-        services: [nmapService("run-1")],
-        results: [ffufResult("run-1", "http://target.test/x")],
-      }),
-    ).toMatchObject({ ok: false });
-    expect(
-      resolveRunComparison("run-f", {
-        ...EMPTY,
-        results: [
-          ffufResult("run-f", "http://one.test/a"),
-          ffufResult("run-f", "http://two.test/b", { fuzz: "b" }),
-        ],
-      }),
-    ).toMatchObject({ ok: false });
-    expect(
-      resolveRunComparison("run-f", { ...EMPTY, results: [ffufResult("run-f", "not a url")] }),
-    ).toMatchObject({ ok: false });
+  it("compares concrete DNS destinations while ignoring IDs, timestamp and TTL noise", () => {
+    const before = snapshot("target.test");
+    before.resolutionSnapshots = [{ canonicalQueryName: "target.test", resolverMode: "system", cnameChain: [],
+      answers: [{ address: "192.0.2.10", family: 4, ttlSeconds: 60 }], resolvedAt: run.createdAt }];
+    const equivalent = { ...before, snapshotId: "another", binding: `sha256:${"b".repeat(64)}`,
+      resolutionSnapshots: before.resolutionSnapshots.map((row) => ({ ...row, resolvedAt: run.updatedAt, answers: row.answers.map((answer) => ({ ...answer, ttlSeconds: 10 })) })) };
+    expect(actionBindingSummary(before)).toBe(actionBindingSummary(equivalent));
+    const changed = { ...equivalent, resolutionSnapshots: equivalent.resolutionSnapshots.map((row) => ({ ...row,
+      answers: row.answers.map((answer) => ({ ...answer, address: "192.0.2.11" })) })) };
+    expect(actionBindingSummary(changed)).not.toBe(actionBindingSummary(before));
+    expect(actionBindingSummary(changed)).toContain("192.0.2.11");
+  });
+  it("keeps options stable and reports the exact prior attempt", () => {
+    const recorded = snapshot(); recorded.typedOptions = { threads: 40, rate: 100 };
+    expect(actionOptionsSummary(recorded)).toBe(stableStringifyOptions({ rate: 100, threads: 40 }));
+    expect(buildPriorAttempt({ run, optionsSummary: "recorded", conditionsChanged: true }))
+      .toEqual({ runId: "new", attemptedAt: run.createdAt, outcome: "succeeded", optionsSummary: "recorded", conditionsChanged: true });
   });
 });
 
-describe("action summaries", () => {
-  function persistedAction(typedOptions: Record<string, unknown>, targets: string): PersistedAction {
-    return {
-      action: {
-        snapshots: [
-          {
-            version: 2,
-            canonicalTargets: [{ kind: "ip", address: targets, zone: null, normalizationProfile: "d1-v1" }],
-            typedOptions,
-          },
-        ],
-      },
-    } as unknown as PersistedAction;
-  }
-
-  it("summarizes options deterministically regardless of key order", () => {
-    const first = persistedAction({ rate: 100, threads: 40 }, "192.0.2.10");
-    const second = persistedAction({ threads: 40, rate: 100 }, "192.0.2.10");
-    expect(actionOptionsSummary(first)).toBe(actionOptionsSummary(second));
-    expect(actionOptionsSummary(first)).toBe('{"rate":100,"threads":40}');
-    expect(actionBindingSummary(first)).toBe("192.0.2.10");
+describe("preserved output completeness", () => {
+  it("requires success, exact output ownership, and at least one complete preserved stream", () => {
+    expect(runSideComplete(run, output())).toBe(true);
+    expect(runSideComplete(run, undefined)).toBe(false);
+    expect(runSideComplete({ ...run, state: "cancelled" }, output())).toBe(false);
+    expect(runSideComplete({ ...run, id: "foreign" }, output())).toBe(false);
+    const absent = output(); absent.stdout = absent.stderr;
+    expect(runSideComplete(run, absent)).toBe(false);
   });
-
-  it("names unavailable action records instead of inventing context", () => {
-    expect(actionOptionsSummary(undefined)).toBe(RUN_COMPARE_OPTIONS_UNAVAILABLE);
-    expect(actionBindingSummary(undefined)).toBe(RUN_COMPARE_BINDING_UNAVAILABLE);
+  it.each(["partial", "truncated"] as const)("does not confuse %s artifact completeness with an intact preview", (completeness) => {
+    const partial = output();
+    if (!partial.stdout.present) throw new Error("fixture");
+    partial.stdout.completeness = completeness;
+    expect(runSideComplete(run, partial)).toBe(false);
+  });
+  it("carries truncation and stale output state into the incomplete caveat", () => {
+    const truncated = output(); truncated.stdout.truncated = true;
+    expect(runSideComplete(run, truncated)).toBe(false);
+    const pending = output(); pending.run = { ...run, state: "running" };
+    expect(runSideComplete(run, pending)).toBe(false);
   });
 });
 
-describe("outcome and completeness", () => {
-  it("names terminal states factually", () => {
-    expect(describeRunOutcome(historyRun("r"))).toBe("succeeded");
-    expect(describeRunOutcome(historyRun("r", { state: "failed", terminalKind: "failed", terminalReason: "timeout" }))).toBe(
-      "failed (timeout)",
-    );
-    expect(describeRunOutcome(historyRun("r", { state: "failed", terminalKind: "failed" }))).toBe("failed");
-    expect(describeRunOutcome(historyRun("r", { state: "cancelled", terminalKind: "cancelled" }))).toBe(
-      "cancelled (interrupted; partial evidence only)",
-    );
-  });
-
-  it("counts only succeeded runs with intact output as complete", () => {
-    expect(runSideComplete(historyRun("r"), runOutput("r", false))).toBe(true);
-    expect(runSideComplete(historyRun("r"), runOutput("r", true))).toBe(false);
-    expect(runSideComplete(historyRun("r", { state: "failed", terminalKind: "failed" }), runOutput("r", false))).toBe(false);
-    expect(runSideComplete(historyRun("r"), undefined)).toBe(false);
-    // Foreign output never counts for this run.
-    expect(runSideComplete(historyRun("r"), runOutput("other", false))).toBe(false);
-  });
-});
-
-describe("buildRunCompareInput", () => {
-  it("maps exact run observations and keeps domain honesty rules", () => {
-    const before = historyRun("run-old");
-    const after = historyRun("run-new");
-    const projections = {
-      services: [
-        nmapService("run-old"),
-        nmapService("run-new", { product: "nginx", version: "1.25", artifactId: "artifact-2" }),
-        nmapService("run-new", { port: 443, serviceName: "https", artifactId: "artifact-3" }),
-      ],
-      probes: [],
-      results: [],
-    };
-    const input = buildRunCompareInput({
-      before: {
-        run: before,
-        context: { tool: "nmap", origin: "192.0.2.10", ports: null, optionsSummary: "{}", authSummary: null, binding: "192.0.2.10" },
-        complete: true,
-      },
-      after: {
-        run: after,
-        context: { tool: "nmap", origin: "192.0.2.10", ports: null, optionsSummary: "{}", authSummary: null, binding: "192.0.2.10" },
-        complete: true,
-      },
-      projections,
-    });
-    const diff = diffRuns(input);
-    expect(diff.comparable).toBe(true);
+describe("exact observations and prior order", () => {
+  it("shows new, changed and no longer observed services without claiming closure", () => {
+    const older = { ...run, id: "old" };
+    const context = { tool: "nmap", origin: "192.0.2.10", optionsSummary: "recorded", binding: "recorded" };
+    const diff = diffRuns(buildRunCompareInput({ before: { run: older, context, complete: false }, after: { run, context, complete: true },
+      projections: { ...empty, services: [service("old", 80), service("old", 22), { ...service("new", 80), product: "nginx" }, service("new", 443), service("foreign", 8080)] } }));
     expect(diff.newServices).toHaveLength(1);
     expect(diff.changedServices).toHaveLength(1);
-    // Requested ports and auth stay unknown, never invented.
-    expect(input.before.context.ports).toBeNull();
-    expect(input.before.context.authSummary).toBeNull();
+    expect(diff.removedFromView).toEqual([expect.stringContaining("Not observed is not closed")]);
+    expect(diff.caveats).toEqual([expect.stringContaining("incomplete")]);
   });
-
-  it("preserves domain refusal for different tools", () => {
-    const input = buildRunCompareInput({
-      before: {
-        run: historyRun("run-old"),
-        context: { tool: "nmap", origin: "192.0.2.10", ports: null, optionsSummary: "{}", authSummary: null, binding: "192.0.2.10" },
-        complete: true,
-      },
-      after: {
-        run: historyRun("run-new"),
-        context: { tool: "ffuf", origin: "http://target.test", ports: null, optionsSummary: "{}", authSummary: null, binding: "http://target.test" },
-        complete: true,
-      },
-      projections: EMPTY,
-    });
-    const diff = diffRuns(input);
-    expect(diff.comparable).toBe(false);
-    expect(diff.newServices).toHaveLength(0);
-  });
-
-  it("carries untrusted strings through unchanged without interpreting them", () => {
-    const hostile = '<img src=x onerror=alert(1)>"; DROP TABLE runs; --';
-    const input = buildRunCompareInput({
-      before: {
-        run: historyRun("run-old"),
-        context: { tool: "http-probe", origin: "http://target.test", ports: null, optionsSummary: "{}", authSummary: null, binding: "http://target.test" },
-        complete: true,
-      },
-      after: {
-        run: historyRun("run-new"),
-        context: { tool: "http-probe", origin: "http://target.test", ports: null, optionsSummary: "{}", authSummary: null, binding: "http://target.test" },
-        complete: true,
-      },
-      projections: {
-        ...EMPTY,
-        probes: [
-          httpProbe("run-old", "http://target.test/", { title: hostile }),
-          httpProbe("run-new", "http://target.test/", { title: hostile, status: 404, artifactId: "artifact-8" }),
-        ],
-      },
-    });
-    const diff = diffRuns(input);
-    expect(diff.changedResponses).toHaveLength(1);
-    expect(diff.changedResponses[0]).toContain(hostile);
-  });
-});
-
-describe("buildPriorAttempt", () => {
-  it("names the exact prior run, time, outcome, and options", () => {
-    const attempt = buildPriorAttempt({
-      run: historyRun("run-old"),
-      optionsSummary: '{"rate":100}',
-      conditionsChanged: false,
-    });
-    expect(attempt).toEqual({
-      runId: "run-old",
-      attemptedAt: "2026-08-10T11:00:00.000Z",
-      optionsSummary: '{"rate":100}',
-      outcome: "succeeded",
-      conditionsChanged: false,
-    });
-  });
-
-  it("keeps option summaries stable for identical option sets", () => {
-    expect(stableStringifyOptions({ b: 1, a: [3, 2] })).toBe('{"a":[3,2],"b":1}');
+  it("offers only older terminal runs in admitted order, including the timestamp tie-break", () => {
+    const earlier = { ...run, id: "old", createdAt: "2026-08-09T11:00:00.000Z" };
+    const tie = { ...run, id: "a" };
+    expect(priorComparisonRuns([{ ...run, id: "z" }, run, earlier, tie, { ...earlier, id: "pending", state: "running" }], run)).toEqual([earlier, tie]);
   });
 });

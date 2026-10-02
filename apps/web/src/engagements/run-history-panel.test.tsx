@@ -1528,3 +1528,30 @@ describe("run history panel", () => {
     assertReadOnly(fetchMock);
   });
 });
+
+describe("comparison history baseline", () => {
+  it("keeps held-back runs out of prior choices until Show new results, even while filters hide the selected row", async () => {
+    const newer = runSummary("run-new", "2026-08-11T12:00:00.000Z");
+    const older = runSummary("run-old", "2026-08-09T12:00:00.000Z");
+    const arrival = runSummary("run-arrived", "2026-08-10T12:00:00.000Z");
+    const reads = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/runs?")) return response({ runs: [newer, older], nextCursor: null });
+      if (String(input).endsWith("/runs/run-new/output")) return response(outputFor("run-new", "new output"));
+      return response({ code: "invalid_request" }, 400);
+    });
+    vi.stubGlobal("fetch", reads);
+    const { queryClient } = renderPanel({ selectedRunId: "run-new" });
+    await screen.findByLabelText("Prior run");
+    await act(async () => {
+      queryClient.setQueryData(["engagements", ENGAGEMENT_ID, "runs", 25], { pages: [{ runs: [newer, arrival, older], nextCursor: null }], pageParams: [undefined] });
+    });
+    fireEvent.change(screen.getByLabelText("Search loaded runs by run or action ID"), { target: { value: "run-old" } });
+    expect(screen.getByRole("button", { name: "Show new results" })).toBeTruthy();
+    const choices = () => Array.from((screen.getByLabelText("Prior run") as HTMLSelectElement).options).map((option) => option.value);
+    expect(choices()).toEqual(["", "run-old"]);
+    fireEvent.click(screen.getByRole("button", { name: "Show new results" }));
+    await waitFor(() => expect(choices()).toEqual(["", "run-arrived", "run-old"]));
+    expect((screen.getByLabelText("Prior run") as HTMLSelectElement).value).toBe("");
+    assertReadOnly(reads);
+  });
+});
