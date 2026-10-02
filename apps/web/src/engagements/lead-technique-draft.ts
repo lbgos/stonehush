@@ -91,7 +91,7 @@ export function seedLeadTechnique(
   };
   const name = mask(lead.title);
   const steps: TechniqueStepDraft[] = attempts.map((attempt) => {
-    const conditions = attempt.conditions === null ? "" : ` under ${maskCopiedText(attempt.conditions)}`;
+    const conditions = attempt.conditions === null ? "" : ` (${maskCopiedText(attempt.conditions)})`;
     const note = `From attempt ${attempt.sequence}: ${outcomeLabel(attempt.outcome)}${conditions}`;
     return { key: nextKey(), instruction: mask(attempt.summary), command: "", note };
   });

@@ -156,7 +156,7 @@ describe("save a lead's attempts as a technique", () => {
       "Vendor default rejected on 192.0.2.10",
     ]);
     expect(screen.getAllByLabelText<HTMLInputElement>(/^Command, optional/).map((field) => field.value)).toEqual(["", ""]);
-    expect(screen.getByText("From attempt 3: ruled out under conditions under only over plain http")).toBeTruthy();
+    expect(screen.getByText("From attempt 3: ruled out under conditions (only over plain http)")).toBeTruthy();
     expect(screen.getByLabelText<HTMLInputElement>("Distinguishing question").value).toBe("");
     expect(posts).toHaveLength(0);
 
@@ -193,6 +193,26 @@ describe("save a lead's attempts as a technique", () => {
     fireEvent.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Save as technique" })));
     expect(screen.queryByLabelText("Use attempt 1")).toBe(null);
+  });
+
+  it("shows the saved technique with fill and copy replay and no Advisor setup", async () => {
+    const { posts } = serve({});
+    renderLeads();
+    await openDraft([1]);
+    fireEvent.change(screen.getByLabelText("Exact text in steps"), { target: { value: "192.0.2.10" } });
+    fireEvent.change(screen.getByLabelText("Placeholder name"), { target: { value: "target" } });
+    fireEvent.click(screen.getByRole("button", { name: "Replace" }));
+    fireEvent.change(screen.getByLabelText("Distinguishing question"), { target: { value: "Does the vendor default work?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save technique" }));
+
+    expect(await screen.findByText(/Saved "Default creds"/)).toBeTruthy();
+    expect(posts).toHaveLength(1);
+    const placeholder = screen.getByLabelText<HTMLInputElement>("{{target}}");
+    expect(placeholder.value).toBe("");
+    fireEvent.change(placeholder, { target: { value: "shop" } });
+    expect(await screen.findByText(/Opened http:\/\/shop\/login/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Copy replay" }));
+    expect(screen.getByText("Question: Does the vendor default work?")).toBeTruthy();
   });
 
   it("keeps an overlong title and summary for editing and blocks Save until they fit", async () => {

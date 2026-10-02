@@ -113,7 +113,7 @@ export function TechniquePanel({
   );
 }
 
-function TechniqueCard({
+export function TechniqueCard({
   technique,
   facts,
   archived,

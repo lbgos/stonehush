@@ -1,4 +1,4 @@
-import { TECHNIQUE_NAME_MAX_CHARS, type Lead, type LeadAttempt } from "@stonehush/contracts";
+import { TECHNIQUE_NAME_MAX_CHARS, type Lead, type LeadAttempt, type Technique } from "@stonehush/contracts";
 import { Button } from "@stonehush/ui";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -14,6 +14,7 @@ import {
   type TechniqueProblems,
   type TechniqueStepProblem,
 } from "../advisor/technique-editor.js";
+import { TechniqueCard } from "../advisor/technique-panel.js";
 import { LEAD_TECHNIQUE_SOURCES_MAX, resolveSourceAttempts, seedLeadTechnique } from "./lead-technique-draft.js";
 
 // Save as technique from one lead's recorded attempts. Selecting and
@@ -43,7 +44,9 @@ interface Authoring {
   readonly checked: boolean;
   readonly failure: string | undefined;
   readonly confirmDiscard: boolean;
-  readonly savedName: string | undefined;
+  // The created technique, kept for retrieval and replay without a run or
+  // provider setup. Cleared with Done.
+  readonly savedTechnique: Technique | undefined;
 }
 
 function idle(owner: string, serial = 0): Authoring {
@@ -60,7 +63,7 @@ function idle(owner: string, serial = 0): Authoring {
     checked: false,
     failure: undefined,
     confirmDiscard: false,
-    savedName: undefined,
+    savedTechnique: undefined,
   };
 }
 
@@ -205,7 +208,7 @@ export function useLeadTechnique({
         focusNext.current = "saved";
         setRaw((value) =>
           current(value)
-            ? { ...value, phase: "saved", savedName: technique.name, failure: undefined, checked: false, confirmDiscard: false }
+            ? { ...value, phase: "saved", savedTechnique: technique, failure: undefined, checked: false, confirmDiscard: false }
             : value,
         );
       },
@@ -323,12 +326,16 @@ export function LeadTechniquePanel({ technique }: { technique: LeadTechnique }) 
   const { state } = technique;
   if (technique.selecting) return <SelectionBar technique={technique} />;
   if (technique.drafting && state.form !== undefined) return <DraftEditor technique={technique} form={state.form} />;
-  if (state.phase === "saved") {
+  if (state.phase === "saved" && state.savedTechnique !== undefined) {
+    const saved = state.savedTechnique;
     return (
       <div ref={technique.refs.savedRef} tabIndex={-1} role="status" className="grid gap-2 border-t border-border pt-3 outline-none">
         <p className="m-0 text-[12px] leading-5 break-words">
-          Saved &quot;{state.savedName}&quot; to this engagement&apos;s techniques. Advisor lists it under Techniques for replay.
+          Saved &quot;{saved.name}&quot; to this engagement&apos;s techniques.
         </p>
+        <ul className="m-0 grid list-none gap-2 p-0">
+          <TechniqueCard technique={saved} facts={[]} archived={technique.archived} />
+        </ul>
         <div className="flex justify-end">
           <Button type="button" variant="secondary" className="min-h-11 md:min-h-11" onClick={technique.done}>
             Done

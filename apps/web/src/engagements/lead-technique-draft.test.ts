@@ -118,7 +118,7 @@ describe("seedLeadTechnique", () => {
       question: "",
       meaning: "",
       steps: [
-        { key: "k1", instruction: "Attempt 2 summary", command: "", note: "From attempt 2: ruled out under only without TLS" },
+        { key: "k1", instruction: "Attempt 2 summary", command: "", note: "From attempt 2: ruled out (only without TLS)" },
         { key: "k2", instruction: "Attempt 5 summary", command: "", note: "From attempt 5: inconclusive" },
       ],
     });
@@ -147,7 +147,7 @@ describe("seedLeadTechnique", () => {
     );
     expect(seed.form.name).toBe("Login with password: [redacted]");
     expect(seed.form.steps[0]?.instruction).toBe("Opened http://192.0.2.10/login and found [redacted]");
-    expect(seed.form.steps[0]?.note).toBe("From attempt 1: inconclusive under token: [redacted]");
+    expect(seed.form.steps[0]?.note).toBe("From attempt 1: inconclusive (token: [redacted])");
     expect(seed.maskedCount).toBe(2);
   });
 
