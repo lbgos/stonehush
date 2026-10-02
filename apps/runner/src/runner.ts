@@ -180,7 +180,7 @@ export async function handshake(config: RunnerConfig, signal?: AbortSignal): Pro
       authorization: authHeader(config.runnerId, config.secret),
     },
     body: JSON.stringify(rawBody),
-    signal,
+    ...(signal === undefined ? {} : { signal }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -1039,7 +1039,10 @@ export function createRunnerLoop(
       }
       const signal = abortController.signal;
       try {
-        inFlight = runOnce(configOverrides, { signal, onHandshake: options.onHandshake });
+        inFlight = runOnce(configOverrides, {
+          signal,
+          ...(options.onHandshake === undefined ? {} : { onHandshake: options.onHandshake }),
+        });
         const didWork = await inFlight;
         inFlight = null;
         if (stopped) break;
