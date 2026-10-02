@@ -734,7 +734,7 @@ function SelectedRunContent({
       </div>
       <RunCompareSection
         engagementId={engagementId}
-        key={`${engagementId}:${output.run.id}`}
+        key={`compare:${engagementId}:${output.run.id}`}
         loadedRuns={loadedRuns}
         sourceStale={sourceStale}
         selectedOutput={output}
