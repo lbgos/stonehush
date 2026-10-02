@@ -83,4 +83,66 @@ describe("parseNmapXml", () => {
     big.fill(0x41);
     expect(parseNmapXml(big).ok).toBe(false);
   });
+  it("accepts long nmaprun args and service servicefp without changing services", () => {
+    const longArgs = `nmap -sT -sV -T4 -Pn --version-intensity 7 --max-retries 2 -p 8080 -oX /tmp/stonehush-lab-${"d".repeat(180)}/nmap.xml 192.0.2.10`;
+    expect(longArgs.length).toBeGreaterThan(256);
+    const longFp = `SF:Port8080-TCP:V=7.80%I=7%D=10/02%Time=00000000%P=x86_64%r(NULL,${"A".repeat(2100)}%r(GetRequest,${"B".repeat(200)}))`;
+    expect(longFp.length).toBeGreaterThan(256);
+    const xml = b(
+      `<?xml version="1.0"?><nmaprun scanner="nmap" args="${longArgs}"><host><address addr="192.0.2.10" addrtype="ipv4"/><ports><port protocol="tcp" portid="8080"><state state="open"/><service name="unknown" method="probed" conf="10" servicefp="${longFp}"/></port></ports></host></nmaprun>`,
+    );
+    const parsed = parseNmapXml(xml);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.services).toHaveLength(1);
+      expect(parsed.services[0]).toMatchObject({ address: "192.0.2.10", port: 8080, serviceName: "unknown" });
+      expect(parsed.services[0]?.product).toBeNull();
+      expect(parsed.services[0]?.version).toBeNull();
+      expect(JSON.stringify(parsed.services)).not.toContain("SF:");
+    }
+  });
+  it("still rejects unknown long attributes and overlong projected fields", () => {
+    const longMethod = "m".repeat(300);
+    expect(
+      parseNmapXml(
+        b(
+          `<nmaprun><host><address addr="192.0.2.10" addrtype="ipv4"/><ports><port protocol="tcp" portid="80"><state state="open"/><service name="http" method="${longMethod}"/></port></ports></host></nmaprun>`,
+        ),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseNmapXml(
+        b(
+          `<nmaprun><host><address addr="192.0.2.10" addrtype="ipv4"/><ports><port protocol="tcp" portid="80"><state state="open"/><service name="${"n".repeat(65)}"/></port></ports></host></nmaprun>`,
+        ),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseNmapXml(
+        b(
+          `<nmaprun><host><address addr="192.0.2.10" addrtype="ipv4"/><ports><port protocol="tcp" portid="80"><state state="open"/><service name="http" args="${"a".repeat(300)}"/></port></ports></host></nmaprun>`,
+        ),
+      ).ok,
+    ).toBe(false);
+  });
+  it("still rejects oversized or malformed skipped metadata", () => {
+    const hugeFp = `SF:${"A".repeat(9000)}`;
+    expect(
+      parseNmapXml(
+        b(
+          `<nmaprun args="short"><host><address addr="192.0.2.10" addrtype="ipv4"/><ports><port protocol="tcp" portid="80"><state state="open"/><service name="unknown" servicefp="${hugeFp}"/></port></ports></host></nmaprun>`,
+        ),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseNmapXml(
+        b(
+          `<nmaprun args="short"><host><address addr="192.0.2.10" addrtype="ipv4"/><ports><port protocol="tcp" portid="80"><state state="open"/><service name="unknown" servicefp="bad &oops; ${"A".repeat(300)}"/></port></ports></host></nmaprun>`,
+        ),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseNmapXml(b(`<nmaprun scanner="nmap" args="a" args="b"><host><address addr="192.0.2.10" addrtype="ipv4"/></host></nmaprun>`)).ok,
+    ).toBe(false);
+  });
 });
