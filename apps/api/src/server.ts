@@ -30,6 +30,8 @@ async function main(): Promise<void> {
     process.once("SIGTERM", () => void shutdown());
     await app.listen({ host: HOST, port });
     console.log(`Stonehush API listening at http://${HOST}:${port}`);
+    // Only a parent that launched this process with IPC receives readiness.
+    process.send?.({ type: "stonehush-api-ready" }, () => process.disconnect?.());
   } catch {
     console.error("Stonehush API failed to start. Check its configuration and development storage.");
     process.exitCode = 1;

@@ -5,12 +5,24 @@ starter enrolls each time and keeps the secret in process memory only.
 
 ## First time and every restart
 
-Complete the [README quick start](../../README.md#quick-start), then start
-the app with `pnpm dev` and wait for the API. In a second shell run
-`pnpm runner:dev`. The starter checks for `nmap`, waits for the dev API at
-`http://127.0.0.1:3001` by default, calls the existing enrollment challenge
-and confirm endpoints with owner confirmation, and starts the existing
-runner. It writes no credential file and prints no secret.
+Complete the [README quick start](../../README.md#quick-start), then run
+`pnpm dev:all` in one shell. It validates configuration and credentials,
+checks `nmap` and free API/web ports, starts its own API and web app, and
+starts the runner through the existing enrollment and owner-confirmation
+endpoints. Readiness requires the API's successful bind, the web page and
+proxied health response, and the runner's accepted handshake. Ctrl+C stops
+only children started by this command.
+
+The defaults are `http://127.0.0.1:3001` for the API and
+`http://127.0.0.1:5173` for the web app. Existing port and data-directory
+environment overrides still apply. For `dev:all`, an explicit
+`STONEHUSH_API_BASE_URL` must select the API started by that command. An
+occupied API or web port fails before children or enrollment, even if the
+existing API is healthy. It never adopts a running service.
+
+For separate processes, start `pnpm dev`, then `pnpm runner:dev` in another
+shell. The standalone runner waits for the selected API and supports an
+explicit API URL. Both starters write no credential file or secret log.
 
 There is no enrollment screen in the web app. An earlier version of this
 page named one; that UI is not in the source.

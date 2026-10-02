@@ -43,20 +43,16 @@ git clone https://github.com/lbgos/stonehush.git
 cd stonehush
 pnpm install --frozen-lockfile
 pnpm --filter @stonehush/evidence-native build
-pnpm dev
+pnpm dev:all
 ```
 
 Open <http://127.0.0.1:5173>. Data lives in `.stonehush/dev` by default. The native build is required for evidence and advisor turns.
 
-Start the runner in a second shell once the API is up:
+`pnpm dev:all` checks that the configured API and web ports are free, checks for `nmap`, then starts the API, web app and local runner. It reports ready after the API binds, the web app responds and the runner's handshake is accepted. Ctrl+C stops its children. It refuses an already running API or web app.
 
-```bash
-pnpm runner:dev
-```
+The runner uses the existing enrollment and owner-confirmation endpoints and keeps its secret in memory. Set both `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` to reuse credentials without enrollment. `STONEHUSH_API_BASE_URL`, if set for this command, must match the local API port. See [runner startup](docs/operator/runner-startup.md).
 
-It checks for `nmap`, waits for the dev API at `http://127.0.0.1:3001`, enrolls with owner confirmation, and keeps the secret in memory only. If `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` are already set, it reuses them and skips enrollment. A fresh shell without those variables enrolls again. See [runner startup](docs/operator/runner-startup.md).
-
-This starts the UI, API, and runner. Scans also need installed tools and a wordlist for ffuf. For a one-command isolated lab, see the [guided demo](docs/operator/demo.md) (`pnpm demo`).
+`pnpm dev` starts only the API and web app. To attach the runner separately, use `pnpm runner:dev` in another shell. Scans need installed tools and a wordlist for ffuf. The [guided demo](docs/operator/demo.md) (`pnpm demo`) remains a separate isolated lab.
 
 ## Try it
 

@@ -11,7 +11,14 @@ if (!validated.ok) {
 
 console.log(`stonehush-runner starting session ${config.sessionId} api=${config.apiBaseUrl} runner=${config.runnerId}`);
 
-const loop = createRunnerLoop(config);
+let notified = false;
+const loop = createRunnerLoop(config, {
+  onHandshake() {
+    if (notified) return;
+    notified = true;
+    process.send?.({ type: "stonehush-runner-ready" }, () => process.disconnect?.());
+  },
+});
 loop.start();
 
 let shuttingDown = false;

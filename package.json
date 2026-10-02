@@ -18,6 +18,7 @@
     "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm test && pnpm run build",
     "check:docs": "node scripts/check-docs.mjs",
     "dev": "node scripts/dev.mjs",
+    "dev:all": "node scripts/dev.mjs --with-runner",
     "demo": "node scripts/demo.mjs",
     "runner:dev": "node scripts/runner-dev.mjs",
     "format:check": "node scripts/check-files.mjs format",
