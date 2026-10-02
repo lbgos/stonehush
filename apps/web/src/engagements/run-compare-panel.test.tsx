@@ -95,6 +95,14 @@ describe("selected run comparison", () => {
     mockReads({ [`/api/v1/engagements/${engagementId}/runs/old/output`]: partial }); mount(); choose();
     await screen.findByText(/One side is incomplete/);
   });
+  it("warns when different stored options have the same readable summary", async () => {
+    const before = action(prior); before.action.snapshots[0]!.typedOptions = { rate: 100 };
+    const after = action(selected); after.action.snapshots[0]!.typedOptions = { rate: "100" };
+    mockReads({ [`/api/v1/engagements/${engagementId}/actions/action-old`]: before,
+      [`/api/v1/engagements/${engagementId}/actions/action-new`]: after });
+    mount(); choose();
+    await screen.findByText(/Other recorded options differ beyond this summary/);
+  });
   it("refuses different tools without change statements", async () => {
     mockReads({ [`/api/v1/engagements/${engagementId}/services`]: [service("new", 80)],
       [`/api/v1/engagements/${engagementId}/http-probes`]: [probe("old")],
