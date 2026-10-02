@@ -344,16 +344,16 @@ describe("continue an evidence-linked lead from Surface", () => {
     typeSummary("Half typed");
 
     fireEvent.keyDown(dialog(), { key: "Escape" });
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
-    expect(within(dialog()).queryByText(/Discard the unsaved/)).toBeNull();
+    expect(within(dialog()).queryByText(/Discard unsaved lead edits/)).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Dismiss lead" }));
     fireEvent.keyDown(dialog(), { key: "Escape" });
-    expect(within(dialog()).queryByText(/Discard the unsaved/)).toBeNull();
+    expect(within(dialog()).queryByText(/Discard unsaved lead edits/)).toBeNull();
 
     void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: otherEngagement.id } });
-    expect(await within(dialog()).findByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(await within(dialog()).findByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     await waitFor(() => expect(router.state.location.pathname).toBe(`/engagements/${engagement.id}`));
     expect(within(dialog()).getByDisplayValue("Half typed")).toBeTruthy();
@@ -570,7 +570,7 @@ describe("continue an evidence-linked lead from Surface", () => {
     expect(summary.value).toBe("Keep this exact draft");
     expect(within(dialog()).getByRole<HTMLButtonElement>("button", { name: "Record attempt" }).disabled).toBe(true);
     fireEvent.keyDown(dialog(), { key: "Escape" });
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     mode = "valid";
     fireEvent.click(within(dialog()).getByRole("button", { name: "Retry" }));
@@ -644,7 +644,7 @@ describe("continue an evidence-linked lead from Surface", () => {
     expect(within(dialog()).getByDisplayValue("Held attempt")).toBeTruthy();
     expect(within(dialog()).queryByRole("button", { name: "Park with reason" })).toBeNull();
     fireEvent.keyDown(dialog(), { key: "Escape" });
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     expect(within(dialog()).getByDisplayValue("Held park reason")).toBeTruthy();
     expect(writes(fetchMock)).toEqual([`/api/v1/engagements/${engagement.id}/leads/${OPEN_ID}/close`]);
@@ -684,14 +684,14 @@ describe("continue an evidence-linked lead from Surface", () => {
       fireEvent.keyDown(document.body, { key: "Tab", shiftKey: true });
       expect(dialog().contains(document.activeElement)).toBe(true);
       fireEvent.keyDown(document.body, { key: "Escape" });
-      expect(within(dialog()).queryByText("Discard the unsaved attempt or park reason?")).toBeNull();
+      expect(within(dialog()).queryByText("Discard unsaved lead edits?")).toBeNull();
       expect(router.state.location.search.sel).toBe(SEL);
       finish?.(response({ code: "storage_busy" }, 503));
       expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
       await waitFor(() => expect(within(dialog()).getByRole<HTMLButtonElement>("button", { name: /^Close$/ }).disabled).toBe(false));
       document.body.focus();
       fireEvent.keyDown(document.body, { key: "Escape" });
-      expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+      expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
       expect(within(dialog()).getByDisplayValue("Keep after failed write")).toBeTruthy();
       expect(within(dialog()).getByDisplayValue("Keep park reason")).toBeTruthy();
       expect(router.state.location.search.sel).toBe(SEL);
@@ -714,7 +714,7 @@ describe("continue an evidence-linked lead from Surface", () => {
     fireEvent.change(outcome, { target: { value: "inconclusive" } });
     outcome.focus();
     fireEvent.click(screen.getByRole("button", { name: "Dismiss lead" }));
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     expect(document.activeElement).toBe(outcome);
     expect((outcome as HTMLSelectElement).value).toBe("inconclusive");
@@ -925,7 +925,7 @@ describe("continue an evidence-linked lead from Surface", () => {
     expect(await within(dialog()).findByText("Saving. Leaving continues after the save finishes.")).toBeTruthy();
     finishes[0]?.(response({ code: "storage_busy" }, 503));
     expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     expect(router.state.location.search.tab).toBeUndefined();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Record attempt" }));
     await waitFor(() => expect(finishes).toHaveLength(2));
@@ -1009,6 +1009,32 @@ describe("continue an evidence-linked lead from Surface", () => {
     fireEvent.keyDown(dialog(), { key: "Escape" });
     await waitFor(() => expect(document.activeElement).toBe(within(upper).getByRole("button", { name: `Restore ${basis}` })));
     expect(router.state.location.search.sel).toBe(pathSelectionKey(path.url, path.artifactId));
+  });
+
+  it("holds an open technique draft on Close and Escape until Discard", async () => {
+    serve({
+      engagements: [engagement],
+      leads: { [engagement.id]: [lead(OPEN_ID, engagement.id)] },
+      attempts: { [OPEN_ID]: [attempt(OPEN_ID, 1, "Opened the login form"), attempt(OPEN_ID, 2, "Checked robots.txt")] },
+    });
+    await renderAt(engagement.id);
+    fireEvent.click(await linkedLeadButton(/Default creds/));
+    await within(dialog()).findByLabelText("Attempt summary");
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Save as technique" }));
+    fireEvent.click(await within(dialog()).findByLabelText("Use attempt 1"));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Review 1 step" }));
+    expect(await within(dialog()).findByRole("heading", { name: "Technique draft" })).toBeTruthy();
+
+    fireEvent.keyDown(dialog(), { key: "Escape" });
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
+    expect(within(dialog()).getByRole("heading", { name: "Technique draft" })).toBeTruthy();
+
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Close" }));
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Discard" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
 });
@@ -1139,7 +1165,7 @@ describe("link a saved finding while recording a lead attempt from Surface", () 
 
     fireEvent.change(chooser(), { target: { value: FINDING_A } });
     fireEvent.keyDown(dialog(), { key: "Escape" });
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     expect(chooser().value).toBe(FINDING_A);
 
@@ -1156,7 +1182,7 @@ describe("link a saved finding while recording a lead attempt from Surface", () 
 
     finishes[0]?.(response({ code: "storage_busy" }, 503));
     expect(await within(dialog()).findByText("Storage is busy. Try again.")).toBeTruthy();
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     expect(chooser().value).toBe(FINDING_A);
     expect(within(dialog()).getByDisplayValue("Vendor default accepted")).toBeTruthy();
     expect(within(dialog()).getByDisplayValue("Over HTTP only")).toBeTruthy();

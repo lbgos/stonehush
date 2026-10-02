@@ -310,7 +310,7 @@ export function LeadOverlay({ archived, engagementId, origin, onClose, onValidRe
                 ? "Saving. Leaving continues after the save finishes."
                 : failedNavigation && !held.dirty
                   ? "The change failed. Leave without applying it?"
-                  : "Discard the unsaved attempt or park reason?"}
+                  : "Discard unsaved lead edits?"}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
               <Button type="button" variant="secondary" autoFocus onClick={stay}>

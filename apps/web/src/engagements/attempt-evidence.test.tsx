@@ -771,7 +771,7 @@ describe("choose saved evidence while recording a lead attempt", () => {
     fireEvent.click(await within(picker).findByRole("button", { name: `Add ${TWIN_A}` }));
 
     fireEvent.click(within(dialog()).getByRole("button", { name: "Close" }));
-    expect(within(dialog()).getByText("Discard the unsaved attempt or park reason?")).toBeTruthy();
+    expect(within(dialog()).getByText("Discard unsaved lead edits?")).toBeTruthy();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
     expect(evidenceField(dialog()).value).toBe(TWIN_A);
     expect(rowButton(dialog(), "Remove", TWIN_A)).toBeTruthy();

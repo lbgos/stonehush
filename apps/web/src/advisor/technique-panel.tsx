@@ -9,11 +9,8 @@ import { Button } from "@stonehush/ui";
 import { useMemo, useState } from "react";
 
 import { copyTextToClipboard } from "../engagements/report-query.js";
-import {
-  useSaveTechniqueMutation,
-  useTechniquesQuery,
-  type SaveTechniqueInput,
-} from "./technique-query.js";
+import { checkTechniqueInput, useTechniqueSave } from "./technique-editor.js";
+import { useTechniquesQuery, type SaveTechniqueInput } from "./technique-query.js";
 
 export interface TechniqueDraft extends SaveTechniqueInput {
   readonly key: string;
@@ -116,7 +113,7 @@ export function TechniquePanel({
   );
 }
 
-function TechniqueCard({
+export function TechniqueCard({
   technique,
   facts,
   archived,
@@ -240,7 +237,8 @@ function SaveTechniqueForm({
   engagementId: string;
   initial?: SaveTechniqueInput | undefined;
 }) {
-  const save = useSaveTechniqueMutation(engagementId);
+  const save = useTechniqueSave(engagementId);
+  const [saved, setSaved] = useState(false);
   const [name, setName] = useState(initial?.name ?? "");
   const [whenUseful, setWhenUseful] = useState(initial?.whenUseful ?? "");
   const [prerequisites, setPrerequisites] = useState(
@@ -260,26 +258,45 @@ function SaveTechniqueForm({
   const [error, setError] = useState<string | undefined>(undefined);
 
   function handleSave() {
+    if (save.pending) return;
     setError(undefined);
+    setSaved(false);
     const steps = parseProcedure(procedure);
     if (name.trim().length === 0 || question.trim().length === 0 || steps === undefined || steps.length === 0) {
       setError("Name, question, and at least one procedure step are required.");
       return;
     }
-    save.mutate(
-      {
-        name: name.trim(),
-        whenUseful,
-        prerequisites: prerequisites
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0),
-        question: question.trim(),
-        procedure: steps,
-        meaning,
-      },
-      { onError: () => setError("The technique could not be saved.") },
-    );
+    const input: SaveTechniqueInput = {
+      name: name.trim(),
+      whenUseful,
+      prerequisites: prerequisites
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0),
+      question: question.trim(),
+      procedure: steps,
+      meaning,
+    };
+    const check = checkTechniqueInput(input);
+    if (!check.ok) {
+      setError(check.problems.messages[0] ?? "The technique fields are not valid.");
+      return;
+    }
+    save.submit(input, {
+      onSaved: () => setSaved(true),
+      onFailed: (failure, code) =>
+        setError(
+          failure === "owner"
+            ? "The response named another engagement. Check Techniques before saving again."
+            : failure === "unknown"
+              ? "The save outcome is unknown. Check Techniques before saving again to avoid a duplicate."
+              : code === "engagement_archived"
+                ? "This engagement is archived."
+                : code === "storage_busy"
+                  ? "Storage is busy. Try again."
+                  : "The technique could not be saved.",
+        ),
+    });
   }
 
   return (
@@ -345,14 +362,14 @@ function SaveTechniqueForm({
           />
         </label>
         <div>
-          <Button type="button" disabled={save.isPending} onClick={handleSave}>
-            {save.isPending ? "Saving" : "Save technique"}
+          <Button type="button" disabled={save.pending} onClick={handleSave}>
+            {save.pending ? "Saving" : "Save technique"}
           </Button>
         </div>
         {error !== undefined ? (
           <p className="m-0 text-[12px] text-destructive" role="alert">{error}</p>
         ) : null}
-        {save.isSuccess ? (
+        {saved ? (
           <p className="m-0 text-[12px] text-muted-foreground" role="status">
             Technique saved.
           </p>
