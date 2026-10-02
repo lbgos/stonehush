@@ -18,6 +18,7 @@ import {
   describeRunOutcome,
   resolveRunComparison,
   runSideComplete,
+  stableStringifyOptions,
 } from "./run-compare.js";
 import { RunDiffView } from "./run-diff-view.js";
 import { useRunOutputQuery } from "./run-output-query.js";
@@ -116,6 +117,8 @@ function ChosenComparison({ engagementId, selectedRun, priorRun, selectedOutput 
   });
   const beforeContext = context(before.value);
   const afterContext = context(after.value);
+  const otherOptionsChanged = beforeContext.optionsSummary === afterContext.optionsSummary &&
+    stableStringifyOptions(before.value.snapshot.typedOptions) !== stableStringifyOptions(after.value.snapshot.typedOptions);
   const input = buildRunCompareInput({
     before: { run: priorRun, context: beforeContext, complete: runSideComplete(priorRun, priorOutput.data) },
     after: { run: selectedRun, context: afterContext, complete: runSideComplete(selectedRun, selectedOutput) },
@@ -126,6 +129,6 @@ function ChosenComparison({ engagementId, selectedRun, priorRun, selectedOutput 
       Prior run {priorRun.id} at {formatEngagementTimestamp(priorRun.createdAt)}: {describeRunOutcome(priorRun)}.
       Recorded options: {beforeContext.optionsSummary}.
     </p>
-    <RunDiffView input={input} coverageCaveat="Observation coverage is unknown. Missing or capped projections may omit results. Absence disproves nothing. Authentication context is not recorded here." />
+    <RunDiffView input={input} coverageCaveat={`Observation coverage is unknown. Missing or capped projections may omit results. Absence disproves nothing. Authentication context is not recorded here.${otherOptionsChanged ? " Other recorded options differ beyond this summary." : ""}`} />
   </div>;
 }
