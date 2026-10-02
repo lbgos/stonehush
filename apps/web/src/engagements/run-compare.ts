@@ -163,7 +163,8 @@ function describeOptions(value: unknown): string {
     if (entries.length === 0) return "No recorded options";
     return entries.map(([key, entry]) => {
       const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
-      const label = optionLabels[key] ?? words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
+      const label = Object.hasOwn(optionLabels, key) ? optionLabels[key]!
+        : words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
       return `${label} ${describeOptions(entry)}`;
     }).join("; ");
   }

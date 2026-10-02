@@ -92,6 +92,8 @@ describe("recorded comparison context", () => {
     expect(actionOptionsSummary(recorded)).toBe("Ports unspecified");
     recorded.typedOptions = { ffuf: { wordlistPath: "/lists/lab.txt", timeoutSeconds: 10, matchStatusCodes: [200, 403] } };
     expect(actionOptionsSummary(recorded)).toBe("Content discovery Matching status codes 200, 403; Timeout in seconds 10; Wordlist /lists/lab.txt");
+    recorded.typedOptions = { constructor: "recorded", toString: "retained" };
+    expect(actionOptionsSummary(recorded)).toBe("Constructor recorded; To string retained");
   });
 });
 
