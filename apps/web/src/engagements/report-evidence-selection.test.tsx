@@ -2,7 +2,7 @@
 
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Finding, ReportBundle, ReportEvidenceArtifact } from "@stonehush/contracts";
@@ -401,6 +401,120 @@ describe("report add with evidence", () => {
     expect(screen.getByText(/Stale: outline selection or order changed/)).toBeTruthy();
   });
 
+  it.each(["add", "add-remaining"] as const)("keeps focused %s activation on that finding's evidence summary", async (action) => {
+    stubReportFetch(bundleFixture());
+    renderSection();
+    let combined = await screen.findByRole("button", { name: "Add with evidence (2): Admin panel creds" });
+    if (action === "add-remaining") {
+      fireEvent.click(combined);
+      fireEvent.click(screen.getByRole("button", { name: "Remove artifact-a1" }));
+      combined = screen.getByRole("button", { name: "Add remaining evidence (1): Admin panel creds" });
+    }
+    combined.focus();
+    fireEvent.click(combined);
+    const row = screen.getByText("Admin panel creds", { selector: "span[title]" }).closest("li")!;
+    expect(document.activeElement).toBe(row.querySelector("summary"));
+    expect((combined as HTMLButtonElement).disabled).toBe(true);
+    expect(outlineKeys()).toHaveLength(3);
+  });
+
+  it("does not move focus for an unfocused combined activation", async () => {
+    stubReportFetch(bundleFixture());
+    renderSection();
+    const combined = await screen.findByRole("button", { name: "Add with evidence (2): Admin panel creds" });
+    const template = screen.getByRole("button", { name: "Assessment report" });
+    template.focus();
+    fireEvent.click(combined);
+    expect(document.activeElement).toBe(template);
+    expect(outlineKeys()).toHaveLength(3);
+  });
+
+  it.each([true, false])("keeps maximum catalog IDs inspectable and selectable with saved ref %s", async (referenced) => {
+    const id = `a${"x".repeat(126)}`;
+    const runId = `r${"y".repeat(254)}`;
+    const base = bundleFixture();
+    const current = finding({
+      id: findingA,
+      title: "Long proof",
+      evidenceArtifactIds: referenced ? [id] : ["artifact-a2"],
+    });
+    stubReportFetch({
+      ...base,
+      findings: [current],
+      evidenceArtifacts: { total: 2, truncated: false, rows: [{ ...artifact(id, "4"), runId }, artifact("artifact-a2", "2")] },
+    });
+    renderSection();
+    const combined = await screen.findByRole("button", { name: "Add with evidence (1): Long proof" });
+    const catalogId = screen.getByText(id, { selector: "span[title]" });
+    expect(catalogId.getAttribute("title")).toBe(id);
+    if (referenced) {
+      const row = screen.getByText("Long proof", { selector: "span[title]" }).closest("li")!;
+      const details = row.querySelector("details")!;
+      fireEvent.click(within(details).getByText("1 evidence ref"));
+      expect(within(details).getByText(id)).toBeTruthy();
+      expect(within(details).getByText(`tool_raw · complete · 10 bytes · run ${runId}`)).toBeTruthy();
+    } else {
+      fireEvent.click(within(catalogId.closest("li")!).getByRole("button", { name: "Add" }));
+    }
+    fireEvent.click(combined);
+    expect(outlineKeys()).toContain(`Remove ${id}`);
+    expect(outlineKeys()).toContain("Remove Long proof");
+    expect(sharingPreview()).toContain(id);
+    // Geometry is verified in the browser. JSDOM verifies exact max-length
+    // data survives both the legacy catalog and the combined action.
+  });
+
+  it("retains outline order, captured captions, options and snapshot through a failed refresh and explicit retry", async () => {
+    const base = bundleFixture();
+    base.findings[0] = { ...base.findings[0]!, title: "Operator caption" };
+    let calls = 0;
+    let finishRetry!: (value: Response) => void;
+    const fetchMock = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(response(base));
+      if (calls === 2) return Promise.reject(new Error("fixture refresh failed"));
+      return new Promise<Response>((resolve) => { finishRetry = resolve; });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const client = renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "Add with evidence (2): Operator caption" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove artifact-a2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Move artifact-a1 up" }));
+    fireEvent.click(screen.getByRole("button", { name: "Assessment report" }));
+    fireEvent.click(screen.getByRole("button", { name: "Include evidence links" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download outline Markdown" }));
+    const before = ["Remove artifact-a1", "Remove Operator caption"];
+    expect(outlineKeys()).toEqual(before);
+    const previewBefore = sharingPreview();
+    const snapshotBefore = screen.getByText(/^Exports current\./).textContent;
+
+    await client.invalidateQueries({ queryKey: reportQueryKey(engagementId) });
+    expect(await screen.findByText("Showing the last successful report")).toBeTruthy();
+    expect(outlineKeys()).toEqual(before);
+    expect(sharingPreview()).toBe(previewBefore);
+    expect(screen.getByText(/^Exports current\./).textContent).toBe(snapshotBefore);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("Refreshing report…")).toBeTruthy();
+    expect(outlineKeys()).toEqual(before);
+    expect(sharingPreview()).toBe(previewBefore);
+
+    const refreshed = bundleFixture({ generatedAt: "2026-08-12T14:00:00.000Z" });
+    refreshed.findings[0] = {
+      ...refreshed.findings[0]!, title: "Current server title", body: "Updated server body", evidenceArtifactIds: ["artifact-a1", "artifact-a3"],
+    };
+    finishRetry(response(refreshed));
+    expect(await screen.findByRole("button", { name: "Add remaining evidence (1): Current server title" })).toBeTruthy();
+    expect(outlineKeys()).toEqual(before);
+    expect(screen.getByRole("button", { name: "Assessment report" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Exclude evidence links" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByText(/Stale: engagement data changed after this export/)).toBeTruthy();
+    expect(sharingPreview()).toContain("Updated server body");
+    expect(sharingPreview()).not.toContain("./assets/artifact-a3");
+    expect(screen.queryByText("Showing the last successful report")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("keeps the outline across template switches and refreshed bundles", async () => {
     stubReportFetch(bundleFixture());
     const client = renderSection();
@@ -449,22 +563,74 @@ describe("report add with evidence", () => {
     expect(outlineKeys()).toEqual(["Remove Current proof", "Remove artifact-a3"]);
   });
 
-  it("keeps the combined action off for a foreign response", async () => {
+  it.each([
+    {
+      name: "foreign engagement response",
+      reject: (base: ReportBundle): ReportBundle => ({
+        ...base,
+        engagement: { ...base.engagement, id: otherEngagementId },
+      }),
+      reason: "This report response belongs to a different engagement.",
+    },
+    {
+      name: "foreign finding response",
+      reject: (base: ReportBundle): ReportBundle => ({
+        ...base,
+        findings: [{ ...base.findings[0]!, engagementId: otherEngagementId }, base.findings[1]!],
+      }),
+      reason: "This report response has a finding from a different engagement.",
+    },
+    {
+      name: "duplicate artifact IDs",
+      reject: (base: ReportBundle): ReportBundle => ({
+        ...base,
+        evidenceArtifacts: {
+          ...base.evidenceArtifacts,
+          total: 4,
+          rows: [...base.evidenceArtifacts.rows, { ...artifact("artifact-a1", "4"), runId: "ambiguous-run" }],
+        },
+      }),
+      reason: "This report response has duplicate artifact IDs.",
+    },
+    {
+      name: "duplicate finding IDs",
+      reject: (base: ReportBundle): ReportBundle => ({
+        ...base,
+        findings: [
+          base.findings[0]!,
+          { ...base.findings[0]!, title: "Duplicate finding", evidenceArtifactIds: ["artifact-a3"] },
+          base.findings[1]!,
+        ],
+      }),
+      reason: "This report response has duplicate finding IDs.",
+    },
+  ])("shows unavailable saved refs for $name without joining the rejected catalog", async ({ reject, reason }) => {
     const base = bundleFixture();
-    stubReportFetch({
-      ...base,
-      findings: [{ ...base.findings[0]!, engagementId: otherEngagementId }, base.findings[1]!],
-    });
-    renderSection();
+    stubReportFetch(base);
+    const client = renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "Add with evidence (2): Admin panel creds" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove artifact-a1" }));
+    const before = outlineKeys();
+    const previewBefore = sharingPreview();
+    client.setQueryData(reportQueryKey(engagementId), reject(base));
+
     const combined = (await screen.findByRole("button", {
-      name: "Add with evidence (2): Admin panel creds",
+      name: "Add with evidence unavailable: Admin panel creds",
     })) as HTMLButtonElement;
     expect(combined.disabled).toBe(true);
-    expect(
-      screen.getByText(
-        "Add with evidence is off. This report response has a finding from a different engagement.",
-      ),
-    ).toBeTruthy();
+    expect(screen.getByText(`Add with evidence is off. ${reason}`)).toBeTruthy();
+    const row = screen.getByText("Admin panel creds", { selector: "span[title]" }).closest("li")!;
+    const details = row.querySelector("details")!;
+    fireEvent.click(within(details).getByText("3 evidence refs · catalog unavailable"));
+    expect(Array.from(details.querySelectorAll("li > span:first-child"), (span) => span.textContent)).toEqual([
+      "artifact-a2", "artifact-a1", "artifact-gone",
+    ]);
+    expect(within(details).getAllByText("Catalog unavailable. Will not be added.")).toHaveLength(3);
+    expect(details.textContent).not.toMatch(/Will add|in outline|not in this report catalog|tool_raw|complete|bytes|run-1|ambiguous-run/);
+    expect(details.querySelector("summary")?.textContent).toBe("3 evidence refs · catalog unavailable");
+    fireEvent.click(combined);
+    expect(outlineKeys()).toEqual(before);
+    expect(sharingPreview()).toBe(previewBefore);
   });
 
   it("shows no combined action for a finding without refs and states a capped catalog", async () => {
