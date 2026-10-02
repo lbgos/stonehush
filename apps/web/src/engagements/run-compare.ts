@@ -123,8 +123,7 @@ export function resolveRunComparison(
   return { ok: true, value: { runId, tool, origin: unique[0]!, observationCount: count, snapshot } };
 }
 
-// Deterministic display summary of typed action options. Object keys sort so
-// equal option sets always read the same; arrays keep server order.
+// Deterministic option identity. Object keys sort; arrays keep server order.
 export function stableStringifyOptions(value: unknown): string {
   return JSON.stringify(canonicalizeJsonValue(value));
 }
@@ -141,7 +140,35 @@ function canonicalizeJsonValue(value: unknown): unknown {
 }
 
 export function actionOptionsSummary(snapshot: ActionSnapshot): string {
-  return stableStringifyOptions(snapshot.typedOptions);
+  return describeOptions(snapshot.typedOptions);
+}
+
+const optionLabels: Readonly<Record<string, string>> = {
+  declaredPorts: "Ports",
+  ffuf: "Content discovery",
+  wordlistPath: "Wordlist",
+  origin: "Origin",
+  rate: "Configured rate",
+  threads: "Threads",
+  timeoutSeconds: "Timeout in seconds",
+  maxTimeSeconds: "Time limit in seconds",
+  matchStatusCodes: "Matching status codes",
+};
+
+function describeOptions(value: unknown): string {
+  if (value === null || value === undefined) return "unspecified";
+  if (Array.isArray(value)) return value.length === 0 ? "none" : value.map(describeOptions).join(", ");
+  if (typeof value === "object") {
+    const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
+    if (entries.length === 0) return "No recorded options";
+    return entries.map(([key, entry]) => {
+      const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ");
+      const label = optionLabels[key] ?? words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
+      return `${label} ${describeOptions(entry)}`;
+    }).join("; ");
+  }
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  return String(value);
 }
 
 // Ignore action IDs, digest IDs, resolution timestamps and TTLs. Compare the

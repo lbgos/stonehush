@@ -85,6 +85,8 @@ describe("selected run comparison", () => {
     expect(screen.getByText(/Binding changed:/)).toBeTruthy();
     expect(screen.getByText(/Missing or capped projections may omit results/)).toBeTruthy();
     expect(screen.getByText(/Prior run old/)).toBeTruthy();
+    expect(screen.getByText(/Recorded options: Ports 22, 80, 443/)).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Run diff" }).textContent).not.toContain("declaredPorts");
     for (const call of reads.mock.calls) expect((call[1] as RequestInit | undefined)?.method ?? "GET").toBe("GET");
     expect(reads.mock.calls.every(([url]) => !/cancel|retry|continue|add-scope|\/content/.test(String(url)))).toBe(true);
   });

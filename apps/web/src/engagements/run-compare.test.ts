@@ -80,9 +80,18 @@ describe("recorded comparison context", () => {
   });
   it("keeps options stable and reports the exact prior attempt", () => {
     const recorded = snapshot(); recorded.typedOptions = { threads: 40, rate: 100 };
-    expect(actionOptionsSummary(recorded)).toBe(stableStringifyOptions({ rate: 100, threads: 40 }));
+    expect(actionOptionsSummary(recorded)).toBe("Configured rate 100; Threads 40");
+    expect(stableStringifyOptions(recorded.typedOptions)).toBe(stableStringifyOptions({ rate: 100, threads: 40 }));
     expect(buildPriorAttempt({ run, optionsSummary: "recorded", conditionsChanged: true }))
       .toEqual({ runId: "new", attemptedAt: run.createdAt, outcome: "succeeded", optionsSummary: "recorded", conditionsChanged: true });
+  });
+  it("shows port and content-discovery settings without JSON or contract field names", () => {
+    expect(actionOptionsSummary(snapshot())).toBe("Ports 80, 443");
+    const recorded = snapshot("http://target.test/");
+    recorded.typedOptions = { declaredPorts: null };
+    expect(actionOptionsSummary(recorded)).toBe("Ports unspecified");
+    recorded.typedOptions = { ffuf: { wordlistPath: "/lists/lab.txt", timeoutSeconds: 10, matchStatusCodes: [200, 403] } };
+    expect(actionOptionsSummary(recorded)).toBe("Content discovery Matching status codes 200, 403; Timeout in seconds 10; Wordlist /lists/lab.txt");
   });
 });
 
