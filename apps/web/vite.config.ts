@@ -7,7 +7,18 @@ const API_PORT = Number(process.env.STONEHUSH_API_PORT ?? "3001");
 const WEB_PORT = Number(process.env.STONEHUSH_WEB_PORT ?? "5173");
 
 export default defineConfig(({ command }) => ({
-  plugins: [tanstackRouter({ target: "react" }), react(), tailwindcss()],
+  plugins: [
+    tanstackRouter({ target: "react" }), react(), tailwindcss(),
+    {
+      name: "stonehush-dev-readiness",
+      configureServer(server) {
+        // Only an IPC parent receives proof that this web child owns its port.
+        server.httpServer?.once("listening", () => {
+          process.send?.({ type: "stonehush-web-ready" }, () => process.disconnect?.());
+        });
+      },
+    },
+  ],
   resolve:
     command === "serve"
       ? { conditions: ["development", "import", "module", "browser", "default"] }

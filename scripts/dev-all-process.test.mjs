@@ -73,7 +73,15 @@ const server = createServer(async (req, res) => {
   }
   res.end('<html><div id="root"></div></html>');
 });
-server.listen(Number(process.env.STONEHUSH_WEB_PORT), "127.0.0.1");
+const bind = () => server.listen(Number(process.env.STONEHUSH_WEB_PORT), "127.0.0.1", () => {
+  console.log("fixture web listening");
+  if (process.env.FIXTURE_MODE !== "web-unready") process.send({type:"stonehush-web-ready"}, () => process.disconnect());
+});
+if (process.env.FIXTURE_MODE === "web-bind-race") {
+  console.log("fixture web before bind");
+  setTimeout(bind, 500);
+} else bind();
+server.on("error", () => process.exit(1));
 for (const signal of ["SIGINT","SIGTERM"]) process.on(signal, () => server.close(() => process.exit(0)));
 `);
   await writeFile(path.join(root, "apps/runner/src/index.ts"), `
@@ -193,6 +201,22 @@ test("losing the API bind race never adopts the healthy foreign listener", { tim
   assert.equal((await fetch(`http://127.0.0.1:${lab.apiPort}/health`)).status, 200);
 });
 
+test("losing the web bind race never enrolls against a foreign app", { timeout: 15_000 }, async (t) => {
+  const lab = await fixture(t, { FIXTURE_MODE: "web-bind-race" });
+  const starter = lab.start();
+  await waitForOutput(starter, "fixture web before bind");
+  const foreign = await listener((request, response) => {
+    response.end(request.url === "/health"
+      ? JSON.stringify({ status: "ok" }) : '<html><div id="root"></div></html>');
+  }, lab.webPort);
+  t.after(() => new Promise((resolve) => foreign.close(resolve)));
+  assert.equal((await starter.exited).code, 1);
+  assert.ok(!starter.output().includes("fixture enrollment request"));
+  assert.ok(!starter.output().includes("Stonehush ready at"));
+  assert.equal((await fetch(`http://127.0.0.1:${lab.webPort}/health`)).status, 200);
+  await assertReleased(lab.apiPort);
+});
+
 test("uncooperative owned runner escalates while unrelated process survives", { timeout: 20_000 }, async (t) => {
   const sentinel = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", detached: true });
   const sentinelExit = new Promise((resolve) => sentinel.once("exit", resolve));
@@ -222,6 +246,7 @@ for (const mode of ["web-exit", "runner-exit"]) {
 }
 
 for (const [mode, marker] of [["api-unready", "fixture API listening"],
+  ["web-unready", "fixture web listening"],
   ["enrollment-delay", "fixture enrollment request"], ["runner-unready", "fixture runner started"]]) {
   test(`signal during ${mode} prevents later startup and releases children`, { timeout: 15_000 }, async (t) => {
     const lab = await fixture(t, { FIXTURE_MODE: mode });

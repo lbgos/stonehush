@@ -157,8 +157,7 @@ export async function runCombinedDev({ repositoryRoot, env = process.env }) {
     const webRequire = createRequire(path.join(repositoryRoot, "apps/web/package.json"));
     const viteEntry = path.join(path.dirname(webRequire.resolve("vite/package.json")), "bin/vite.js");
     const web = start("web", [viteEntry], path.join(repositoryRoot, "apps/web"));
-    // Vite has no readiness IPC. Its channel must not keep the child alive.
-    web.child.disconnect();
+    await superviseWait(childReady(web.child, "stonehush-web-ready"), { registry, stop });
     const webUrl = `http://127.0.0.1:${dev.webPort}`;
     await superviseWait(waitForWebReadiness({ url: webUrl, signal: stop.stopSignal }), { registry, stop });
     runnerStartup = startRunnerDev({
