@@ -6,13 +6,15 @@ I'm building it for my own security work: keep targets, scans, evidence, notes, 
 
 ## What it does
 
-- Nmap service discovery, HTTP probing, and ffuf path discovery.
-- Saved run history, output, and evidence per engagement.
-- Markdown notes, findings, and reports exported as Markdown or JSON.
-- Saved scope with warnings you can acknowledge and continue past.
-- Optional [AI evidence explanations](docs/operator/advisor-setup.md) using your own compatible endpoint.
+- Nmap service discovery, HTTP probing, and ffuf path discovery from Surface, with follow-up actions on the selected result.
+- Saved scope with one concise warning. `Continue` always runs the exact action without changing saved scope.
+- Runs with cancel and retry, raw output viewing, and immutable evidence per engagement.
+- Leads with attempts, kept excerpts, park reasons, and linked findings. Surface keeps the source under the form.
+- Findings with saved evidence references, and a report that exports Markdown or JSON with a sharing preview.
+- Resume with a saved next step and recent changes, engagement search over notes and findings, and per-engagement techniques saved from selected lead attempts with review, editable placeholders, and copy replay. Known secret patterns show as [redacted]; review the rest before saving.
+- Optional [AI evidence explanations](docs/operator/advisor-setup.md) using your own compatible endpoint. The model receives only your question plus the excerpts and findings you select.
 
-Runs on your Linux machine with a browser UI, SQLite, and local evidence files. External AI providers receive the evidence you select.
+Runs on your Linux machine with a browser UI, SQLite, and local evidence files. Scratchpad text, credentials, secret values, note history, raw artifact bytes, and prior turns stay out of model requests.
 
 **Early development.** Local, single-user use. Some screens are unfinished, and runner setup is still manual. No packaged installer yet.
 
@@ -23,6 +25,10 @@ Captured from the running app with synthetic local lab data.
 Discover HTTP paths with ffuf and inspect the saved evidence for each result.
 
 ![HTTP path discovery with status codes, response sizes, and raw evidence links](https://files.lbgos.dev/f/59f3533e54fff819b82a902d34a8d66c/stonehush-path-discovery-3bfa14ee.png)
+
+Add findings to the report outline with their saved evidence. Unavailable references stay visible and are not added.
+
+![Report outline with findings, evidence availability, and add with evidence controls](https://files.lbgos.dev/f/a63d6c3e577976c0c1312e0969cf2190/report-finding-evidence-camoufox-selected-1440-2494897c.png)
 
 Review findings in the engagement report, then export Markdown or JSON.
 
