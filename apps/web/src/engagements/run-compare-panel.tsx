@@ -51,7 +51,7 @@ export function RunCompareSection({ engagementId, loadedRuns, selectedOutput, so
         <label className="mt-2 grid gap-1 text-[11px] text-muted-foreground" htmlFor="run-compare-prior">
           <span>Prior run</span>
           <select id="run-compare-prior" value={priorRunId}
-            className="min-h-8 border border-input bg-background px-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="min-h-8 min-w-0 w-full border border-input bg-background px-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onChange={(event) => setPriorRunId(event.target.value)}>
             <option value="">Choose a prior run</option>
             {candidates.map((run) => (
@@ -122,7 +122,7 @@ function ChosenComparison({ engagementId, selectedRun, priorRun, selectedOutput 
     projections,
   });
   return <div className="grid gap-2">
-    <p className="m-0 text-[12px] leading-5 text-muted-foreground">
+    <p className="m-0 text-[12px] leading-5 text-muted-foreground [overflow-wrap:anywhere]">
       Prior run {priorRun.id} at {formatEngagementTimestamp(priorRun.createdAt)}: {describeRunOutcome(priorRun)}.
       Recorded options: {beforeContext.optionsSummary}.
     </p>

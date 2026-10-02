@@ -28,7 +28,7 @@ export function RunDiffView({
           {diff.comparable ? "Compatible prior run" : "Not directly comparable"}
         </span>
       </div>
-      <div className="grid gap-2 text-[12px] leading-5">
+      <div className="grid gap-2 text-[12px] leading-5 [overflow-wrap:anywhere]">
         {priorAttempt !== undefined ? (
           <p className="m-0 text-muted-foreground">{describePriorAttempt(priorAttempt)}</p>
         ) : null}
