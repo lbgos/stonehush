@@ -1,4 +1,4 @@
-import type { ActionSnapshot, NmapProjectedService, PersistedAction, RunHistorySummary, RunOutputResponse } from "@stonehush/contracts";
+import type { ActionSnapshot, FfufProjected, NmapProjectedService, PersistedAction, RunHistorySummary, RunOutputResponse } from "@stonehush/contracts";
 import { diffRuns, normalizeTarget } from "@stonehush/domain";
 import { describe, expect, it } from "vitest";
 
@@ -52,6 +52,19 @@ describe("recorded comparison context", () => {
       .toMatchObject({ ok: true, value: { origin: "192.0.2.10" } });
     persisted.action.queuedSnapshotVersion = null;
     expect(resolveRunComparison(run, { ...empty, services: [service("new")] }, persisted, "eng").ok).toBe(false);
+  });
+  it("joins ffuf observations only with validated recorded options and the same origin", () => {
+    const recorded = snapshot("http://target.test/");
+    recorded.typedOptions = { declaredPorts: null, ffuf: { origin: "http://target.test", wordlistPath: "/lists/lab.txt",
+      rate: 100, threads: 40, timeoutSeconds: 10, maxTimeSeconds: 120, matchStatusCodes: [200, 403] } };
+    const result: FfufProjected = { source: "ffuf", parserVersion: "ffuf-json-v1", url: "http://target.test/admin", status: 403,
+      length: 10, words: 1, lines: 1, redirectlocation: null, fuzz: "admin", runId: run.id, artifactId: "ffuf-result",
+      artifactDigest: digest, observedAt: run.updatedAt };
+    expect(resolveRunComparison(run, { ...empty, results: [result] }, action(recorded), "eng"))
+      .toMatchObject({ ok: true, value: { tool: "ffuf", origin: "http://target.test" } });
+    expect(resolveRunComparison(run, { ...empty, results: [{ ...result, url: "http://other.test/admin" }] }, action(recorded), "eng").ok).toBe(false);
+    recorded.typedOptions = { ffuf: { origin: "http://target.test" } };
+    expect(resolveRunComparison(run, { ...empty, results: [result] }, action(recorded), "eng").ok).toBe(false);
   });
   it("compares concrete DNS destinations while ignoring IDs, timestamp and TTL noise", () => {
     const before = snapshot("target.test");
