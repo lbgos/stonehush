@@ -82,10 +82,15 @@ export async function waitForWebReadiness({ url, signal, fetchImplementation = f
 export async function runCombinedDev({ repositoryRoot, env = process.env }) {
   const registry = createChildRegistry();
   const stop = createStopState();
-  const shutdown = createSharedCleanup(() => registry.shutdown());
+  let runnerStartup;
+  const shutdown = createSharedCleanup(async () => {
+    // A stop may win the enrollment race. Settle its outcome before cleanup
+    // so a successful confirmation cannot become a late, unowned identity.
+    await runnerStartup?.catch(() => {});
+    await registry.shutdown();
+  });
   const onSignal = (name) => {
     stop.requestStop(name);
-    void shutdown();
   };
   const onInt = () => onSignal("SIGINT");
   const onTerm = () => onSignal("SIGTERM");
@@ -141,10 +146,11 @@ export async function runCombinedDev({ repositoryRoot, env = process.env }) {
     web.child.disconnect();
     const webUrl = `http://127.0.0.1:${dev.webPort}`;
     await superviseWait(waitForWebReadiness({ url: webUrl, signal: stop.stopSignal }), { registry, stop });
-    const startedRunner = await superviseWait(startRunnerDev({
+    runnerStartup = startRunnerDev({
       plan: runner, stop, registry, baseEnv: environment, pnpmProgram, repositoryRoot, tsxImport,
       spawnImplementation: (command, args, options) => spawnOwned(command, args, options, "runner"),
-    }), { registry, stop });
+    });
+    const startedRunner = await superviseWait(runnerStartup, { registry, stop });
     await superviseWait(childReady(startedRunner.child, "stonehush-runner-ready"), { registry, stop });
     stop.throwIfStopping("ready announcement");
     console.log(`Stonehush ready at ${webUrl}. API, web and runner are connected. Press Ctrl+C to stop.`);
