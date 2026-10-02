@@ -20,7 +20,7 @@ it("notifies readiness only after the child's accepted handshake", async () => {
       });
     }
     order.push("lease");
-    return new Response(null, { status: 204 });
+    return Response.json({ code: "no_queued_run" }, { status: 404 });
   }));
   await expect(runOnce(config, { onHandshake: () => { order.push("ready"); } })).resolves.toBe(false);
   expect(order).toEqual(["accepted handshake", "ready", "lease"]);
