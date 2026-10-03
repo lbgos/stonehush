@@ -346,7 +346,8 @@ describe("engagement tabs", () => {
 
     await renderTabs(`/engagements/${activeEngagement.id}?tab=runs&run=run-old`);
 
-    const oldest = await screen.findByRole("button", { name: /run-old/ });
+    const history = await screen.findByRole("region", { name: "Run history" });
+    const oldest = await within(history).findByRole("button", { name: /run-old/ });
     expect(oldest.getAttribute("aria-current")).toBe("true");
     expect(screen.getByRole("button", { name: /run-new/ }).getAttribute("aria-current")).toBeNull();
     await waitFor(() => {
@@ -402,7 +403,8 @@ describe("engagement tabs", () => {
     expect(commonLine.getAttribute("title")).toBe("run-old");
 
     fireEvent.click(screen.getByRole("link", { name: "Runs" }));
-    const oldest = await screen.findByRole("button", { name: /run-old/ });
+    const history = await screen.findByRole("region", { name: "Run history" });
+    const oldest = await within(history).findByRole("button", { name: /run-old/ });
     expect(oldest.getAttribute("aria-current")).toBe("true");
     await waitFor(() => {
       expect(screen.getByTestId("run-history-stdout").textContent).toBe("exact-old-bytes");
