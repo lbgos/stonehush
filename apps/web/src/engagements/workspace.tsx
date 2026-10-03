@@ -36,6 +36,7 @@ import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
 import { createResumeFindingDestination, type FindingDestination } from "./finding-arrival.js";
 import { ResumeLeadRow, useRememberedLead } from "./resume-lead.js";
+import { ResumeRunRow, useRememberedRun } from "./resume-run.js";
 import { EngagementResumeView } from "./resume-view.js";
 import type { NoteSearchDestination } from "./search-destination.js";
 import { EngagementSearchDialog, type SearchSelection } from "./search-view.js";
@@ -477,6 +478,7 @@ function EngagementDetail({
   // Every validated overlay read, from either opener, becomes this browser's
   // Resume pointer for the lead's engagement.
   const rememberedLead = useRememberedLead(displayed.id);
+  const rememberedRun = useRememberedRun(displayed.id);
   const { remember: rememberLeadId, forget: forgetLeadId } = rememberedLead;
   const rememberLead = useCallback((lead: Lead) => rememberLeadId(lead.engagementId, lead.id), [rememberLeadId]);
   const openResumeLead = (leadId: string, trigger: HTMLElement) => {
@@ -695,6 +697,14 @@ function EngagementDetail({
               )
             }
             onOpenFinding={openResumeFinding}
+            run={rememberedRun.runId === null ? undefined : (
+              <ResumeRunRow
+                engagementId={displayed.id}
+                runId={rememberedRun.runId}
+                onOpen={openRunFromTray}
+                onForget={(runId) => rememberedRun.forget(displayed.id, runId)}
+              />
+            )}
             onOpenRun={openRunFromTray}
           />
 
@@ -767,6 +777,7 @@ function EngagementDetail({
             engagementId={displayed.id}
             selectedRunId={runId}
             onSelect={selectRun}
+            onOpenedRun={rememberedRun.remember}
           />
         </div>
       ) : null}

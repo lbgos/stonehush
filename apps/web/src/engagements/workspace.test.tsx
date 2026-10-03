@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
+import { emptyWorkspaceState, parseWorkspaceState, workspaceStateKey } from "./workspace-state.js";
 
 const activeEngagement = {
   contractVersion: 1,
@@ -603,5 +604,27 @@ describe("engagement workspace", () => {
     expect(messages).not.toMatch(/Rendered more hooks/i);
     expect(messages).not.toMatch(/order of Hooks/i);
     hookError.mockRestore();
+  });
+});
+
+
+describe("remembered run workspace integration", () => {
+  it.each([activeEngagement, archivedEngagement])("opens the exact saved run in $status engagements outside the first history page", async (engagement) => {
+    window.localStorage.setItem(workspaceStateKey(engagement.id), JSON.stringify({ ...emptyWorkspaceState(), selectedRunId: "run-old", drafts: { notes: "kept" } }));
+    const fetchMock = stubFetch((url) => {
+      const detail = readEngagementResponse(url, [engagement]);
+      if (detail !== undefined) return detail;
+      if (url.endsWith("/resume")) return response({ engagementId: engagement.id, nextStep: null, nextStepUpdatedAt: null, nextStepRevision: 0, changes: [], complete: true });
+      if (url.includes("/runs?")) return response({ runs: [], nextCursor: "older" });
+      if (url.endsWith("/runs/run-old/output")) return response({ run: { id: "run-old", actionId: "action-old", state: "succeeded", terminalKind: "succeeded", terminalReason: null, updatedAt: engagement.updatedAt }, stdout: { present: false, truncated: false, content: "" }, stderr: { present: false, truncated: false, content: "" } });
+      return response([]);
+    });
+    const { router } = await renderWorkspace(`/engagements/${engagement.id}?target=192.0.2.10&sel=service-1`);
+    fireEvent.click(await screen.findByRole("button", { name: "Open run run-old, succeeded" }));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ tab: "runs", run: "run-old", target: "192.0.2.10", sel: "service-1" }));
+    expect(await screen.findByRole("region", { name: "Selected run output" })).toBeTruthy();
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(engagement.id))).drafts).toEqual({ notes: "kept" });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/runs/latest/output"))).toBe(false);
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method === undefined || init.method === "GET")).toBe(true);
   });
 });

@@ -1,10 +1,10 @@
-import { LeadSchema } from "@stonehush/contracts";
+import { LeadSchema, RunOutputParamsSchema } from "@stonehush/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /**
  * Per-engagement client state in localStorage under a versioned key. Writes
- * are best-effort. The workspace reads and writes only `lastLeadId`, the
- * Surface resume pointer kept by `resume-lead.tsx`. The other fields are
+ * are best-effort. Surface Resume remembers validated lead and terminal-run
+ * ids through `lastLeadId` and `selectedRunId`. The other fields are
  * parsed and written back unchanged, but no view restores them yet. Saved
  * scope is never written here.
  */
@@ -79,10 +79,11 @@ export function parseWorkspaceState(raw: string | null): EngagementWorkspaceStat
     return fallback;
   }
   if (!isRecord(parsed) || parsed["version"] !== WORKSPACE_STATE_VERSION) return fallback;
+  const selectedRun = RunOutputParamsSchema.shape.runId.safeParse(parsed["selectedRunId"]);
   return {
     version: WORKSPACE_STATE_VERSION,
     selectedTarget: typeof parsed["selectedTarget"] === "string" ? (parsed["selectedTarget"] as string) : null,
-    selectedRunId: typeof parsed["selectedRunId"] === "string" ? (parsed["selectedRunId"] as string) : null,
+    selectedRunId: selectedRun.success ? selectedRun.data : null,
     inspectorSelection: typeof parsed["inspectorSelection"] === "string" ? (parsed["inspectorSelection"] as string) : null,
     launcherInputs: asStringRecord(parsed["launcherInputs"]),
     drafts: asStringRecord(parsed["drafts"]),

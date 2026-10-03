@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
-import { RunHistoryPanel } from "./run-history-panel.js";
+import { RunHistoryPanel, type RunHistoryPanelProps } from "./run-history-panel.js";
 import {
   EngagementWorkspaceProvider,
   useEngagementWorkspace,
@@ -129,6 +129,7 @@ function renderPanel(props: {
   engagementId?: string;
   selectedRunId?: string | undefined;
   onSelect?: (runId: string) => void;
+  onOpenedRun?: RunHistoryPanelProps["onOpenedRun"];
 }) {
   const queryClient = createAppQueryClient();
   testQueryClients.add(queryClient);
@@ -141,6 +142,7 @@ function renderPanel(props: {
             engagementId={props.engagementId ?? ENGAGEMENT_ID}
             selectedRunId={props.selectedRunId}
             onSelect={onSelect}
+            {...(props.onOpenedRun === undefined ? {} : { onOpenedRun: props.onOpenedRun })}
           />
           <AdvisorDraftProbe />
         </EngagementWorkspaceProvider>
@@ -1554,4 +1556,73 @@ describe("comparison history baseline", () => {
     expect((screen.getByLabelText("Prior run") as HTMLSelectElement).value).toBe("");
     assertReadOnly(reads);
   });
+});
+
+describe("validated selected run callback", () => {
+  it("reports only the successfully read selected terminal run, including one outside the history page", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/runs?")) return response({ runs: [runSummary("run-new", "2026-08-10T12:00:00.000Z")], nextCursor: "older" });
+      return response(outputFor("run-old", "exact old bytes"));
+    }));
+    const onOpenedRun = vi.fn();
+    renderPanel({ selectedRunId: "run-old", onOpenedRun });
+    await waitFor(() => expect(onOpenedRun).toHaveBeenCalledWith({ engagementId: ENGAGEMENT_ID, requestedRunId: "run-old", run: outputFor("run-old", "exact old bytes").run }));
+  });
+
+  it.each([
+    [response({ code: "run_not_found" }, 404), "missing"],
+    [response({ code: "storage_busy" }, 503), "failed"],
+    [response(outputFor("foreign-run", "foreign")), "mismatched"],
+    [response(outputFor("run-old", "pending", "running")), "nonterminal"],
+  ])("does not report %s output", async (read) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/runs?")) return response({ runs: [], nextCursor: null });
+      return read;
+    }));
+    const onOpenedRun = vi.fn();
+    renderPanel({ selectedRunId: "run-old", onOpenedRun });
+    await screen.findByRole("region", { name: "Selected run output" });
+    await waitFor(() => expect(screen.queryByLabelText("Loading selected run output")).toBeNull());
+    expect(onOpenedRun).not.toHaveBeenCalled();
+  });
+
+  it("does not advance from a failed refresh with previously cached output", async () => {
+    let fail = false;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/runs?")) return response({ runs: [], nextCursor: null });
+      return fail ? response({ code: "storage_busy" }, 503) : response(outputFor("run-old", "cached"));
+    }));
+    const onOpenedRun = vi.fn();
+    const { queryClient } = renderPanel({ selectedRunId: "run-old", onOpenedRun });
+    await waitFor(() => expect(onOpenedRun).toHaveBeenCalled());
+    onOpenedRun.mockClear();
+    fail = true;
+    await act(() => queryClient.refetchQueries());
+    expect(onOpenedRun).not.toHaveBeenCalled();
+  });
+});
+
+
+it("does not remember the comparison prior run or a pending selected read", async () => {
+  let release: ((value: Response) => void) | undefined;
+  const selected = new Promise<Response>((resolve) => { release = resolve; });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/runs?")) return response({ runs: [runSummary("run-new", "2026-08-10T12:00:00.000Z"), runSummary("run-old", "2026-08-09T12:00:00.000Z")], nextCursor: null });
+    if (url.endsWith("/runs/run-new/output")) return selected;
+    if (url.endsWith("/runs/run-old/output")) return response(outputFor("run-old", "prior bytes"));
+    return response({ code: "invalid_request" }, 400);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const onOpenedRun = vi.fn();
+  renderPanel({ selectedRunId: "run-new", onOpenedRun });
+  await screen.findByLabelText("Loading selected run output");
+  expect(onOpenedRun).not.toHaveBeenCalled();
+  await act(async () => release?.(response(outputFor("run-new", "selected bytes"))));
+  await waitFor(() => expect(onOpenedRun).toHaveBeenCalled());
+  onOpenedRun.mockClear();
+  fireEvent.change(screen.getByLabelText("Prior run"), { target: { value: "run-old" } });
+  await screen.findByText("Comparison unavailable");
+  expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/runs/run-old/output"))).toBe(true);
+  expect(onOpenedRun).not.toHaveBeenCalled();
 });
