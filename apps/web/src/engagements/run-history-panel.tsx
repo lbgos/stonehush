@@ -15,6 +15,7 @@ import { RunCompareSection } from "./run-compare-panel.js";
 import { RunLeadAttemptForm, runLeadEvidence } from "./run-lead-attempt.js";
 import { useRunHistoryQuery } from "./run-history-query.js";
 import { RunNotFoundError, useRunOutputQuery } from "./run-output-query.js";
+import type { OpenedRun } from "./resume-run.js";
 import { useEngagementWorkspace } from "./workspace-context.js";
 import { splitHeldBackIds } from "./workspace-tabs.js";
 
@@ -24,6 +25,7 @@ export interface RunHistoryPanelProps {
   readonly limit?: number;
   readonly onSelect: (runId: string) => void;
   readonly selectedRunId: string | undefined;
+  readonly onOpenedRun?: (opened: OpenedRun) => void;
 }
 
 // Bounded auto-checking for a selected run that the loaded history still
@@ -44,6 +46,7 @@ export function RunHistoryPanel({
   limit,
   onSelect,
   selectedRunId,
+  onOpenedRun,
 }: RunHistoryPanelProps) {
   const history = useRunHistoryQuery(engagementId, limit);
   const hasHistoryData = history.data !== undefined;
@@ -425,6 +428,7 @@ export function RunHistoryPanel({
             onManualRetry={resetPollBudget}
             loadedRuns={loadedRuns}
             sourceStale={history.isError}
+            onOpenedRun={onOpenedRun}
           />
         )}
       </div>
@@ -520,6 +524,7 @@ function SelectedRunOutput({
   selectedRunId,
   loadedRuns,
   sourceStale,
+  onOpenedRun,
 }: {
   archived: boolean;
   engagementId: string;
@@ -527,8 +532,15 @@ function SelectedRunOutput({
   selectedRunId: string | undefined;
   loadedRuns: readonly RunHistorySummary[];
   sourceStale: boolean;
+  onOpenedRun?: ((opened: OpenedRun) => void) | undefined;
 }) {
   const output = useRunOutputQuery(engagementId, selectedRunId);
+  useEffect(() => {
+    if (selectedRunId !== undefined && output.isSuccess && !output.isFetching &&
+      output.data.run.id === selectedRunId && isTerminalRunState(output.data.run.state)) {
+      onOpenedRun?.({ engagementId, requestedRunId: selectedRunId, run: output.data.run });
+    }
+  }, [engagementId, selectedRunId, output.data, output.isSuccess, output.isFetching, onOpenedRun]);
   const hasOutputData = output.data !== undefined;
   const retryOutput = () => {
     void output.refetch();

@@ -8,9 +8,9 @@ import { formatEngagementTimestamp } from "./format.js";
 import { engagementResumeQueryKey, EngagementNextStepMutationError, fetchEngagementResume, useEngagementResumeQuery, useSaveNextStepMutation } from "./resume-query.js";
 
 // Resume band at the top of Surface: the saved next step, deadline and optional
-// remembered lead row on the left, and factual changes on the right. It scrolls
+// remembered lead/run rows on the left, and factual changes on the right. It scrolls
 // with the page. Next-step loading, failure and archived views keep their row
-// and list header; the remembered lead row appears only when a pointer exists.
+// and list header; remembered rows appear only when their pointers exist.
 
 const RECENT_LIMIT = 8;
 // Shared with the deadline row so both labels sit in one column.
@@ -146,6 +146,7 @@ export function EngagementResumeView({
   engagementId,
   archived,
   lead,
+  run,
   onOpenFinding,
   onOpenRun,
 }: {
@@ -153,6 +154,7 @@ export function EngagementResumeView({
   archived: boolean;
   // Row for the remembered lead, after the deadline. Absent when none is kept.
   lead?: ReactNode;
+  run?: ReactNode;
   onOpenFinding?: ((identity: { engagementId: string; findingId: string }) => void) | undefined;
   onOpenRun?: ((runId: string) => void) | undefined;
 }) {
@@ -202,6 +204,7 @@ export function EngagementResumeView({
         )}
         <EngagementDeadlineSection archived={archived} engagementId={engagementId} />
         {lead}
+        {run}
         {archived ? (
           <p className="m-0 text-[12px] leading-5 text-muted-foreground">Archived, read only.</p>
         ) : null}
