@@ -23,11 +23,12 @@ async function isExactHealthResponse(response) {
   );
 }
 
-export async function probeApiHealth(fetchImplementation, url) {
+export async function probeApiHealth(fetchImplementation, url, signal) {
   try {
     const response = await fetchImplementation(url, {
       method: "GET",
-      signal: AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS),
+      signal: signal === undefined ? AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS)
+        : AbortSignal.any([signal, AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS)]),
     });
     return isExactHealthResponse(response);
   } catch {
@@ -42,13 +43,16 @@ export async function waitForApiReadiness({
   pause = delay,
   timeoutMs = API_READINESS_TIMEOUT_MS,
   url,
+  signal,
 }) {
   const deadline = now() + timeoutMs;
   while (now() < deadline) {
+    signal?.throwIfAborted();
     const outcome = await Promise.race([
-      probeApiHealth(fetchImplementation, url).then((ready) => ({ ready })),
+      probeApiHealth(fetchImplementation, url, signal).then((ready) => ({ ready })),
       exited.then((result) => ({ result })),
     ]);
+    signal?.throwIfAborted();
     if ("result" in outcome) {
       throw new Error("Stonehush API exited before it became ready.");
     }

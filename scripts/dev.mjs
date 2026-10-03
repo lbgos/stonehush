@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { readDevConfig } from "./dev-config.mjs";
 import { startApiThenWeb, waitForApiReadiness } from "./dev-readiness.mjs";
+import { runCombinedDev } from "./dev-all.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FORCE_STOP_AFTER_MS = 5_000;
@@ -149,4 +150,11 @@ async function main() {
   if (shutdownPromise) await shutdownPromise;
 }
 
-await main();
+if (process.argv.slice(2).length === 1 && process.argv[2] === "--with-runner") {
+  await runCombinedDev({ repositoryRoot });
+} else if (process.argv.length > 2) {
+  console.error("Unknown development argument.");
+  process.exitCode = 1;
+} else {
+  await main();
+}

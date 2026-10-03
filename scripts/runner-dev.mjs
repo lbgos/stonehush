@@ -153,7 +153,13 @@ export function resolveRunnerDevConfig({ env, repositoryRoot, now = () => Date.n
   };
 }
 
-export function runnerSpawnArgs({ pnpmProgram, runnerAbsolutePath }) {
+export function runnerSpawnArgs({ pnpmProgram, runnerAbsolutePath, tsxImport }) {
+  if (tsxImport !== undefined) {
+    return {
+      command: process.execPath,
+      args: ["--import", tsxImport, "--conditions=development", runnerAbsolutePath],
+    };
+  }
   return {
     command: process.execPath,
     args: [
@@ -283,6 +289,44 @@ function spawnChild(command, args, { cwd, env }) {
   return child;
 }
 
+// The caller owns preflight, API readiness, signal handling and cleanup.
+// Enrollment and credentials are shared with the standalone starter.
+export async function startRunnerDev({
+  plan, stop, registry, baseEnv, pnpmProgram, repositoryRoot,
+  tsxImport, spawnImplementation = spawnChild, onEnrolled = () => {},
+}) {
+  stop.throwIfStopping("runner directory setup");
+  await mkdir(plan.runnerDataDir, { mode: 0o700, recursive: true });
+  stop.throwIfStopping("runner enrollment");
+  const credentials = plan.reuse
+    ? { runnerId: plan.runnerId, runnerSecret: plan.runnerSecret }
+    : await enrollRunner({
+      apiBaseUrl: plan.apiBaseUrl,
+      fingerprint: plan.fingerprint,
+      runnerName: plan.runnerName,
+      stop,
+    });
+  if (!plan.reuse) onEnrolled({ runnerId: credentials.runnerId, runnerRevision: credentials.runnerRevision });
+  console.log(plan.reuse
+    ? "Reusing existing runner credentials from the environment."
+    : `Runner enrolled as ${plan.runnerName}: ${credentials.runnerId}, revision ${credentials.runnerRevision}.`);
+  stop.throwIfStopping("runner startup");
+  const { command, args } = runnerSpawnArgs({
+    pnpmProgram,
+    runnerAbsolutePath: path.join(repositoryRoot, RUNNER_SRC),
+    tsxImport,
+  });
+  const child = spawnImplementation(command, args, {
+    cwd: repositoryRoot,
+    env: buildRunnerChildEnv({ baseEnv, plan, ...credentials }),
+  });
+  const exited = new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+  return registry.track(child, exited, "runner");
+}
+
 async function main() {
   let plan;
   try {
@@ -300,7 +344,6 @@ async function main() {
     return;
   }
 
-  const runnerAbsolutePath = path.join(repositoryRoot, RUNNER_SRC);
   const registry = createChildRegistry();
   const stop = createStopState();
   let ownedEnrollment;
@@ -356,39 +399,10 @@ async function main() {
       if (outcome === "stopped") stop.throwIfStopping("API readiness");
     });
 
-    let runnerId = plan.runnerId;
-    let runnerSecret = plan.runnerSecret;
-    if (plan.reuse) {
-      console.log("Reusing existing runner credentials from the environment.");
-    } else {
-      stop.throwIfStopping("runner enrollment");
-      const enrolled = await enrollRunner({
-        apiBaseUrl: plan.apiBaseUrl,
-        fingerprint: plan.fingerprint,
-        runnerName: plan.runnerName,
-        stop,
-      });
-      runnerId = enrolled.runnerId;
-      runnerSecret = enrolled.runnerSecret;
-      ownedEnrollment = { runnerId, runnerRevision: enrolled.runnerRevision };
-      console.log(`Runner enrolled as ${plan.runnerName}: ${runnerId}, revision ${enrolled.runnerRevision}.`);
-    }
-
-    stop.throwIfStopping("runner startup");
-    const { command, args } = runnerSpawnArgs({ pnpmProgram, runnerAbsolutePath });
-    const childEnv = buildRunnerChildEnv({
-      baseEnv: process.env,
-      plan,
-      runnerId,
-      runnerSecret,
+    ownedRunner = await startRunnerDev({
+      plan, stop, registry, baseEnv: process.env, pnpmProgram, repositoryRoot,
+      onEnrolled: (identity) => { ownedEnrollment = identity; },
     });
-    const child = spawnChild(command, args, { cwd: repositoryRoot, env: childEnv });
-    ownedRunner = registry.track(child, new Promise((resolve, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code, signal) => resolve({ code, signal }));
-    }), "runner");
-    runnerId = "";
-    runnerSecret = "";
 
     console.log(`Runner connected to ${plan.apiBaseUrl}. Press Ctrl+C to stop; only runner-dev-owned processes are cleaned up.`);
     const settled = await Promise.race([gotSignal, registry.anyExit()]);

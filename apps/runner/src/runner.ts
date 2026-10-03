@@ -164,7 +164,7 @@ export function prepareVhostExecution(params: {
   }
 }
 
-export async function handshake(config: RunnerConfig): Promise<HandshakeResponse> {
+export async function handshake(config: RunnerConfig, signal?: AbortSignal): Promise<HandshakeResponse> {
   const url = `${config.apiBaseUrl}/api/v1/runner/handshake`;
   const rawBody = RunnerHandshakeRequestSchema.parse({
     protocol: "runner-control-v1",
@@ -180,6 +180,7 @@ export async function handshake(config: RunnerConfig): Promise<HandshakeResponse
       authorization: authHeader(config.runnerId, config.secret),
     },
     body: JSON.stringify(rawBody),
+    ...(signal === undefined ? {} : { signal }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -366,7 +367,7 @@ export async function completeRun(
  */
 export async function runOnce(
   overrides: Partial<RunnerConfig> = {},
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; onHandshake?: () => void } = {},
 ): Promise<boolean> {
   const signal = opts.signal;
   throwIfAborted(signal);
@@ -376,8 +377,9 @@ export async function runOnce(
   }
 
   throwIfAborted(signal);
-  await handshake(config);
+  await handshake(config, signal);
   throwIfAborted(signal);
+  opts.onHandshake?.();
 
   const leaseSendMonotonic = globalThis.performance.now();
   const acquired = await acquireLease(config);
@@ -1001,7 +1003,10 @@ export async function runOnce(
   return true;
 }
 
-export function createRunnerLoop(configOverrides: Partial<RunnerConfig> = {}): {
+export function createRunnerLoop(
+  configOverrides: Partial<RunnerConfig> = {},
+  options: { onHandshake?: () => void } = {},
+): {
   start: () => void;
   stop: () => Promise<void>;
   isStopped: () => boolean;
@@ -1034,7 +1039,10 @@ export function createRunnerLoop(configOverrides: Partial<RunnerConfig> = {}): {
       }
       const signal = abortController.signal;
       try {
-        inFlight = runOnce(configOverrides, { signal });
+        inFlight = runOnce(configOverrides, {
+          signal,
+          ...(options.onHandshake === undefined ? {} : { onHandshake: options.onHandshake }),
+        });
         const didWork = await inFlight;
         inFlight = null;
         if (stopped) break;
