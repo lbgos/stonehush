@@ -48,17 +48,17 @@ function renderRow(runId = "run-old", onForget = vi.fn()) {
 describe("remembered terminal run", () => {
   it("merges only the matching validated run id and preserves existing lead/state", () => {
     const store = memoryStore();
-    saveWorkspaceState(store, ENGAGEMENT, { ...emptyWorkspaceState(), lastLeadId: LEAD, filters: { runs: "failed" } });
+    saveWorkspaceState(store, ENGAGEMENT, { ...emptyWorkspaceState(), lastLeadId: LEAD, selectedTarget: "192.0.2.10", inspectorSelection: "service-1", launcherInputs: { ports: "80" }, drafts: { notes: "saved draft" }, filters: { runs: "failed" }, starredIds: ["star-1"], lastWordlistName: "words.txt" });
     const { result } = renderHook(() => useRememberedRun(ENGAGEMENT, store));
     act(() => result.current.remember({ engagementId: ENGAGEMENT, requestedRunId: "run-old", run: output().run }));
     expect(result.current.runId).toBe("run-old");
     const saved = loadWorkspaceState(store, ENGAGEMENT);
     expect(saved.lastLeadId).toBe(LEAD);
-    expect(saved.filters).toEqual({ runs: "failed" });
+    expect(saved).toMatchObject({ selectedTarget: "192.0.2.10", inspectorSelection: "service-1", launcherInputs: { ports: "80" }, drafts: { notes: "saved draft" }, filters: { runs: "failed" }, starredIds: ["star-1"], lastWordlistName: "words.txt" });
     expect(store.load(workspaceStateKey(ENGAGEMENT))).not.toContain("stdout");
     act(() => result.current.forget(ENGAGEMENT, "run-old"));
     expect(result.current.runId).toBeNull();
-    expect(loadWorkspaceState(store, ENGAGEMENT).lastLeadId).toBe(LEAD);
+    expect(loadWorkspaceState(store, ENGAGEMENT)).toEqual({ ...saved, selectedRunId: null, updatedAt: expect.any(String) });
   });
 
   it("isolates engagements and rejects nonterminal, mismatched and late foreign reads", () => {
@@ -86,6 +86,17 @@ describe("remembered terminal run", () => {
     const { result } = renderHook(() => useRememberedRun(ENGAGEMENT, denied));
     act(() => result.current.remember({ engagementId: ENGAGEMENT, requestedRunId: "run-old", run: output().run }));
     expect(result.current.runId).toBeNull();
+  });
+
+  it("keeps the prior pointer when writes fail, including Forget", () => {
+    const memory = memoryStore();
+    saveWorkspaceState(memory, ENGAGEMENT, { ...emptyWorkspaceState(), selectedRunId: "run-old", lastLeadId: LEAD });
+    const store: WorkspaceStateStore = { load: memory.load, save: () => { throw new Error("quota"); } };
+    const { result } = renderHook(() => useRememberedRun(ENGAGEMENT, store));
+    act(() => result.current.remember({ engagementId: ENGAGEMENT, requestedRunId: "run-new", run: output("run-new").run }));
+    act(() => result.current.forget(ENGAGEMENT, "run-old"));
+    expect(result.current.runId).toBe("run-old");
+    expect(loadWorkspaceState(memory, ENGAGEMENT).lastLeadId).toBe(LEAD);
   });
 
   it("validates existing opaque run ids without requiring UUIDs", () => {
