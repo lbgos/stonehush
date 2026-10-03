@@ -428,6 +428,7 @@ test("starter cleans up only confirmed new identities after its child exits", as
       });
       child.stderr.on("data", (chunk) => { output += chunk; });
       const exited = once(child, "exit");
+      let failure;
       try {
         if (!["uncertain-confirm", "invalid-confirm", "startup-failure"].includes(scenario)) {
           await Promise.race([ready.promise, exited.then(() => { throw new Error("Fixture runner did not start."); }), delay(5_000, undefined, { ref: false }).then(() => { throw new Error("Fixture runner startup timed out."); })]);
@@ -460,15 +461,23 @@ test("starter cleans up only confirmed new identities after its child exits", as
         }
         assert.ok(!output.includes(VALID_SECRET));
         assert.equal((await fetch(`${baseUrl}/health`)).status, 200);
+      } catch (error) {
+        failure = error;
       } finally {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
         await exited;
         if (failedStop && runnerPid !== undefined) {
-          try { process.kill(-runnerPid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") throw error; }
+          try { process.kill(-runnerPid, "SIGKILL"); } catch (error) {
+            if (error.code !== "ESRCH") {
+              if (failure === undefined) failure = error;
+              else console.error("Fixture cleanup also failed:", error);
+            }
+          }
         }
         api.closeAllConnections();
         await new Promise((resolve) => api.close(resolve));
       }
+      if (failure !== undefined) throw failure;
     }
   } finally {
     await rm(root, { recursive: true, force: true });
