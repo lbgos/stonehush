@@ -1,8 +1,9 @@
 # Runner startup
 
 Normal startup runs two things: the app and the local runner. The dev
-starter enrolls when credentials are missing, or reuses both credential
-variables when set. It keeps the secret in process memory only.
+starter enrolls when both credential variables are unset or empty, or
+reuses a valid pair. Partial or malformed credentials fail validation. It
+keeps the secret in process memory only.
 
 ## First time and every restart
 
@@ -28,15 +29,17 @@ explicit API URL. Both starters write no credential file or secret log.
 There is no enrollment screen in the web app. An earlier version of this
 page named one; that UI is not in the source.
 
-If `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` are already set, the
-starter reuses them and skips enrollment. If only one of them is set, it
-stops with a clear error. A fresh shell without those variables enrolls
-again after successful cleanup. A lost credential is not recoverable.
+If `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` form a valid pair,
+the starter reuses them and skips enrollment. A partial or malformed pair
+stops with a clear error. A fresh shell with both variables unset or empty
+enrolls again after successful cleanup. A lost credential is not recoverable.
 
 The starter stops only its owned child, then revokes only the identity it
 successfully enrolled during this launch, including after a startup failure.
 It never revokes an identity supplied through environment credentials. The
-API permits only one enabled runner, so a lost confirmation response, hard
+starter skips revocation if it cannot confirm owned runner shutdown and
+reports the recorded identity for recovery after explicitly stopping that runner.
+The API permits only one enabled runner, so a lost confirmation response, hard
 process kill, or failed revocation can leave an identity that blocks enrollment.
 The starter reports uncertain confirmation or cleanup and does not guess an
 identity or revoke another runner.

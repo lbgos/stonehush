@@ -119,15 +119,16 @@ export function TechniqueCard({
   archived,
 }: {
   technique: Technique;
-  facts: readonly string[];
+  facts?: readonly string[] | undefined;
   archived: boolean;
 }) {
   const [values, setValues] = useState<Record<string, string>>(Object.create(null));
   const [copied, setCopied] = useState(false);
-  const match = useMemo(
-    () => matchTechniquePrereqs(technique.prerequisites, facts),
-    [technique.prerequisites, facts],
-  );
+  const match = useMemo(() => {
+    if (facts !== undefined) return matchTechniquePrereqs(technique.prerequisites, facts);
+    if (technique.prerequisites.length === 0) return matchTechniquePrereqs([], []);
+    return undefined;
+  }, [technique.prerequisites, facts]);
   const placeholders = useMemo(
     () =>
       technique.procedure.flatMap((step) =>
@@ -171,9 +172,15 @@ export function TechniqueCard({
   return (
     <li className="rounded-[10px] border border-border px-3 py-2.5">
       <p className="m-0 text-[12px] font-semibold">{technique.name}</p>
-      <p className="m-0 mt-1 text-[12px] text-muted-foreground" role="status">
-        {match.matched ? "Applies: " : "Does not apply: "}{match.reason}
-      </p>
+      {match !== undefined ? (
+        <p className="m-0 mt-1 text-[12px] text-muted-foreground" role="status">
+          {match.matched ? "Applies: " : "Does not apply: "}{match.reason}
+        </p>
+      ) : (
+        <p className="m-0 mt-1 text-[12px] text-muted-foreground" role="status">
+          Applicability: context unavailable.
+        </p>
+      )}
       {technique.whenUseful.length > 0 ? (
         <p className="m-0 mt-1 text-[12px]">Useful when: {technique.whenUseful}</p>
       ) : null}
@@ -213,6 +220,7 @@ export function TechniqueCard({
                 onChange={(event) => setValue(name, event.target.value)}
                 autoComplete="off"
                 spellCheck={false}
+                aria-label={`{{${name}}}`}
                 className="h-8 rounded-md border border-input bg-transparent px-2 font-mono text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>

@@ -353,14 +353,26 @@ test("revocation uses the recorded identity and revision without the stop signal
 test("starter cleans up only confirmed new identities after its child exits", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "stonehush-runner-dev-lifecycle-"));
   const fixture = path.join(root, "fixture-runner.cjs");
+  const failStop = path.join(root, "fail-stop.cjs");
   await writeFile(fixture, `
     console.log('fixture-runner-ready:' + process.pid);
     if (process.env.RUNNER_FIXTURE_FAIL === '1') process.exit(7);
     process.on('SIGTERM', () => process.exit(0));
     setInterval(() => {}, 50);
   `);
+  await writeFile(failStop, `
+    const kill = process.kill.bind(process);
+    process.kill = (pid, signal) => {
+      if (pid < 0 && (process.env.RUNNER_FIXTURE_STOP_FAILURE === 'probe' ? signal === 0 : signal === 'SIGTERM')) {
+        throw Object.assign(new Error('Synthetic owned-group stop failure.'), { code: 'EPERM' });
+      }
+      return kill(pid, signal);
+    };
+  `);
   try {
-    for (const scenario of ["normal", "startup-failure", "reused", "uncertain-confirm", "invalid-confirm", "failed-revoke"]) {
+    for (const scenario of ["normal", "startup-failure", "reused", "uncertain-confirm", "invalid-confirm", "failed-revoke", "failed-stop-probe", "failed-stop-signal", "reused-failed-stop"]) {
+      const failedStop = scenario.includes("failed-stop");
+      const reused = scenario.startsWith("reused");
       const calls = [];
       let runnerPid;
       let childAliveAtRevoke;
@@ -393,7 +405,7 @@ test("starter cleans up only confirmed new identities after its child exits", as
       api.listen(0, "127.0.0.1");
       await once(api, "listening");
       const baseUrl = `http://127.0.0.1:${api.address().port}`;
-      const child = spawn(process.execPath, [path.join(import.meta.dirname, "runner-dev.mjs")], {
+      const child = spawn(process.execPath, [...(failedStop ? ["--import", failStop] : []), path.join(import.meta.dirname, "runner-dev.mjs")], {
         env: {
           PATH: process.env.PATH,
           npm_execpath: fixture,
@@ -401,8 +413,9 @@ test("starter cleans up only confirmed new identities after its child exits", as
           STONEHUSH_NMAP_EXECUTABLE: "/usr/bin/true",
           STONEHUSH_RUNNER_DATA_DIR: path.join(root, "data"),
           STONEHUSH_RUNNER_NAME: "lifecycle-fixture",
-          ...(scenario === "reused" ? { STONEHUSH_RUNNER_ID: "runner-existing", STONEHUSH_RUNNER_SECRET: VALID_SECRET } : {}),
+          ...(reused ? { STONEHUSH_RUNNER_ID: "runner-existing", STONEHUSH_RUNNER_SECRET: VALID_SECRET } : {}),
           ...(scenario === "startup-failure" ? { RUNNER_FIXTURE_FAIL: "1" } : {}),
+          ...(failedStop ? { RUNNER_FIXTURE_STOP_FAILURE: scenario === "failed-stop-probe" ? "probe" : "signal" } : {}),
         },
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -415,6 +428,7 @@ test("starter cleans up only confirmed new identities after its child exits", as
       });
       child.stderr.on("data", (chunk) => { output += chunk; });
       const exited = once(child, "exit");
+      let failure;
       try {
         if (!["uncertain-confirm", "invalid-confirm", "startup-failure"].includes(scenario)) {
           await Promise.race([ready.promise, exited.then(() => { throw new Error("Fixture runner did not start."); }), delay(5_000, undefined, { ref: false }).then(() => { throw new Error("Fixture runner startup timed out."); })]);
@@ -422,10 +436,17 @@ test("starter cleans up only confirmed new identities after its child exits", as
         }
         const [code, signal] = await Promise.race([exited, delay(15_000, undefined, { ref: false }).then(() => { throw new Error("Lifecycle cleanup timed out."); })]);
         assert.equal(signal, null);
-        assert.equal(code, ["startup-failure", "uncertain-confirm", "invalid-confirm"].includes(scenario) ? 1 : 143);
+        assert.equal(code, failedStop || ["startup-failure", "uncertain-confirm", "invalid-confirm"].includes(scenario) ? 1 : 143);
         const mutations = calls.filter((call) => call.method === "POST");
         const revokes = mutations.filter((call) => call.url.endsWith("/revoke"));
-        if (scenario === "reused") {
+        if (failedStop) {
+          assert.equal(revokes.length, 0);
+          assert.equal(mutations.length, reused ? 0 : 2);
+          assert.doesNotThrow(() => process.kill(runnerPid, 0), "failed shutdown must leave the runner alive for explicit recovery");
+          assert.match(output, /Owned runner shutdown could not be confirmed\. Revocation skipped\./);
+          if (!reused) assert.match(output, /Explicitly stop the owned runner and recover runner runner-owned at recorded revision 1/);
+          assert.doesNotMatch(output, /Revoked temporary runner/);
+        } else if (reused) {
           assert.equal(mutations.length, 0);
         } else if (scenario === "uncertain-confirm" || scenario === "invalid-confirm") {
           assert.equal(revokes.length, 0);
@@ -440,12 +461,23 @@ test("starter cleans up only confirmed new identities after its child exits", as
         }
         assert.ok(!output.includes(VALID_SECRET));
         assert.equal((await fetch(`${baseUrl}/health`)).status, 200);
+      } catch (error) {
+        failure = error;
       } finally {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
         await exited;
+        if (failedStop && runnerPid !== undefined) {
+          try { process.kill(-runnerPid, "SIGKILL"); } catch (error) {
+            if (error.code !== "ESRCH") {
+              if (failure === undefined) failure = error;
+              else console.error("Fixture cleanup also failed:", error);
+            }
+          }
+        }
         api.closeAllConnections();
         await new Promise((resolve) => api.close(resolve));
       }
+      if (failure !== undefined) throw failure;
     }
   } finally {
     await rm(root, { recursive: true, force: true });

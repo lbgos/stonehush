@@ -86,7 +86,7 @@ for (const signal of ["SIGINT","SIGTERM"]) process.on(signal, () => server.close
 `);
   await writeFile(path.join(root, "apps/runner/src/index.ts"), `
 if (process.env.STONEHUSH_RUNNER_SECRET !== "a".repeat(43)) process.exit(8);
-console.log("fixture runner started");
+console.log("fixture runner started pid=" + process.pid);
 if (process.env.FIXTURE_MODE === "runner-exit") process.exit(0);
 if (process.env.FIXTURE_MODE !== "runner-unready") process.send({type:"stonehush-runner-ready"}, () => process.disconnect());
 const timer = setInterval(() => {}, 1000);
@@ -107,7 +107,33 @@ for (const signal of ["SIGINT","SIGTERM"]) process.on(signal, () => {
   if (!extraEnv.STONEHUSH_RUNNER_ID) delete env.STONEHUSH_RUNNER_ID;
   if (!extraEnv.STONEHUSH_RUNNER_SECRET) delete env.STONEHUSH_RUNNER_SECRET;
   function start() {
-    const source = `import {runCombinedDev} from ${JSON.stringify(script)}; await runCombinedDev({repositoryRoot:${JSON.stringify(root)}});`;
+    const source = `
+      import {readFileSync} from "node:fs";
+      import childProcess from "node:child_process";
+      import {syncBuiltinESMExports} from "node:module";
+      const kill = process.kill.bind(process);
+      process.kill = (pid, signal) => {
+        if (pid < 0 && process.env.FIXTURE_MODE?.startsWith("failed-stop")) {
+          let command = "";
+          try { command = readFileSync("/proc/" + (-pid) + "/cmdline", "utf8"); } catch {}
+          if (command.includes("apps/runner/src/index.ts")
+            && (process.env.FIXTURE_MODE === "failed-stop-probe" ? signal === 0 : signal === "SIGTERM")) {
+            throw Object.assign(new Error("Synthetic owned-runner stop failure."), {code:"EPERM"});
+          }
+        }
+        return kill(pid, signal);
+      };
+      if (process.env.FIXTURE_MODE === "runner-spawn-failure") {
+        const spawn = childProcess.spawn;
+        childProcess.spawn = (command, args, options) => spawn(
+          args.includes(${JSON.stringify(path.join(root, "apps/runner/src/index.ts"))})
+            ? ${JSON.stringify(path.join(root, "missing-runner-executable"))} : command,
+          args, options);
+        syncBuiltinESMExports();
+      }
+      const {runCombinedDev} = await import(${JSON.stringify(script)});
+      await runCombinedDev({repositoryRoot:${JSON.stringify(root)}});`;
+
     const child = spawn(process.execPath, ["--input-type=module", "-e", source], {
       env, stdio: ["ignore", "pipe", "pipe"], detached: true, shell: false,
     });
@@ -260,3 +286,48 @@ for (const [mode, marker] of [["api-unready", "fixture API listening"],
     await assertReleased(lab.webPort);
   });
 }
+
+for (const mode of ["failed-stop-probe", "failed-stop-signal"]) {
+  for (const reuse of [false, true]) {
+    test(`${mode} preserves ${reuse ? "reused" : "new"} identity for explicit recovery`, { timeout: 15_000 }, async (t) => {
+      const lab = await fixture(t, {
+        FIXTURE_MODE: mode,
+        ...(reuse ? { STONEHUSH_RUNNER_ID: "fixture-runner", STONEHUSH_RUNNER_SECRET: secret } : {}),
+      });
+      const starter = lab.start();
+      let runnerPid;
+      t.after(() => {
+        if (runnerPid !== undefined) {
+          try { process.kill(-runnerPid, "SIGKILL"); } catch (error) {
+            if (error.code !== "ESRCH") throw error;
+          }
+        }
+      });
+      await waitForOutput(starter, "Stonehush ready at");
+      runnerPid = Number(starter.output().match(/fixture runner started pid=(\d+)/)[1]);
+      starter.child.kill("SIGTERM");
+      assert.equal((await starter.exited).code, 1);
+      assert.doesNotThrow(() => process.kill(runnerPid, 0));
+      assert.match(starter.output(), /Owned runner shutdown could not be confirmed\. Revocation skipped\./);
+      if (!reuse) assert.match(starter.output(), /Explicitly stop the owned runner and recover runner fixture-runner at recorded revision 1/);
+      assert.doesNotMatch(starter.output(), /Revoked temporary runner|\/revoke/);
+      assert.ok(!starter.output().includes(secret));
+      assert.equal((starter.output().match(/fixture enrollment request/g) ?? []).length, reuse ? 0 : 2);
+      await assertReleased(lab.apiPort);
+      await assertReleased(lab.webPort);
+    });
+  }
+}
+
+test("childless failed runner spawn revokes only the confirmed launch identity", { timeout: 15_000 }, async (t) => {
+  const lab = await fixture(t, { FIXTURE_MODE: "runner-spawn-failure" });
+  const starter = lab.start();
+  assert.equal((await starter.exited).code, 1);
+  assert.ok(!starter.output().includes("Stonehush ready at"));
+  assert.ok(!starter.output().includes("fixture runner started"));
+  assert.match(starter.output(), /Revoked temporary runner fixture-runner/);
+  assert.equal((starter.output().match(/fixture enrollment request.*\/revoke/g) ?? []).length, 1);
+  assert.ok(!starter.output().includes(secret));
+  await assertReleased(lab.apiPort);
+  await assertReleased(lab.webPort);
+});
