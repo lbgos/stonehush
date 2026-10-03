@@ -11,6 +11,7 @@ import {
   createSharedCleanup,
   createStopState,
   describeChildExit,
+  stopChild,
 } from "./demo-lifecycle.mjs";
 import { waitForApiReadiness } from "./dev-readiness.mjs";
 
@@ -303,8 +304,18 @@ async function main() {
   const registry = createChildRegistry();
   const stop = createStopState();
   let ownedEnrollment;
+  let ownedRunner;
   const shutdown = createSharedCleanup(async () => {
-    await registry.shutdown();
+    try {
+      if (ownedRunner?.child.pid !== undefined) {
+        await stopChild(ownedRunner.child, ownedRunner.exited);
+      }
+    } catch {
+      console.error(
+        `Owned runner shutdown could not be confirmed. Revocation skipped.${ownedEnrollment === undefined ? "" : ` Explicitly stop the owned runner and recover runner ${ownedEnrollment.runnerId} at recorded revision ${ownedEnrollment.runnerRevision} through the configured API; do not revoke another identity.`}`,
+      );
+      throw new Error("Owned runner shutdown failed; revocation was skipped.");
+    }
     if (ownedEnrollment === undefined) return;
     try {
       await revokeEnrolledRunner({ apiBaseUrl: plan.apiBaseUrl, ...ownedEnrollment });
@@ -372,7 +383,7 @@ async function main() {
       runnerSecret,
     });
     const child = spawnChild(command, args, { cwd: repositoryRoot, env: childEnv });
-    const tracked = registry.track(child, new Promise((resolve, reject) => {
+    ownedRunner = registry.track(child, new Promise((resolve, reject) => {
       child.once("error", reject);
       child.once("exit", (code, signal) => resolve({ code, signal }));
     }), "runner");
@@ -391,10 +402,14 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    void tracked;
   } catch (error) {
     console.error(`runner-dev failed: ${error instanceof Error ? error.message : String(error)}`);
-    await shutdown();
+    try {
+      await shutdown();
+    } catch {
+      process.exitCode = 1;
+      process.exit(1);
+    }
     process.exitCode = stop.signalName === "SIGTERM" ? 143 : stop.signalName === "SIGINT" ? 130 : 1;
     if (stop.stopping) process.exit(process.exitCode);
   }

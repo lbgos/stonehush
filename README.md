@@ -54,7 +54,7 @@ Start the runner in a second shell once the API is up:
 pnpm runner:dev
 ```
 
-It checks for `nmap`, waits for the dev API at `http://127.0.0.1:3001`, enrolls with owner confirmation, and keeps the secret in memory only. It revokes the identity it created after stopping its owned runner. If `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` are already set, it reuses them and skips enrollment and revocation. A fresh shell enrolls again after successful cleanup. Uncertain enrollment or failed cleanup needs explicit operator recovery. See [runner startup](docs/operator/runner-startup.md).
+It checks for `nmap`, waits for the dev API at `http://127.0.0.1:3001`, and keeps the secret in memory only. When both credential variables are unset or empty, it enrolls with owner confirmation. It revokes the identity it created after stopping its owned runner. A valid `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` pair skips enrollment and revocation. A partial or malformed pair fails validation. A fresh shell enrolls again after successful cleanup. Uncertain enrollment or failed cleanup needs explicit operator recovery. See [runner startup](docs/operator/runner-startup.md).
 
 This starts the UI, API, and runner. Scans also need installed tools and a wordlist for ffuf. For a one-command isolated lab, see the [guided demo](docs/operator/demo.md) (`pnpm demo`).
 
