@@ -1,4 +1,4 @@
-import type { RunOutputResponse } from "@stonehush/contracts";
+import type { RunHistorySummary, RunOutputResponse } from "@stonehush/contracts";
 import { RunStateSchema } from "@stonehush/contracts";
 import { isTerminalRunState } from "@stonehush/domain";
 import {
@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { formatEngagementTimestamp } from "./format.js";
+import { RunCompareSection } from "./run-compare-panel.js";
 import { RunLeadAttemptForm, runLeadEvidence } from "./run-lead-attempt.js";
 import { useRunHistoryQuery } from "./run-history-query.js";
 import { RunNotFoundError, useRunOutputQuery } from "./run-output-query.js";
@@ -422,6 +423,8 @@ export function RunHistoryPanel({
             engagementId={engagementId}
             selectedRunId={selectedRunId}
             onManualRetry={resetPollBudget}
+            loadedRuns={loadedRuns}
+            sourceStale={history.isError}
           />
         )}
       </div>
@@ -515,11 +518,15 @@ function SelectedRunOutput({
   engagementId,
   onManualRetry,
   selectedRunId,
+  loadedRuns,
+  sourceStale,
 }: {
   archived: boolean;
   engagementId: string;
   onManualRetry: () => void;
   selectedRunId: string | undefined;
+  loadedRuns: readonly RunHistorySummary[];
+  sourceStale: boolean;
 }) {
   const output = useRunOutputQuery(engagementId, selectedRunId);
   const hasOutputData = output.data !== undefined;
@@ -599,6 +606,8 @@ function SelectedRunOutput({
       engagementId={engagementId}
       output={output.data}
       onRefresh={retryOutput}
+      loadedRuns={loadedRuns}
+      sourceStale={sourceStale || output.isError}
     />
   );
   if (output.isError) {
@@ -620,11 +629,15 @@ function SelectedRunContent({
   engagementId,
   onRefresh,
   output,
+  loadedRuns,
+  sourceStale,
 }: {
   archived: boolean;
   engagementId: string;
   onRefresh: () => void;
   output: RunOutputResponse;
+  loadedRuns: readonly RunHistorySummary[];
+  sourceStale: boolean;
 }) {
   const { openAdvisor } = useEngagementWorkspace();
   // Only real published artifact IDs from this run's preserved streams
@@ -719,6 +732,13 @@ function SelectedRunContent({
         <SelectedRunStream label="stdout" runId={output.run.id} stream={output.stdout} />
         <SelectedRunStream label="stderr" runId={output.run.id} stream={output.stderr} />
       </div>
+      <RunCompareSection
+        engagementId={engagementId}
+        key={`compare:${engagementId}:${output.run.id}`}
+        loadedRuns={loadedRuns}
+        sourceStale={sourceStale}
+        selectedOutput={output}
+      />
     </section>
   );
 }

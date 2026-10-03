@@ -2,10 +2,9 @@ import { describePriorAttempt, diffRuns, type PriorAttemptInput, type RunDiffInp
 import { useMemo } from "react";
 
 /**
- * STONE-6 standalone run-diff view. Mounts via the STONE-2
- * `discovery.diff` slot after STONE-2 merges. Highlights new/changed
- * services, responses, and paths plus ports/options/auth/binding context.
- * Unscanned is never reported as closed; incomplete never disproves.
+ * Run comparison view, mounted in Runs history selected output. Highlights
+ * new/changed services, responses, and paths plus ports/options/auth/binding
+ * context. Unscanned is never reported as closed; incomplete never disproves.
  * Bounded next steps carry a visible rationale and never auto-expand.
  */
 
@@ -13,24 +12,27 @@ export function RunDiffView({
   input,
   priorAttempt,
   nextSteps = [],
+  coverageCaveat,
 }: {
   input: RunDiffInput;
   priorAttempt?: PriorAttemptInput;
+  coverageCaveat?: string;
   nextSteps?: readonly { readonly label: string; readonly rationale: string }[];
 }) {
   const diff = useMemo(() => diffRuns(input), [input]);
   return (
-    <section aria-label="Run diff" className="overflow-hidden rounded-[10px] border border-border bg-card">
-      <div className="flex min-h-10 items-center justify-between border-b border-border px-3">
+    <section aria-label="Run diff" className="border-t border-border pt-2">
+      <div className="flex min-h-10 items-center justify-between ">
         <h2 className="m-0 text-[13px] font-semibold">What changed</h2>
         <span className="hidden text-[11px] text-muted-foreground sm:inline">
           {diff.comparable ? "Compatible prior run" : "Not directly comparable"}
         </span>
       </div>
-      <div className="grid gap-2 p-3 text-[12px] leading-5">
+      <div className="grid gap-2 text-[12px] leading-5 [overflow-wrap:anywhere]">
         {priorAttempt !== undefined ? (
           <p className="m-0 text-muted-foreground">{describePriorAttempt(priorAttempt)}</p>
         ) : null}
+        {coverageCaveat !== undefined ? <p className="m-0 text-[11px] text-muted-foreground">{coverageCaveat}</p> : null}
         {diff.contextNotes.map((note) => (
           <p key={note} className="m-0 text-muted-foreground">
             {note}
