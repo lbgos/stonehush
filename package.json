@@ -19,6 +19,7 @@
     "check:docs": "node scripts/check-docs.mjs",
     "dev": "node scripts/dev.mjs",
     "demo": "node scripts/demo.mjs",
+    "runner:dev": "node scripts/runner-dev.mjs",
     "format:check": "node scripts/check-files.mjs format",
     "lint": "node scripts/check-files.mjs syntax && pnpm run check:docs",
     "test": "node --test scripts/*.test.mjs && node scripts/run-workspace-script.mjs test",

@@ -11,12 +11,12 @@ I'm building it for my own security work: keep targets, scans, evidence, notes, 
 - Runs with cancel and retry, raw output viewing, and immutable evidence per engagement.
 - Leads with attempts, kept excerpts, park reasons, and linked findings. Surface keeps the source under the form.
 - Findings with saved evidence references, and a report that exports Markdown or JSON with a sharing preview.
-- Resume with a saved next step and recent changes, engagement search over notes and findings, and per-engagement techniques saved from selected lead attempts with review, editable placeholders, and copy replay. Known secret patterns show as [redacted]; review the rest before saving.
+- Resume with a saved next step and recent changes, engagement search over notes and findings, and per-engagement techniques saved from selected lead attempts with review. Open the engagement's Techniques tab to search saved procedures, fill placeholders, and copy a replay. Known secret patterns show as [redacted]; review the rest before saving.
 - Optional [AI evidence explanations](docs/operator/advisor-setup.md) using your own compatible endpoint. The model receives your question plus the excerpts and findings you select, with bounded prior succeeded turns in the same engagement.
 
 Runs on your Linux machine with a browser UI, SQLite, and local evidence files. Scratchpad text, credentials, secret values, note history, and raw artifact bytes stay out of model requests.
 
-**Early development.** Local, single-user use. Some screens are unfinished, and runner setup is still manual. No packaged installer yet.
+**Early development.** Local, single-user use. Some screens are unfinished. No packaged installer yet.
 
 ## Screenshots
 
@@ -48,7 +48,15 @@ pnpm dev
 
 Open <http://127.0.0.1:5173>. Data lives in `.stonehush/dev` by default. The native build is required for evidence and advisor turns.
 
-This starts the UI and API. Scans also need a separately [enrolled runner](docs/architecture/0002-actions-runs-runner-trust.md), installed tools, and a wordlist for ffuf. For a one-command isolated lab, see the [guided demo](docs/operator/demo.md) (`pnpm demo`). In the [runner configuration](apps/runner/src/config.ts), set `STONEHUSH_API_BASE_URL` to `http://127.0.0.1:3001` for development.
+Start the runner in a second shell once the API is up:
+
+```bash
+pnpm runner:dev
+```
+
+It checks for `nmap`, waits for the dev API at `http://127.0.0.1:3001`, and keeps the secret in memory only. When both credential variables are unset or empty, it enrolls with owner confirmation. It revokes the identity it created after stopping its owned runner. A valid `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` pair skips enrollment and revocation. A partial or malformed pair fails validation. A fresh shell enrolls again after successful cleanup. Uncertain enrollment or failed cleanup needs explicit operator recovery. See [runner startup](docs/operator/runner-startup.md).
+
+This starts the UI, API, and runner. Scans also need installed tools and a wordlist for ffuf. For a one-command isolated lab, see the [guided demo](docs/operator/demo.md) (`pnpm demo`).
 
 ## Try it
 
