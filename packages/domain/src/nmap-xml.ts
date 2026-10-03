@@ -9,6 +9,21 @@ import { normalizeTarget } from "./normalize-target.js";
 const MAX_ATTRIBUTE_VALUE_LENGTH = 256;
 const MAX_SERVICE_FIELD_LENGTH = 64;
 const MAX_ELEMENT_DEPTH = 32;
+// Bounded skip for known unused Nmap metadata. Real version-intensity scans
+// emit verbose non-projected attributes that exceed the generic 256 cap:
+// nmaprun args embeds the absolute -oX path, service servicefp carries the
+// fingerprint for unrecognized services. Neither is read by the projector
+// (only addr/addrtype, hostname name, protocol/portid, state, and service
+// name/product/version are consumed). Discard these two exact pairs without
+// retaining the oversized value, still bounded well below the 16MB XML cap.
+const MAX_SKIPPED_METADATA_VALUE_LENGTH = 8192;
+
+function isSkippedNmapMetadata(tagName: string, attributeName: string): boolean {
+  return (
+    (tagName === "nmaprun" && attributeName === "args") ||
+    (tagName === "service" && attributeName === "servicefp")
+  );
+}
 
 export type ParsedNmapService = NmapServiceObservation;
 
@@ -360,10 +375,25 @@ export function parseNmapXml(bytes: Uint8Array): ParseNmapXmlResult {
         index = valueEnd + 1;
 
         const decodedValue = decodeEntities(rawValue);
-        if (decodedValue === null || decodedValue.length > MAX_ATTRIBUTE_VALUE_LENGTH) {
+        if (decodedValue === null) {
           return invalidResult();
         }
         if (decodedValue.includes("\0")) {
+          return invalidResult();
+        }
+        if (isSkippedNmapMetadata(tagName, attributeName)) {
+          if (decodedValue.length > MAX_SKIPPED_METADATA_VALUE_LENGTH) {
+            return invalidResult();
+          }
+          if (attributes.has(attributeName)) {
+            return invalidResult();
+          }
+          // Discard unused metadata without retaining the oversized value.
+          // The raw XML artifact stays immutable byte-for-byte elsewhere.
+          attributes.set(attributeName, "");
+          continue;
+        }
+        if (decodedValue.length > MAX_ATTRIBUTE_VALUE_LENGTH) {
           return invalidResult();
         }
         if (
