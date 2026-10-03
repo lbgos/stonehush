@@ -1,34 +1,51 @@
 # Runner startup
 
-Normal startup runs two things: the app and the local runner. Enrollment is a
-one-time setup. A routine restart needs no enrollment tokens, no native build,
-and no port numbers.
+Normal startup runs two things: the app and the local runner. The dev
+starter enrolls when both credential variables are unset or empty, or
+reuses a valid pair. Partial or malformed credentials fail validation. It
+keeps the secret in process memory only.
 
-## First time only
+## First time and every restart
 
-Complete the [README quick start](../../README.md#quick-start), then enroll
-the runner once from the loopback UI with owner confirmation. The secret is
-shown once. Keep it where the runner process reads it. A lost credential is
-not recoverable: revoke the identity and enroll again.
+Complete the [README quick start](../../README.md#quick-start), then start
+the app with `pnpm dev` and wait for the API. In a second shell run
+`pnpm runner:dev`. The starter checks for `nmap`, waits for the dev API at
+`http://127.0.0.1:3001` by default, calls the existing enrollment challenge
+and confirm endpoints with owner confirmation, and starts the existing
+runner. It writes no credential file and prints no secret.
 
-## Every restart
+There is no enrollment screen in the web app. An earlier version of this
+page named one; that UI is not in the source.
 
-1. Start the app with `pnpm dev` from the repository root and open the printed
-   local address in the browser.
-2. Start the runner with its stored identity. The runner reconnects on its own
-   with a new session and reports abandoned work. The server keeps leases,
-   fences, and terminal results across a control-plane restart.
+If `STONEHUSH_RUNNER_ID` and `STONEHUSH_RUNNER_SECRET` form a valid pair,
+the starter reuses them and skips enrollment. A partial or malformed pair
+stops with a clear error. A fresh shell with both variables unset or empty
+enrolls again after successful cleanup. A lost credential is not recoverable.
 
-No new challenge, no token paste, and no rebuild belong in this path. If a
-step asks for them, stop and treat it as a fresh enrollment, not a restart.
+The starter stops only its owned child, then revokes only the identity it
+successfully enrolled during this launch, including after a startup failure.
+It never revokes an identity supplied through environment credentials. The
+starter skips revocation if it cannot confirm owned runner shutdown and
+reports the recorded identity for recovery after explicitly stopping that runner.
+The API permits only one enabled runner, so a lost confirmation response, hard
+process kill, or failed revocation can leave an identity that blocks enrollment.
+The starter reports uncertain confirmation or cleanup and does not guess an
+identity or revoke another runner.
+
+For a known leftover identity, explicit operator recovery uses
+`POST /api/v1/runners/<recorded-runner-id>/revoke`, a fresh `Idempotency-Key`,
+and `{"expectedRevision":<recorded-runner-revision>}`. The starter prints the
+nonsecret id and revision on successful enrollment. When confirmation was
+lost, inspect the configured API's enrollment state before choosing the
+identity. Do not retry enrollment by revoking an unrelated runner.
 
 ## Same work after restart
 
 Queued runs wait for the runner instead of failing. The opening screen offers
 Resume for the last opened engagement, or the most recently updated one when
-the stored id no longer exists. The app to runner relationship is retained by
-the stored runner identity and the surviving leases, not by anything the
-tester re-enters.
+the stored id no longer exists. A restarted runner handshakes with a new
+session and reports abandoned work. The server keeps leases, fences, and
+terminal results across a control-plane restart.
 
 ## When a run does not move
 
