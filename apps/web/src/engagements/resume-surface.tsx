@@ -71,24 +71,33 @@ export function useSurfaceInspection(engagementId: string, key: string | undefin
     queryFn: async ({ signal }): Promise<OpenedSurface | null> => {
       const selection = qualifiedSurfaceSelection(key);
       if (selection === undefined) throw new Error("Invalid surface selection");
-      const services = await fetchEngagementServices(engagementId, signal);
+      const services = await client.fetchQuery({
+        queryKey: engagementServicesQueryKey(engagementId),
+        queryFn: ({ signal: readSignal }) => fetchEngagementServices(engagementId, readSignal),
+        staleTime: 0,
+      });
       let record: InspectorRecord | undefined;
       if (selection.kind === "service") {
         const matches = services.filter((entry) => serviceSelectionKey(entry.address, entry.port, entry.protocol, entry.artifactId) === key);
         if (matches.length === 1) record = serviceInspectorRecord(matches[0]!, engagementId);
       } else if (selection.kind === "probe") {
-        const probes = await fetchEngagementHttpProbes(engagementId, signal);
-        if (!signal.aborted) client.setQueryData(engagementHttpProbesQueryKey(engagementId), probes);
+        const probes = await client.fetchQuery({
+          queryKey: engagementHttpProbesQueryKey(engagementId),
+          queryFn: ({ signal: readSignal }) => fetchEngagementHttpProbes(engagementId, readSignal),
+          staleTime: 0,
+        });
         const matches = probes.filter((entry) => probeSelectionKey(entry.url, entry.artifactId) === key);
         if (matches.length === 1) record = probeInspectorRecord(matches[0]!, engagementId);
       } else {
-        const paths = await fetchEngagementFfufResults(engagementId, signal);
-        if (!signal.aborted) client.setQueryData(engagementFfufResultsQueryKey(engagementId), paths);
+        const paths = await client.fetchQuery({
+          queryKey: engagementFfufResultsQueryKey(engagementId),
+          queryFn: ({ signal: readSignal }) => fetchEngagementFfufResults(engagementId, readSignal),
+          staleTime: 0,
+        });
         const matches = paths.filter((entry) => pathSelectionKey(entry.url, entry.artifactId) === key);
         if (matches.length === 1) record = pathInspectorRecord(matches[0]!, engagementId);
       }
       if (signal.aborted) throw new Error("Surface read cancelled");
-      client.setQueryData(engagementServicesQueryKey(engagementId), services);
       if (record === undefined) return null;
       const host = record.kind === "service" ? record.target : splitOriginUrl(record.target)?.host;
       if (host === undefined) return null;

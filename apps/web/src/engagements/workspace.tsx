@@ -485,9 +485,9 @@ function EngagementDetail({
   // A plain arrival restores Surface once. Explicit search, including a run
   // or a requested tab, wins. Keeping this guard across route changes makes
   // Clear and browser Back unable to reopen the inspector automatically.
-  const surfaceArrival = useRef<{ engagementId: string; evaluated: boolean; resumed: SurfacePointer | null }>({ engagementId: displayed.id, evaluated: false, resumed: null });
+  const surfaceArrival = useRef<{ engagementId: string; evaluated: boolean }>({ engagementId: displayed.id, evaluated: false });
   if (surfaceArrival.current.engagementId !== displayed.id) {
-    surfaceArrival.current = { engagementId: displayed.id, evaluated: false, resumed: null };
+    surfaceArrival.current = { engagementId: displayed.id, evaluated: false };
   }
   useEffect(() => {
     const arrival = surfaceArrival.current;
@@ -496,29 +496,26 @@ function EngagementDetail({
     if (tab !== undefined || selectedRunId !== undefined || selectedTargetId !== undefined || selectedItemKey !== undefined || pendingActionId !== undefined) return;
     const pointer = rememberedSurface.pointer;
     if (pointer === null) return;
-    arrival.resumed = pointer;
     void navigate({ to: "/engagements/$engagementId", params: { engagementId: displayed.id }, replace: true,
       search: { target: pointer.target, sel: pointer.key } });
   }, [displayed.id, navigate, pendingActionId, rememberedSurface.pointer, selectedItemKey, selectedRunId, selectedTargetId, tab]);
   const rawSurfaceRead = selectedItemKey === undefined ? undefined : surfaceInspectionRead(surfaceInspection, displayed.id, selectedItemKey);
-  const resumedSurface = surfaceArrival.current.resumed;
-  // A changed hostname association cannot retarget a remembered observation.
-  const surfaceRead = rawSurfaceRead?.state === "ready" && resumedSurface !== null && resumedSurface.key === selectedItemKey &&
-    resumedSurface.target === selectedTargetId && resumedSurface.target !== rawSurfaceRead.opened.target
+  // Explicit target context survives reload. A changed hostname association
+  // cannot retarget the requested observation or replace its saved pointer.
+  const surfaceRead = rawSurfaceRead?.state === "ready" && selectedTargetId !== undefined &&
+    selectedTargetId !== rawSurfaceRead.opened.target
       ? { state: "missing" as const } : rawSurfaceRead;
   const { remember: rememberSurface, forget: forgetSurface } = rememberedSurface;
   useEffect(() => {
     if (activeTab === "surface" && surfaceRead?.state === "ready") rememberSurface(surfaceRead.opened);
   }, [activeTab, displayed.id, selectedItemKey, surfaceInspection.data, surfaceInspection.isFetching, surfaceInspection.isError, surfaceInspection.isFetchedAfterMount, rememberSurface, surfaceRead?.state]);
   const openResumeSurface = (pointer: SurfacePointer) => {
-    surfaceArrival.current.resumed = pointer;
     void navigate({ to: "/engagements/$engagementId", params: { engagementId: displayed.id }, resetScroll: false,
       search: { ...contextSearch, tab: "surface", target: pointer.target, sel: pointer.key } });
   };
   const forgetResumeSurface = (key: string) => {
     forgetSurface(displayed.id, key);
     if (selectedItemKey !== key) return;
-    surfaceArrival.current.resumed = null;
     void navigate({ to: "/engagements/$engagementId", params: { engagementId: displayed.id }, resetScroll: false,
       search: { tab: "surface", ...(runId === undefined ? {} : { run: runId }), ...actionSearch } });
   };

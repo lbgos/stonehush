@@ -744,6 +744,42 @@ describe("remembered Surface workspace integration", () => {
     await screen.findByText("Selection unavailable");
     expect(router.state.location.search.target).toBe(oldService.address);
     expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id)))).toMatchObject({ selectedTarget: oldService.address, inspectorSelection: key });
+    const restoredUrl = router.state.location.href;
+    cleanup();
+    for (const client of testQueryClients) client.clear();
+    testQueryClients.clear();
+    await renderWorkspace(restoredUrl);
+    await screen.findByText("Selection unavailable");
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id)))).toMatchObject({ selectedTarget: oldService.address, inspectorSelection: key });
+  });
+
+  it("does not persist a source under a different explicit target", async () => {
+    savePointer(); surfaceStub();
+    const key = "path:artifact-path:http://192.0.2.20/admin";
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}?target=192.0.2.10&sel=${encodeURIComponent(key)}`);
+    await screen.findByText("Selection unavailable");
+    expect(router.state.location.search).toMatchObject({ target: "192.0.2.10", sel: key });
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(serviceKey);
+  });
+
+  it("labels cached rows stale after a failed Home Resume read, including after Close", async () => {
+    let failing = false;
+    surfaceStub(url => url.endsWith("/services") && failing ? response({}, 503) : undefined);
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}?target=192.0.2.20&sel=${encodeURIComponent(serviceKey)}`);
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    await router.navigate({ to: "/" });
+    const resume = await screen.findByRole("region", { name: "Resume" });
+    failing = true;
+    fireEvent.click(within(resume).getByRole("link", { name: "Target lab" }));
+    await screen.findByText("The observation could not be refreshed.");
+    expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
+    failing = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.queryByText("Showing the last successful attack surface")).toBeNull());
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(serviceKey);
   });
 
   it("allows an explicit inspection when storage rejects writes without claiming a saved pointer", async () => {
