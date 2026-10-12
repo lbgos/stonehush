@@ -628,3 +628,168 @@ describe("remembered run workspace integration", () => {
     expect(fetchMock.mock.calls.every(([, init]) => init?.method === undefined || init.method === "GET")).toBe(true);
   });
 });
+
+describe("remembered Surface workspace integration", () => {
+  const oldService = { address: "192.0.2.20", port: 80, protocol: "tcp", hostname: null, serviceName: "http", product: "old observation", version: null, source: "nmap", parserVersion: "nmap-xml-v1", runId: "run-old", artifactId: "artifact-old", artifactDigest: `sha256:${"a".repeat(64)}`, observedAt: "2026-10-12T12:00:00.000Z" };
+  const serviceKey = "service:192.0.2.20:80:tcp:artifact-old";
+  const path = { source: "ffuf", parserVersion: "ffuf-json-v1", url: "http://192.0.2.20/admin", status: 403, length: 42, words: 2, lines: 1, redirectlocation: null, fuzz: "admin", runId: "run-path", artifactId: "artifact-path", artifactDigest: oldService.artifactDigest, observedAt: oldService.observedAt };
+  const probe = { source: "http-probe", parserVersion: "http-probe-raw-v1", url: "http://192.0.2.20/", fetchedAt: oldService.observedAt, finalUrl: "http://192.0.2.20/", status: 403, title: "Restricted", selectedHeaders: { contentType: "text/html", server: null, poweredBy: null }, hops: [{ url: "http://192.0.2.20/", status: 403, location: null }], error: null, runId: "run-probe", artifactId: "artifact-probe", artifactDigest: oldService.artifactDigest, observedAt: oldService.observedAt };
+  function savePointer(key = serviceKey) {
+    window.localStorage.setItem(workspaceStateKey(activeEngagement.id), JSON.stringify({ ...emptyWorkspaceState(), selectedTarget: oldService.address, inspectorSelection: key, selectedRunId: "run-kept", drafts: { notes: "keep" } }));
+  }
+  function surfaceStub(overrides: (url: string) => Response | undefined = () => undefined) {
+    return stubFetch((url) => {
+      const override = overrides(url); if (override !== undefined) return override;
+      if (url.endsWith("/services")) return response([{ ...oldService, address: "192.0.2.10", artifactId: "first-artifact" }, oldService]);
+      if (url.endsWith("/http-probes")) return response([probe]);
+      if (url.endsWith("/ffuf-results")) return response([path, { ...path, artifactId: "new-artifact", runId: "new-run" }]);
+      if (url.endsWith("/resume")) return response({ engagementId: activeEngagement.id, nextStep: "Inspect the old admin response", nextStepUpdatedAt: null, nextStepRevision: 0, changes: [], complete: true });
+      if (url.includes("/runs?")) return response({ runs: [], nextCursor: null });
+      if (url.endsWith("/runs/run-kept/output")) return response({ run: { id: "run-kept", actionId: "action-kept", state: "succeeded", terminalKind: "succeeded", terminalReason: null, updatedAt: oldService.observedAt }, stdout: { present: false, truncated: false, content: "" }, stderr: { present: false, truncated: false, content: "" } });
+      return readEngagementResponse(url, [activeEngagement, archivedEngagement]) ?? response([]);
+    });
+  }
+
+  it.each([serviceKey, "probe:artifact-probe:http://192.0.2.20/", "path:artifact-path:http://192.0.2.20/admin"])("Home Resume restores exact %s without opening a run", async (key) => {
+    savePointer(key); const fetchMock = surfaceStub();
+    const { router } = await renderWorkspace("/");
+    const resume = await screen.findByRole("region", { name: "Resume" });
+    fireEvent.click(within(resume).getByRole("link", { name: "Target lab" }));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ target: oldService.address, sel: key }));
+    const inspector = await screen.findByRole("complementary", { name: "Selection inspector" });
+    await waitFor(() => expect(within(inspector).getByRole("link", { name: "Raw evidence" }).getAttribute("href")).toContain(key.split(":")[1] === "artifact-probe" ? "artifact-probe" : key.startsWith("path:") ? "artifact-path" : "artifact-old"));
+    expect(screen.queryByRole("region", { name: "Selected run output" })).toBeNull();
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id)))).toMatchObject({ selectedRunId: "run-kept", drafts: { notes: "keep" } });
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method === undefined || init.method === "GET")).toBe(true);
+  });
+
+  it.each(["?tab=runs&run=run-explicit", "?target=192.0.2.10", "?sel=service:192.0.2.10:80:tcp:first-artifact", `?action=${ACTION_ID}`])("never replaces explicit route %s", async (search) => {
+    savePointer(); surfaceStub();
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}${search}`);
+    await screen.findByRole("heading", { level: 1, name: "Target lab" });
+    expect(router.state.location.search).toEqual(Object.fromEntries(new URLSearchParams(search)));
+  });
+
+  it("Clear and Back do not automatically reopen an inspector in the same visit", async () => {
+    savePointer(); surfaceStub();
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}`);
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    expect(screen.queryByRole("complementary", { name: "Selection inspector" })).toBeNull();
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(serviceKey);
+    router.history.back();
+    await waitFor(() => expect(router.state.location.search.sel).toBe(serviceKey));
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    router.history.forward();
+    await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    expect(screen.queryByRole("complementary", { name: "Selection inspector" })).toBeNull();
+  });
+
+  it("retains a failed fresh read with Retry, then restores the exact evidence", async () => {
+    savePointer(); let failing = true;
+    surfaceStub(url => url.endsWith("/services") && failing ? response({}, 503) : undefined);
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}`);
+    expect(await screen.findByText("The observation could not be refreshed.")).toBeTruthy();
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(serviceKey);
+    failing = false;
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    expect(router.state.location.search.sel).toBe(serviceKey);
+  });
+
+  it("confirmed missing keeps the pointer until Forget and never selects a newer same URL", async () => {
+    const key = "path:artifact-path:http://192.0.2.20/admin";
+    savePointer(key); surfaceStub(url => url.endsWith("/ffuf-results") ? response([{ ...path, artifactId: "new-artifact" }]) : undefined);
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}`);
+    expect(await screen.findByText("Selection unavailable")).toBeTruthy();
+    expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).queryByRole("link", { name: "Raw evidence" })).toBeNull();
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("button", { name: "Forget" }));
+    await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    expect(screen.queryByRole("region", { name: "Last observation" })).toBeNull();
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id)))).toMatchObject({ selectedTarget: null, inspectorSelection: null, selectedRunId: "run-kept" });
+  });
+
+  it("a validated explicit inspection replaces the pointer, then resumes on a new visit", async () => {
+    surfaceStub();
+    const key = "path:artifact-path:http://192.0.2.20/admin";
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}?target=192.0.2.20&sel=${encodeURIComponent(key)}`);
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    await waitFor(() => expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(key));
+    await router.navigate({ to: "/" });
+    const resume = await screen.findByRole("region", { name: "Resume" });
+    fireEvent.click(within(resume).getByRole("link", { name: "Target lab" }));
+    await waitFor(() => expect(router.state.location.search).toMatchObject({ target: oldService.address, sel: key }));
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+  });
+
+  it("restores an archived observation with read-only requests", async () => {
+    window.localStorage.setItem(workspaceStateKey(archivedEngagement.id), JSON.stringify({ ...emptyWorkspaceState(), selectedTarget: oldService.address, inspectorSelection: serviceKey }));
+    const fetchMock = surfaceStub();
+    const { router } = await renderWorkspace(`/engagements/${archivedEngagement.id}`);
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    expect(router.state.location.search).toMatchObject({ target: oldService.address, sel: serviceKey });
+    expect(fetchMock.mock.calls.every(([, init]) => isReadRequest(init))).toBe(true);
+  });
+
+  it("keeps a remembered hostname context unavailable when its address association changes", async () => {
+    const key = "probe:artifact-probe:http://admin.test/";
+    savePointer(key);
+    surfaceStub(url => {
+      if (url.endsWith("/services")) return response([{ ...oldService, address: "192.0.2.30", hostname: "admin.test" }]);
+      if (url.endsWith("/http-probes")) return response([{ ...probe, url: "http://admin.test/", finalUrl: "http://admin.test/", hops: [{ url: "http://admin.test/", status: 403, location: null }] }]);
+      return undefined;
+    });
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}`);
+    await screen.findByText("Selection unavailable");
+    expect(router.state.location.search.target).toBe(oldService.address);
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id)))).toMatchObject({ selectedTarget: oldService.address, inspectorSelection: key });
+    const restoredUrl = router.state.location.href;
+    cleanup();
+    for (const client of testQueryClients) client.clear();
+    testQueryClients.clear();
+    await renderWorkspace(restoredUrl);
+    await screen.findByText("Selection unavailable");
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id)))).toMatchObject({ selectedTarget: oldService.address, inspectorSelection: key });
+  });
+
+  it("does not persist a source under a different explicit target", async () => {
+    savePointer(); surfaceStub();
+    const key = "path:artifact-path:http://192.0.2.20/admin";
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}?target=192.0.2.10&sel=${encodeURIComponent(key)}`);
+    await screen.findByText("Selection unavailable");
+    expect(router.state.location.search).toMatchObject({ target: "192.0.2.10", sel: key });
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(serviceKey);
+  });
+
+  it("labels cached rows stale after a failed Home Resume read, including after Close", async () => {
+    let failing = false;
+    surfaceStub(url => url.endsWith("/services") && failing ? response({}, 503) : undefined);
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}?target=192.0.2.20&sel=${encodeURIComponent(serviceKey)}`);
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    await router.navigate({ to: "/" });
+    const resume = await screen.findByRole("region", { name: "Resume" });
+    failing = true;
+    fireEvent.click(within(resume).getByRole("link", { name: "Target lab" }));
+    await screen.findByText("The observation could not be refreshed.");
+    expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Selection inspector" })).toBeNull());
+    expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
+    failing = false;
+    fireEvent.click(within(screen.getByRole("region", { name: "Stale data" })).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(screen.queryByText("Showing the last successful attack surface")).toBeNull());
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(serviceKey);
+  });
+
+  it("allows an explicit inspection when storage rejects writes without claiming a saved pointer", async () => {
+    surfaceStub();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage unavailable"); });
+    const { router } = await renderWorkspace(`/engagements/${activeEngagement.id}?sel=${encodeURIComponent(serviceKey)}`);
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("link", { name: "Raw evidence" })).toBeTruthy());
+    expect(router.state.location.search.sel).toBe(serviceKey);
+    expect(screen.queryByRole("region", { name: "Last observation" })).toBeNull();
+    expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBeNull();
+  });
+});

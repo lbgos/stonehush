@@ -105,6 +105,30 @@ export function pathSelectionKey(url: string, artifactId?: string): string {
   return `path:${url}`;
 }
 
+export function canonicalTargetForHost(
+  host: string,
+  services: readonly NmapProjectedService[],
+): string {
+  const normalized = host.replace(/^\[|\]$/g, "").toLowerCase();
+  const addressMatch = services.find(
+    (s) => s.address.replace(/^\[|\]$/g, "").toLowerCase() === normalized,
+  );
+  if (addressMatch !== undefined) {
+    return addressMatch.address;
+  }
+  const matchingAddresses = new Set<string>();
+  for (const s of services) {
+    if (s.hostname !== null && s.hostname.replace(/^\[|\]$/g, "").toLowerCase() === normalized) {
+      matchingAddresses.add(s.address);
+    }
+  }
+  if (matchingAddresses.size === 1) {
+    return Array.from(matchingAddresses)[0]!;
+  }
+  return host;
+}
+
+
 function isHttpUrl(value: string): boolean {
   return value.startsWith("http://") || value.startsWith("https://");
 }
@@ -737,6 +761,7 @@ export interface SurfaceInspectorProps {
   readonly loading: boolean;
   readonly error?: string | undefined;
   readonly onRetry?: (() => void) | undefined;
+  readonly onForget?: (() => void) | undefined;
   readonly onAskAbout?: ((target: string) => void) | undefined;
   readonly onClose: () => void;
   readonly onDiscoverOrigin?: ((origin: string, scopeHint: string | undefined, context?: SurfaceReturnContext) => void) | undefined;
@@ -767,6 +792,7 @@ export function SurfaceInspector({
   loading,
   error,
   onRetry,
+  onForget,
   onAskAbout,
   onClose,
   onDiscoverOrigin,
@@ -872,6 +898,7 @@ export function SurfaceInspector({
                   <Button type="button" variant="secondary" onClick={onClose}>
                     Clear selection
                   </Button>
+                  {onForget !== undefined ? <Button type="button" variant="quiet" className="min-h-11" onClick={onForget}>Forget</Button> : null}
                 </div>
               </div>
             )}

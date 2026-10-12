@@ -36,6 +36,7 @@ import { EngagementNotesSection } from "./notes.js";
 import { EngagementReportSection } from "./report.js";
 import { createResumeFindingDestination, type FindingDestination } from "./finding-arrival.js";
 import { ResumeLeadRow, useRememberedLead } from "./resume-lead.js";
+import { ResumeSurfaceRow, qualifiedSurfaceSelection, surfaceInspectionRead, useRememberedSurface, useSurfaceInspection, type SurfacePointer } from "./resume-surface.js";
 import { ResumeRunRow, useRememberedRun } from "./resume-run.js";
 import { EngagementResumeView } from "./resume-view.js";
 import type { NoteSearchDestination } from "./search-destination.js";
@@ -479,6 +480,45 @@ function EngagementDetail({
   // Resume pointer for the lead's engagement.
   const rememberedLead = useRememberedLead(displayed.id);
   const rememberedRun = useRememberedRun(displayed.id);
+  const rememberedSurface = useRememberedSurface(displayed.id);
+  const surfaceInspection = useSurfaceInspection(displayed.id, activeTab === "surface" ? selectedItemKey : undefined);
+  // A plain arrival restores Surface once. Explicit search, including a run
+  // or a requested tab, wins. Keeping this guard across route changes makes
+  // Clear and browser Back unable to reopen the inspector automatically.
+  const surfaceArrival = useRef<{ engagementId: string; evaluated: boolean }>({ engagementId: displayed.id, evaluated: false });
+  if (surfaceArrival.current.engagementId !== displayed.id) {
+    surfaceArrival.current = { engagementId: displayed.id, evaluated: false };
+  }
+  useEffect(() => {
+    const arrival = surfaceArrival.current;
+    if (arrival.evaluated) return;
+    arrival.evaluated = true;
+    if (tab !== undefined || selectedRunId !== undefined || selectedTargetId !== undefined || selectedItemKey !== undefined || pendingActionId !== undefined) return;
+    const pointer = rememberedSurface.pointer;
+    if (pointer === null) return;
+    void navigate({ to: "/engagements/$engagementId", params: { engagementId: displayed.id }, replace: true,
+      search: { target: pointer.target, sel: pointer.key } });
+  }, [displayed.id, navigate, pendingActionId, rememberedSurface.pointer, selectedItemKey, selectedRunId, selectedTargetId, tab]);
+  const rawSurfaceRead = selectedItemKey === undefined ? undefined : surfaceInspectionRead(surfaceInspection, displayed.id, selectedItemKey);
+  // Explicit target context survives reload. A changed hostname association
+  // cannot retarget the requested observation or replace its saved pointer.
+  const surfaceRead = rawSurfaceRead?.state === "ready" && selectedTargetId !== undefined &&
+    selectedTargetId !== rawSurfaceRead.opened.target
+      ? { state: "missing" as const } : rawSurfaceRead;
+  const { remember: rememberSurface, forget: forgetSurface } = rememberedSurface;
+  useEffect(() => {
+    if (activeTab === "surface" && surfaceRead?.state === "ready") rememberSurface(surfaceRead.opened);
+  }, [activeTab, displayed.id, selectedItemKey, surfaceInspection.data, surfaceInspection.isFetching, surfaceInspection.isError, surfaceInspection.isFetchedAfterMount, rememberSurface, surfaceRead?.state]);
+  const openResumeSurface = (pointer: SurfacePointer) => {
+    void navigate({ to: "/engagements/$engagementId", params: { engagementId: displayed.id }, resetScroll: false,
+      search: { ...contextSearch, tab: "surface", target: pointer.target, sel: pointer.key } });
+  };
+  const forgetResumeSurface = (key: string) => {
+    forgetSurface(displayed.id, key);
+    if (selectedItemKey !== key) return;
+    void navigate({ to: "/engagements/$engagementId", params: { engagementId: displayed.id }, resetScroll: false,
+      search: { tab: "surface", ...(runId === undefined ? {} : { run: runId }), ...actionSearch } });
+  };
   const { remember: rememberLeadId, forget: forgetLeadId } = rememberedLead;
   const rememberLead = useCallback((lead: Lead) => rememberLeadId(lead.engagementId, lead.id), [rememberLeadId]);
   const openResumeLead = (leadId: string, trigger: HTMLElement) => {
@@ -696,6 +736,9 @@ function EngagementDetail({
                 />
               )
             }
+            surface={rememberedSurface.pointer === null ? undefined : (
+              <ResumeSurfaceRow pointer={rememberedSurface.pointer} onOpen={openResumeSurface} onForget={forgetResumeSurface} />
+            )}
             onOpenFinding={openResumeFinding}
             run={rememberedRun.runId === null ? undefined : (
               <ResumeRunRow
@@ -722,6 +765,11 @@ function EngagementDetail({
               onSelectKey={selectSurfaceItem}
               onSelectTarget={selectTarget}
               onStartLead={(context) => setLeadStart({ engagementId: displayed.id, context })}
+              inspection={qualifiedSurfaceSelection(selectedItemKey) === undefined || surfaceRead === undefined ? undefined : {
+                read: surfaceRead,
+                retry: () => { void surfaceInspection.refetch(); },
+                forget: rememberedSurface.pointer?.key === selectedItemKey ? () => forgetResumeSurface(selectedItemKey!) : undefined,
+              }}
               selectedKey={selectedItemKey}
               selectionReturn={selectionReturn}
               selectedTarget={selectedTargetId}
