@@ -201,6 +201,65 @@ describe("report outline", () => {
     expect(markdown).toContain("old scan (missing: gone-artifact)");
     expect(markdown).not.toContain("./assets/gone-artifact");
   });
+
+  it.each(["ctf-writeup", "assessment"] as const)("keeps first catalog matches and missing references in %s", (template) => {
+    const material = Object.freeze({
+      findings: Object.freeze([
+        Object.freeze(findingFixture({ title: "First finding", body: "First detail" })),
+        Object.freeze(findingFixture({ title: "Later duplicate", body: "Later detail" })),
+      ]),
+      evidence: Object.freeze([
+        Object.freeze({ artifactId: "artifact", digest: "sha256:first" }),
+        Object.freeze({ artifactId: "artifact", digest: "sha256:later" }),
+      ]),
+      notesMarkdown: "",
+    });
+    const items = Object.freeze([
+      { kind: "finding", refId: FINDING_ID, key: "finding:first", caption: "saved finding" },
+      { kind: "finding", refId: "gone", key: "finding:gone", caption: "old finding" },
+      { kind: "evidence", refId: "artifact", key: "evidence:artifact", caption: "saved artifact" },
+      { kind: "evidence", refId: "gone", key: "evidence:gone", caption: "old artifact" },
+    ] as const);
+    for (const assetLinks of [true, false]) {
+      const markdown = renderOutlineMarkdown(material, { template, items }, { assetLinks });
+      expect(markdown).toContain("### [high] First finding\n\nFirst detail");
+      expect(markdown).toContain("### old finding (missing: gone)\n\n_Selected finding is no longer available._");
+      expect(markdown).toContain(assetLinks
+        ? "- [saved artifact](./assets/artifact) sha256:first"
+        : "- saved artifact (digest-only sha256:first)");
+      expect(markdown).toContain("- old artifact (missing: gone)");
+      expect(markdown).not.toContain("Later");
+      expect(markdown).not.toContain("sha256:later");
+      expect(markdown).not.toContain("./assets/gone");
+    }
+  });
+
+  it("reads catalog keys once when rendering many selected references", () => {
+    let keyReads = 0;
+    const findings = Array.from({ length: 200 }, (_, index) => ({
+      ...findingFixture(),
+      get id() { keyReads += 1; return `finding-${index}`; },
+    }));
+    const evidence = Array.from({ length: 200 }, (_, index) => ({
+      get artifactId() { keyReads += 1; return `artifact-${index}`; },
+      digest: `sha256:${index}`,
+    }));
+    const items: ReportOutline["items"] = Array.from({ length: 200 }, (_, index) => [
+      { kind: "finding" as const, refId: `finding-${index}`, key: `finding:${index}`, caption: "finding" },
+      { kind: "evidence" as const, refId: `artifact-${index}`, key: `evidence:${index}`, caption: "artifact" },
+    ]).flat();
+    const markdown = renderOutlineMarkdown({ findings, evidence, notesMarkdown: "" }, { template: "ctf-writeup", items });
+    expect(markdown.match(/### \[high\]/g)).toHaveLength(200);
+    expect(markdown.match(/\.\/assets\/artifact-/g)).toHaveLength(200);
+    expect(keyReads).toBe(400);
+  });
+
+  it("does not read catalogs when their item kinds are unselected", () => {
+    const findings = [{ ...findingFixture(), get id(): string { throw new Error("unselected finding"); } }];
+    const evidence = [{ digest: "sha256:0", get artifactId(): string { throw new Error("unselected artifact"); } }];
+    const outline = addOutlineItem(createOutline(), { kind: "note", refId: "notes", caption: "notes" });
+    expect(renderOutlineMarkdown({ findings, evidence, notesMarkdown: "Selected notes" }, outline)).toContain("Selected notes");
+  });
 });
 
 describe("report review panel", () => {
