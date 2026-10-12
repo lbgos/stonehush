@@ -12,8 +12,7 @@ import { Button } from "@stonehush/ui";
 import { useMemo, useState } from "react";
 
 /**
- * STONE-6 standalone discovery group view. Mounts via the STONE-2
- * `discovery.groups` slot after STONE-2 merges. Exact-metadata grouping
+ * Standalone discovery group view. Exact-metadata grouping
  * with basis labels, inspect/hide/undo, hidden counts, and no
  * vulnerability declarations. Wildcard calibration is offered as an
  * explicit action with its extra requests disclosed in context.

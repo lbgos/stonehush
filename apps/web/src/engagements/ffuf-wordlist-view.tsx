@@ -9,8 +9,7 @@ import {
 import { useMemo, useState } from "react";
 
 /**
- * STONE-6 standalone wordlist selector. Mounts via the STONE-2
- * `discovery.wordlist` slot after STONE-2 merges. Wordlists are chosen by
+ * Standalone wordlist selector. Wordlists are chosen by
  * name with purpose and approximate size; the last choice is remembered;
  * a missing file reports recovery instead of failing silently. The demo
  * list is labeled synthetic and never poses as a serious preset. Rate

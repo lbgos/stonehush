@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { useWorkspaceState } from "./workspace-state.js";
 
@@ -13,13 +13,6 @@ import {
   workspaceStateKey,
   type WorkspaceStateStore,
 } from "./workspace-state.js";
-import {
-  registeredStone6Slots,
-  mountStone6Slot,
-  registerStone6Slot,
-  unmountStone6Slot,
-  STONE_6_SLOT_NAMES,
-} from "./extension-slots.js";
 
 function memoryStore(initial: Record<string, string> = {}): WorkspaceStateStore {
   const data = new Map(Object.entries(initial));
@@ -86,33 +79,5 @@ describe("useWorkspaceState engagement switching", () => {
     });
     rerender({ id: "eng-a" });
     expect(result.current.state.selectedTarget).toBe("https://a.example/");
-  });
-});
-
-describe("extension slots", () => {
-  it("exposes the STONE-2 integration contract and reports absent hosts", () => {
-    expect(STONE_6_SLOT_NAMES).toContain("engagement.resume");
-    expect(STONE_6_SLOT_NAMES).toContain("engagement.search");
-    const host = document.createElement("div");
-    expect(mountStone6Slot("engagement.resume", { engagementId: ENGAGEMENT_ID, archived: false }, host)).toBe(false);
-    const cleanup = vi.fn();
-    registerStone6Slot("engagement.resume", () => cleanup);
-    expect(registeredStone6Slots()).toContain("engagement.resume");
-    expect(mountStone6Slot("engagement.resume", { engagementId: ENGAGEMENT_ID, archived: false }, host)).toBe(true);
-    unmountStone6Slot("engagement.resume");
-    expect(cleanup).toHaveBeenCalledTimes(1);
-    // Second unmount is a safe no-op.
-    unmountStone6Slot("engagement.resume");
-    expect(cleanup).toHaveBeenCalledTimes(1);
-  });
-
-  it("runs duplicate cleanup identities once per mount", () => {
-    const host = document.createElement("div");
-    const cleanup = vi.fn();
-    registerStone6Slot("engagement.search", () => cleanup);
-    expect(mountStone6Slot("engagement.search", { engagementId: ENGAGEMENT_ID, archived: false }, host)).toBe(true);
-    expect(mountStone6Slot("engagement.search", { engagementId: ENGAGEMENT_ID, archived: false }, host)).toBe(true);
-    unmountStone6Slot("engagement.search");
-    expect(cleanup).toHaveBeenCalledTimes(2);
   });
 });
