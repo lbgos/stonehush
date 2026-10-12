@@ -304,13 +304,13 @@ describe("resume the last inspected lead from Surface", () => {
     fireEvent.click(within(dialog()).getByRole("button", { name: "Close" }));
     expect(stored(engagement.id)).toBe(FIRST_ID);
     const raw = window.localStorage.getItem(workspaceStateKey(engagement.id)) ?? "";
-    for (const copied of ["Default creds", "artifact-1", "192.0.2.10", "Vendor default", "vendor default"]) {
+    for (const copied of ["Default creds", "Vendor default", "vendor default"]) {
       expect(raw).not.toContain(copied);
     }
 
     reload();
     server.leads[engagement.id] = [lead(FIRST_ID, engagement.id, { title: "Renamed creds", nextStep: "Try the vendor default" })];
-    const router = await renderAt(engagement.id);
+    const router = await renderAt(engagement.id, "?tab=surface");
     const row = await lastLeadRow();
     const open = await within(row).findByRole("button", { name: "Renamed creds 00000001, open" });
     expect(within(row).getByText("open")).toBeTruthy();
@@ -328,7 +328,7 @@ describe("resume the last inspected lead from Surface", () => {
     fireEvent.keyDown(document.body, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(open));
-    expect(router.state.location.search).toEqual({});
+    expect(router.state.location.search).toEqual({ tab: "surface" });
     expect(writes(fetchMock)).toEqual([`/api/v1/engagements/${engagement.id}/leads/${FIRST_ID}/attempts`]);
   });
 

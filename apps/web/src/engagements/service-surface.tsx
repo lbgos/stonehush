@@ -6,12 +6,14 @@ import type {
 import { Button, LoadingRegion, RecoverableError, Skeleton, StaleDataState } from "@stonehush/ui";
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
+import type { SurfaceInspectionRead } from "./resume-surface.js";
 import { EMPTY_PATH_FILTERS, PathGroups, type PathFilters } from "./path-groups.js";
 import { formatEngagementTimestamp } from "./format.js";
 import {
   ActionLauncher,
   SurfaceInspector,
   decodeSurfaceSelection,
+  canonicalTargetForHost,
   defaultSchemeForPort,
   focusSurfaceRow,
   captureSurfaceReturn,
@@ -109,6 +111,7 @@ export interface EngagementServicesSectionProps {
   readonly selectedKey?: string | undefined;
   readonly selectionReturn?: SurfaceSelectionReturn | undefined;
   readonly selectedTarget?: string | undefined;
+  readonly inspection?: { read: SurfaceInspectionRead; retry: () => void; forget?: (() => void) | undefined } | undefined;
 }
 
 export function EngagementServicesSection({
@@ -128,6 +131,7 @@ export function EngagementServicesSection({
   selectedKey,
   selectionReturn,
   selectedTarget,
+  inspection,
 }: EngagementServicesSectionProps) {
   const servicesQuery = useEngagementServicesQuery(engagementId);
   const probesQuery = useEngagementHttpProbesQuery(engagementId);
@@ -177,8 +181,8 @@ export function EngagementServicesSection({
   const hasData = servicesQuery.data !== undefined;
   const retry = () => void servicesQuery.refetch();
 
-  if (!hasData && servicesQuery.isFetching) return <ServicesLoadingState />;
-  if (!hasData && servicesQuery.isError) {
+  if (!hasData && servicesQuery.isFetching && inspection === undefined) return <ServicesLoadingState />;
+  if (!hasData && servicesQuery.isError && inspection === undefined) {
     return (
       <RecoverableError
         title="Attack surface unavailable"
@@ -187,9 +191,9 @@ export function EngagementServicesSection({
       />
     );
   }
-  if (!hasData) return <ServicesLoadingState />;
+  if (!hasData && inspection === undefined) return <ServicesLoadingState />;
 
-  const services = servicesQuery.data;
+  const services = servicesQuery.data ?? [];
   const probes = probesQuery.data;
   const ffufResults = ffufQuery.data;
   const stats = deriveServiceStats(services);
@@ -266,6 +270,7 @@ export function EngagementServicesSection({
   const inspector =
     selection === undefined ? null : (
       <SurfaceInspectorLoader
+        inspection={inspection}
         engagementId={engagementId}
         ffufQuery={{
           data: ffufResults,
@@ -336,7 +341,9 @@ export function EngagementServicesSection({
   );
 
   const attackSurface =
-    sorted.length === 0 ? (
+    !hasData ? (
+      servicesQuery.isError ? <RecoverableError title="Attack surface unavailable" description="The surface could not be refreshed." onRetry={retry} /> : <ServicesLoadingState />
+    ) : sorted.length === 0 ? (
       <section data-surface-region={JSON.stringify(["surface", engagementId])} aria-label="Attack surface" className="overflow-hidden rounded-[10px] border border-border bg-card">
         <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border px-3">
           <h2 className="m-0 shrink-0 text-[13px] font-semibold">Attack surface</h2>
@@ -489,28 +496,6 @@ interface TargetSummary {
   readonly target: string;
 }
 
-function canonicalTargetForHost(
-  host: string,
-  services: readonly NmapProjectedService[],
-): string {
-  const normalized = host.replace(/^\[|\]$/g, "").toLowerCase();
-  const addressMatch = services.find(
-    (s) => s.address.replace(/^\[|\]$/g, "").toLowerCase() === normalized,
-  );
-  if (addressMatch !== undefined) {
-    return addressMatch.address;
-  }
-  const matchingAddresses = new Set<string>();
-  for (const s of services) {
-    if (s.hostname !== null && s.hostname.replace(/^\[|\]$/g, "").toLowerCase() === normalized) {
-      matchingAddresses.add(s.address);
-    }
-  }
-  if (matchingAddresses.size === 1) {
-    return Array.from(matchingAddresses)[0]!;
-  }
-  return host;
-}
 
 function collectTargets(
   services: readonly NmapProjectedService[],
@@ -1401,6 +1386,7 @@ function PathRow({
 }
 
 function SurfaceInspectorLoader({
+  inspection,
   engagementId,
   ffufQuery,
   onAskAbout,
@@ -1417,6 +1403,7 @@ function SurfaceInspectorLoader({
   selectionKey,
   services,
 }: {
+  inspection?: EngagementServicesSectionProps["inspection"];
   engagementId: string;
   ffufQuery: { data: readonly FfufProjected[] | undefined; isFetching: boolean; isError?: boolean; refetch?: () => void };
   onAskAbout: ((target: string) => void) | undefined;
@@ -1503,6 +1490,12 @@ function SurfaceInspectorLoader({
       record = result === undefined ? undefined : pathInspectorRecord(result, engagementId);
     }
   }
+  if (inspection !== undefined) {
+    record = inspection.read.state === "ready" ? inspection.read.opened.record : undefined;
+    loading = inspection.read.state === "loading";
+    error = inspection.read.state === "failed" ? "The observation could not be refreshed." : undefined;
+    onRetry = inspection.retry;
+  }
   return (
     <SurfaceInspector
       engagementId={engagementId}
@@ -1518,6 +1511,7 @@ function SurfaceInspectorLoader({
       leadOpen={leadOpen}
       onProbeOrigin={onProbeOrigin}
       onRetry={onRetry}
+      onForget={inspection?.read.state === "missing" ? inspection.forget : undefined}
       onStartLead={onStartLead}
       record={record}
       selectionKey={selectionKey}

@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 /**
  * Per-engagement client state in localStorage under a versioned key. Writes
  * are best-effort. Surface Resume remembers validated lead and terminal-run
- * ids through `lastLeadId` and `selectedRunId`. The other fields are
- * parsed and written back unchanged, but no view restores them yet. Saved
+ * ids through `lastLeadId` and `selectedRunId`, and the exact last Surface
+ * observation through `selectedTarget` and `inspectorSelection`. Other fields
+ * are parsed and written back unchanged, but no view restores them yet. Saved
  * scope is never written here.
  */
 
