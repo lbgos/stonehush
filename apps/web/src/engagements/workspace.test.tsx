@@ -775,9 +775,10 @@ describe("remembered Surface workspace integration", () => {
     expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
     fireEvent.click(within(screen.getByRole("complementary", { name: "Selection inspector" })).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(router.state.location.search.sel).toBeUndefined());
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Selection inspector" })).toBeNull());
     expect(screen.getByText("Showing the last successful attack surface")).toBeTruthy();
     failing = false;
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    fireEvent.click(within(screen.getByRole("region", { name: "Stale data" })).getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(screen.queryByText("Showing the last successful attack surface")).toBeNull());
     expect(parseWorkspaceState(window.localStorage.getItem(workspaceStateKey(activeEngagement.id))).inspectorSelection).toBe(serviceKey);
   });
