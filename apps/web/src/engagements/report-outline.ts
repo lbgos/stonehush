@@ -94,13 +94,6 @@ export function outlineSections(template: OutlineTemplate): readonly string[] {
   return TEMPLATE_SECTIONS[template];
 }
 
-function findingById(
-  findings: readonly Finding[],
-  refId: string,
-): Finding | undefined {
-  return findings.find((finding) => finding.id === refId);
-}
-
 // Deterministic outline Markdown. Selected evidence links as
 // ./assets/<artifactId> when asset links are enabled; with links off the
 // entries stay as digest-only text. Raw artifact bytes are never embedded
@@ -117,6 +110,22 @@ export function renderOutlineMarkdown(
   const leads = outline.items.filter((item) => item.kind === "lead");
   const evidence = outline.items.filter((item) => item.kind === "evidence");
   const notes = outline.items.filter((item) => item.kind === "note");
+  // Index selected catalogs once. Keep the first record for duplicate ids,
+  // matching the previous lookup behavior without rescanning for every item.
+  const findingsById = new Map<string, Finding>();
+  if (findings.length > 0) {
+    for (const finding of material.findings) {
+      const id = finding.id;
+      if (!findingsById.has(id)) findingsById.set(id, finding);
+    }
+  }
+  const evidenceById = new Map<string, OutlineMaterial["evidence"][number]>();
+  if (evidence.length > 0) {
+    for (const artifact of material.evidence) {
+      const id = artifact.artifactId;
+      if (!evidenceById.has(id)) evidenceById.set(id, artifact);
+    }
+  }
   for (const section of outlineSections(outline.template)) {
     lines.push(`## ${section}`);
     lines.push("");
@@ -137,7 +146,7 @@ export function renderOutlineMarkdown(
       // sections still govern cross-section placement.
       for (const item of outline.items) {
         if (item.kind === "finding") {
-          const finding = findingById(material.findings, item.refId);
+          const finding = findingsById.get(item.refId);
           lines.push(
             finding === undefined
               ? `### ${item.caption} (missing: ${item.refId})`
@@ -172,9 +181,7 @@ export function renderOutlineMarkdown(
         lines.push("");
       }
       for (const item of evidence) {
-        const digest = material.evidence.find(
-          (entry) => entry.artifactId === item.refId,
-        )?.digest;
+        const digest = evidenceById.get(item.refId)?.digest;
         if (digest === undefined) {
           lines.push(`- ${item.caption} (missing: ${item.refId})`);
           continue;
