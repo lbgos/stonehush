@@ -251,8 +251,7 @@ describe("open recent findings from Resume", () => {
     await waitFor(() => expect(router.state.location.search).toEqual({ tab: "surface", ...context }));
     await waitFor(async () => expect(document.activeElement).toBe(await resumeBand()));
     held.resolve(response([service]));
-    const inspector = await screen.findByRole("complementary", { name: "Selection inspector" });
-    expect(within(inspector).getAllByText(/192\.0\.2\.10/).length).toBeGreaterThan(0);
+    await waitFor(() => expect(within(screen.getByRole("complementary", { name: "Selection inspector" })).getAllByText(/192\.0\.2\.10/).length).toBeGreaterThan(0));
     await waitFor(async () => expect(document.activeElement).toBe(await resumeBand()));
   });
 
