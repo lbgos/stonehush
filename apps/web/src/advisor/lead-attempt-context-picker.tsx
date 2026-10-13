@@ -25,7 +25,7 @@ interface PickerProps {
 export function LeadAttemptContextPicker(props: PickerProps) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="grid min-w-0 gap-2">
+    <div className="grid min-w-0 gap-2 text-white">
       <Button type="button" variant="quiet" className={`${ACTION} justify-self-start`} aria-expanded={open} onClick={() => setOpen(!open)}>
         {open ? "Hide saved attempts" : "Use saved attempts"}
       </Button>
@@ -53,7 +53,7 @@ function LeadPicker(props: PickerProps) {
     <section aria-label="Saved attempt context" className="grid min-w-0 gap-2 border-t border-border pt-2 text-[12px]">
       <label className="grid min-w-0 gap-1">
         <span>Saved lead</span>
-        <select className="min-h-11 w-full min-w-0 border border-input bg-background px-2 text-foreground" value={leadId} disabled={!fresh} onChange={(event) => setLeadId(event.target.value)}>
+        <select className="min-h-11 w-full min-w-0 border border-input bg-background px-2 text-white" value={leadId} disabled={!fresh} onChange={(event) => setLeadId(event.target.value)}>
           <option value="">Choose a lead</option>
           {(query.data ?? []).map((lead) => <option key={lead.id} value={lead.id}>{maskCopiedText(lead.title)} · {lead.disposition}</option>)}
         </select>
@@ -93,7 +93,7 @@ function AttemptPicker({ engagementId, leadId, archived, excerpts, onExcerptsCha
   const evidenceFresh = !catalog.isFetching && !catalog.isError && catalog.isFetchedAfterMount;
   const candidates = selected === undefined || !evidenceFresh || catalog.data === undefined ? [] : attemptEvidenceCandidates(selected, catalog.data.rows);
   return (
-    <div className="grid min-w-0 gap-2">
+    <div className="grid min-w-0 gap-2 text-white">
       {query.isFetching ? <p className="m-0" role="status">Reading this lead and its attempts.</p> : null}
       {query.isError ? <p className="m-0" role="alert">This lead or its attempts could not be refreshed. The question stays unchanged.</p> : null}
       <Button type="button" variant="quiet" className={`${ACTION} justify-self-start`} disabled={query.isFetching} onClick={() => void query.refetch()}>Refresh attempts</Button>

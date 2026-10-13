@@ -406,7 +406,7 @@ function AdvisorComposer({
       onKeyDown={(event) => {
         if (event.key === "Escape") onClose();
       }}
-      className="mt-5 rounded-[10px] border border-border px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="mt-5 rounded-[10px] border border-border px-3 py-3 text-white outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="m-0 text-[13px] font-semibold">Advisor</h2>
@@ -520,7 +520,7 @@ function AdvisorComposer({
             autoComplete="off"
             spellCheck={false}
             onChange={(event) => { setQuestion(event.target.value); setCopyStatus(undefined); }}
-            className="min-h-20 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+            className="min-h-20 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-white outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
           />
           {shapedBytes > ADVISOR_QUESTION_MAX_BYTES ? (
             <p className="mt-1 mb-0 text-[12px]" role="alert">
