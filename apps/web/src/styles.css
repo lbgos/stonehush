@@ -42,11 +42,11 @@
 :root[data-theme="dark"],
 :root[data-theme-family="smoked"][data-theme="dark"] {
   --background: #000;
-  --foreground: #d4d8d1;
+  --foreground: #fff;
   --card: rgba(164, 208, 122, 0.05);
-  --card-foreground: #d4d8d1;
+  --card-foreground: #fff;
   --popover: rgba(10, 10, 11, 0.92);
-  --popover-foreground: #d4d8d1;
+  --popover-foreground: #fff;
   --muted: rgba(164, 208, 122, 0.06);
   --muted-foreground: #7a8176;
   --accent: rgba(164, 208, 122, 0.06);
@@ -110,11 +110,11 @@
 
 :root[data-theme-family="void"][data-theme="dark"] {
   --background: #07080b;
-  --foreground: #c9cfda;
+  --foreground: #fff;
   --card: rgba(167, 179, 201, 0.05);
-  --card-foreground: #c9cfda;
+  --card-foreground: #fff;
   --popover: rgba(10, 10, 11, 0.92);
-  --popover-foreground: #c9cfda;
+  --popover-foreground: #fff;
   --muted: rgba(167, 179, 201, 0.06);
   --muted-foreground: #7b8494;
   --accent: rgba(167, 179, 201, 0.06);
@@ -178,11 +178,11 @@
 
 :root[data-theme-family="instrument"][data-theme="dark"] {
   --background: #0c0907;
-  --foreground: #e3d4c4;
+  --foreground: #fff;
   --card: rgba(232, 176, 122, 0.06);
-  --card-foreground: #e3d4c4;
+  --card-foreground: #fff;
   --popover: rgba(10, 10, 11, 0.92);
-  --popover-foreground: #e3d4c4;
+  --popover-foreground: #fff;
   --muted: rgba(232, 176, 122, 0.07);
   --muted-foreground: #8a7564;
   --accent: rgba(232, 176, 122, 0.07);
@@ -246,11 +246,11 @@
 
 :root[data-theme-family="grove"][data-theme="dark"] {
   --background: #06110a;
-  --foreground: #cfe0c8;
+  --foreground: #fff;
   --card: rgba(143, 206, 107, 0.06);
-  --card-foreground: #cfe0c8;
+  --card-foreground: #fff;
   --popover: rgba(10, 10, 11, 0.92);
-  --popover-foreground: #cfe0c8;
+  --popover-foreground: #fff;
   --muted: rgba(143, 206, 107, 0.07);
   --muted-foreground: #73906c;
   --accent: rgba(143, 206, 107, 0.07);
@@ -314,11 +314,11 @@
 
 :root[data-theme-family="ember"][data-theme="dark"] {
   --background: #120905;
-  --foreground: #edd4c2;
+  --foreground: #fff;
   --card: rgba(224, 138, 78, 0.06);
-  --card-foreground: #edd4c2;
+  --card-foreground: #fff;
   --popover: rgba(10, 10, 11, 0.92);
-  --popover-foreground: #edd4c2;
+  --popover-foreground: #fff;
   --muted: rgba(224, 138, 78, 0.07);
   --muted-foreground: #9a6f56;
   --accent: rgba(224, 138, 78, 0.07);
@@ -382,11 +382,11 @@
 
 :root[data-theme-family="iris"][data-theme="dark"] {
   --background: #0c0814;
-  --foreground: #ddd2ee;
+  --foreground: #fff;
   --card: rgba(181, 146, 224, 0.07);
-  --card-foreground: #ddd2ee;
+  --card-foreground: #fff;
   --popover: rgba(10, 10, 11, 0.92);
-  --popover-foreground: #ddd2ee;
+  --popover-foreground: #fff;
   --muted: rgba(181, 146, 224, 0.08);
   --muted-foreground: #8778a3;
   --accent: rgba(181, 146, 224, 0.08);
@@ -803,4 +803,25 @@ html[data-theme="light"] .glass-slider {
     rgba(26, 30, 22, 0.12) var(--glass-slider-progress, 60%),
     rgba(26, 30, 22, 0.12) 100%
   );
+}
+
+/* Coarse input needs a full touch target even when desktop controls are dense.
+   Checkbox and radio inputs keep their glyph size; their labels own the hit area. */
+@media (pointer: coarse) {
+  button,
+  select,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]),
+  label:has(> input[type="checkbox"]),
+  label:has(> input[type="radio"]) {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .glass-slider,
+  html[data-theme="light"] .glass-slider {
+    height: 44px;
+    background-size: 100% 4px;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
 }

@@ -198,7 +198,7 @@ function LeadsBody({
   };
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <div>
         {leads.length === 0 ? (
           <div className="border border-border px-4 py-8 text-center">
@@ -212,12 +212,12 @@ function LeadsBody({
             <p className="m-0 mb-2 text-[12px] text-muted-foreground" aria-live="polite">
               {openCount} open of {leads.length} leads
             </p>
-            <ul className="m-0 grid list-none gap-2 p-0">
+            <ul className="m-0 grid grid-cols-1 list-none gap-2 p-0">
               {leads.map((lead) => (
                 <li key={lead.id} className="border border-border px-3 py-2.5">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="m-0 truncate text-[13px] font-semibold" title={lead.title}>
+                      <p className="m-0 break-all text-[13px] font-semibold" title={lead.title}>
                         {lead.title}
                       </p>
                       <p className="m-0 mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">

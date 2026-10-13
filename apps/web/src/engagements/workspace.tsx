@@ -206,7 +206,7 @@ function EngagementIndex({ engagements }: { engagements: readonly Engagement[] }
         <h1 className="m-0 text-[26px] leading-none font-semibold tracking-[-0.04em]">Engagements</h1>
       </header>
       {active.length > 0 && (
-        <section className="grid gap-1" aria-label="Active engagements">
+        <section className="grid grid-cols-1 gap-1" aria-label="Active engagements">
           {active.map((engagement) => (
             <EngagementSummaryLink key={engagement.id} engagement={engagement} />
           ))}
@@ -222,7 +222,7 @@ function EngagementIndex({ engagements }: { engagements: readonly Engagement[] }
       {archived.length > 0 && (
         <section className="mt-6" aria-label="Archived engagements">
           <h2 className="m-0 text-[11px] font-medium text-muted-foreground">Archived</h2>
-          <div className="mt-2 grid gap-1">
+          <div className="mt-2 grid grid-cols-1 gap-1">
             {archived.map((engagement) => (
               <EngagementSummaryLink key={engagement.id} engagement={engagement} />
             ))}
@@ -241,7 +241,7 @@ function EngagementSummaryLink({ engagement }: { engagement: Engagement }) {
       className="surface-row flex min-h-14 items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span className="min-w-0">
-        <span className="block truncate text-[13px] font-semibold tracking-[-0.02em]">{engagement.name}</span>
+        <span className="block break-all text-[13px] font-semibold tracking-[-0.02em]">{engagement.name}</span>
         <span className="mt-0.5 block text-[11px] text-muted-foreground">
           {ENGAGEMENT_KIND_LABELS[engagement.kind]} · {ENGAGEMENT_STATUS_LABELS[engagement.status]}
         </span>
