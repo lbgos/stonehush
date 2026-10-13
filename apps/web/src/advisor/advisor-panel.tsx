@@ -11,6 +11,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAdvisorStatusQuery } from "../advisor-status-query.js";
 import { createIdempotencyKey } from "../engagements/idempotency.js";
 import { useFindingsQuery } from "../engagements/findings-query.js";
+import { maskCopiedText } from "../engagements/lead-technique-draft.js";
+import { copyTextToClipboard } from "../engagements/report-query.js";
+import { LeadAttemptContextPicker } from "./lead-attempt-context-picker.js";
 import {
   AdvisorTurnRequestError,
   useAdvisorTurnsQuery,
@@ -111,7 +114,13 @@ interface Attempt {
 // explicitly selected evidence. The parent owns evidence selection; this
 // component owns the draft question, the idempotency key lifecycle, and
 // turn rendering. Nothing sends without an explicit Ask click.
-export function AdvisorPanel({
+export function AdvisorPanel(props: AdvisorPanelProps) {
+  // The entire composer belongs to its engagement, including requests in
+  // flight and local selected-attempt reads when the component is reused.
+  return <AdvisorComposer key={props.engagementId} {...props} />;
+}
+
+function AdvisorComposer({
   engagementId,
   archived,
   excerpts,
@@ -121,6 +130,8 @@ export function AdvisorPanel({
   onClose,
 }: AdvisorPanelProps) {
   const [question, setQuestion] = useState("");
+  const [copyStatus, setCopyStatus] = useState<string>();
+  const questionRef = useRef<HTMLTextAreaElement>(null);
   const [entryPoint, setEntryPoint] = useState<AdvisorEntryPoint | null>(null);
   // Hint depth is kept per engagement and advances only on explicit clicks.
   const [depth, setDepth] = useState<HintDepth>(() =>
@@ -320,8 +331,8 @@ export function AdvisorPanel({
   function chooseEntryPoint(entry: AdvisorEntryPoint) {
     if (archived) return;
     setEntryPoint(entry);
-    // Leads wire in through a narrow STONE-4 adapter later; today the
-    // operator types the specific possibilities into the drafted question.
+    // Generic entry points replace the editable question only on a click.
+    // Saved attempts use their own explicit Include action below.
     if (entry === "explain") setQuestion(buildExplainQuestion(""));
     else if (entry === "distinguish") setQuestion(buildDistinguishQuestion({ possibilities: [] }));
     else setQuestion(buildOverlookQuestion({ investigation: "" }));
@@ -395,11 +406,11 @@ export function AdvisorPanel({
       onKeyDown={(event) => {
         if (event.key === "Escape") onClose();
       }}
-      className="mt-5 rounded-[10px] border border-border px-3 py-3 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="mt-5 rounded-[10px] border border-border px-3 py-3 text-white outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="m-0 text-[13px] font-semibold">Advisor</h2>
-        <Button type="button" variant="quiet" className="h-7 px-2 text-[12px]" onClick={onClose}>
+        <Button type="button" variant="quiet" className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7" onClick={onClose}>
           Close
         </Button>
       </div>
@@ -410,13 +421,25 @@ export function AdvisorPanel({
       ) : null}
 
       <div className="mt-3 grid gap-3">
+        <LeadAttemptContextPicker
+          engagementId={engagementId}
+          archived={archived}
+          excerpts={excerpts}
+          onExcerptsChange={onExcerptsChange}
+          onInclude={(context) => {
+            if (archived) return;
+            setQuestion((current) => current.trim().length === 0 ? context : `${current}\n\n${context}`);
+            setCopyStatus(undefined);
+            questionRef.current?.focus();
+          }}
+        />
         <div>
           <p className="m-0 text-[12px] font-semibold">
             Evidence excerpts ({excerptCount} of {ADVISOR_EXCERPT_IDS_MAX})
           </p>
           {excerptCount === 0 ? (
             <p className="mt-1 mb-0 text-[12px] text-muted-foreground">
-              No excerpts selected. Open a run and choose “Ask about this run”.
+              No excerpts selected. Choose attempt evidence above or use “Ask about this run”.
             </p>
           ) : (
             <ul className="mt-1 mb-0 list-none space-y-1 p-0">
@@ -429,7 +452,7 @@ export function AdvisorPanel({
                     <Button
                       type="button"
                       variant="quiet"
-                      className="h-7 shrink-0 px-2 text-[12px]"
+                      className="min-h-11 shrink-0 px-2 text-[12px] md:pointer-fine:min-h-7"
                       onClick={() => removeExcerpt(id)}
                       aria-label={`Remove excerpt ${id}`}
                     >
@@ -469,7 +492,7 @@ export function AdvisorPanel({
                 key={entry}
                 type="button"
                 variant={entryPoint === entry ? "secondary" : "quiet"}
-                className="h-7 px-2 text-[12px]"
+                className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
                 aria-pressed={entryPoint === entry}
                 disabled={archived}
                 onClick={() => chooseEntryPoint(entry)}
@@ -488,6 +511,7 @@ export function AdvisorPanel({
             Question ({questionBytes}/{ADVISOR_QUESTION_MAX_BYTES} bytes)
           </label>
           <textarea
+            ref={questionRef}
             id="advisor-question"
             value={question}
             rows={3}
@@ -495,14 +519,29 @@ export function AdvisorPanel({
             placeholder="Ask about the selected evidence…"
             autoComplete="off"
             spellCheck={false}
-            onChange={(event) => setQuestion(event.target.value)}
-            className="min-h-20 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+            onChange={(event) => { setQuestion(event.target.value); setCopyStatus(undefined); }}
+            className="min-h-20 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-white outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
           />
+          {shapedBytes > ADVISOR_QUESTION_MAX_BYTES ? (
+            <p className="mt-1 mb-0 text-[12px]" role="alert">
+              Question and hint depth use {shapedBytes}/{ADVISOR_QUESTION_MAX_BYTES} bytes. Edit the question before Ask. No text was shortened.
+            </p>
+          ) : null}
+          <Button
+            type="button"
+            variant="quiet"
+            className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-8"
+            disabled={normalizedQuestion.length === 0}
+            onClick={async () => setCopyStatus(await copyTextToClipboard(maskCopiedText(shapedQuestion)) ? "Question copied with known secret shapes masked." : "Copy failed. Select the question text to copy manually.")}
+          >
+            Copy question
+          </Button>
+          {copyStatus !== undefined ? <p className="m-0 text-[12px]" role="status">{copyStatus}</p> : null}
           <div className="mt-1.5 flex flex-wrap gap-2">
             <Button
               type="button"
               variant="quiet"
-              className="h-7 px-2 text-[12px]"
+              className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
               disabled={archived}
               onClick={() => setQuestion("Summarize the selected evidence. What stands out?")}
             >
@@ -511,7 +550,7 @@ export function AdvisorPanel({
             <Button
               type="button"
               variant="quiet"
-              className="h-7 px-2 text-[12px]"
+              className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
               disabled={archived}
               onClick={() => setQuestion("Explain what failed in the selected evidence and why.")}
             >
@@ -525,7 +564,7 @@ export function AdvisorPanel({
                 key={level}
                 type="button"
                 variant={depth === level ? "secondary" : "quiet"}
-                className="h-7 px-2 text-[12px]"
+                className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
                 aria-pressed={depth === level}
                 disabled={archived}
                 onClick={() => chooseDepth(level)}
@@ -603,7 +642,7 @@ export function AdvisorPanel({
             <Button
               type="button"
               variant="quiet"
-              className="h-7 px-2 text-[12px]"
+              className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
               onClick={() => void history.refetch()}
             >
               Check again
@@ -628,7 +667,7 @@ export function AdvisorPanel({
               <Button
                 type="button"
                 variant="quiet"
-                className="h-7 px-2 text-[12px]"
+                className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
                 onClick={() => void history.refetch()}
               >
                 Retry
@@ -654,7 +693,7 @@ export function AdvisorPanel({
               <Button
                 type="button"
                 variant="quiet"
-                className="h-7 px-2 text-[12px]"
+                className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
                 onClick={() => void history.fetchNextPage()}
               >
                 Retry
@@ -666,7 +705,7 @@ export function AdvisorPanel({
               <Button
                 type="button"
                 variant="quiet"
-                className="h-7 px-2 text-[12px]"
+                className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
                 disabled={history.isFetchingNextPage}
                 onClick={() => void history.fetchNextPage()}
               >
@@ -694,7 +733,7 @@ export function AdvisorPanel({
             <Button
               type="button"
               variant="quiet"
-              className="h-7 px-2 text-[12px]"
+              className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
               aria-expanded={techniquesOpen}
               onClick={() => setTechniquesOpen((open) => !open)}
             >
