@@ -114,8 +114,11 @@ function AttemptPicker({ engagementId, leadId, archived, excerpts, onExcerptsCha
           ))}
         </div>
         {fresh && source.attempts.length === 0 ? <p className="m-0">No saved attempts.</p> : null}
-        {fresh && selectedIds.length > 0 && selected === undefined ? <p className="m-0" role="alert">A selected attempt is unavailable. Choose the remaining attempts again.</p> : null}
+        {fresh && selectedIds.length > 0 && selected === undefined ? <p className="m-0" role="alert">A selected attempt is unavailable. Clear the selection, then choose the remaining attempts again.</p> : null}
       </> : null}
+      {selectedIds.length > 0 ? (
+        <Button type="button" variant="quiet" className={`${ACTION} justify-self-start`} onClick={() => { setSelectedIds([]); setCopied(undefined); }}>Clear attempt selection</Button>
+      ) : null}
       {context !== undefined ? <>
         <pre aria-label="Selected attempt context" className="m-0 min-w-0 whitespace-pre-wrap break-words font-mono text-[11px] leading-5">{context}</pre>
         <p className="m-0 text-[11px]">Known secret shapes and URL credentials are masked. Review the text; masking cannot detect every secret.</p>
