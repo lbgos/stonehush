@@ -20,6 +20,11 @@ export interface ProcessResult {
   cleanupFailed?: boolean;
 }
 
+export type SupervisedProcess = Promise<ProcessResult> & {
+  cancel: () => Promise<{ cleanupFailed: boolean }>;
+  child?: ChildProcess;
+};
+
 export interface RunDirectories {
   runDir: string;
   tmpDir: string;
@@ -129,14 +134,15 @@ function spawnSupervised(params: {
   argv: readonly string[];
   secrets?: readonly string[];
   shouldCancel?: () => boolean;
-}): Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess } {
+}): SupervisedProcess {
   const { runId, fence, runRoot, executable, argv, secrets } = params;
   let child: ChildProcess | undefined;
   let cancelRequested = false;
-  let cancellationWork: Promise<void> | null = null;
+  let cancellationWork: Promise<{ cleanupFailed: boolean }> | null = null;
   let cleanupFailed = false;
-  let doCancel: () => Promise<void> = async () => {
+  let doCancel: SupervisedProcess["cancel"] = async () => {
     cancelRequested = true;
+    return { cleanupFailed: false };
   };
   const promise = new Promise<ProcessResult>((resolve, reject) => {
     (async () => {
@@ -171,11 +177,47 @@ function spawnSupervised(params: {
           reject(e);
           return;
         }
-        doCancel = (): Promise<void> => {
+        const stdout = child.stdout;
+        const stderr = child.stderr;
+        if (stdout === null || stderr === null) {
+          reject(new Error("missing stdio"));
+          return;
+        }
+        stdout.on("data", (chunk: Buffer) => {
+          const redacted = stdoutRedactor.push(chunk);
+          stdoutCollector.push(chunk.length, redacted);
+        });
+        stderr.on("data", (chunk: Buffer) => {
+          const redacted = stderrRedactor.push(chunk);
+          stderrCollector.push(chunk.length, redacted);
+        });
+        child.on("error", (err) => reject(err));
+        let resultSettled = false;
+        const settleResult = (code: number | null, signal: NodeJS.Signals | null): void => {
+          if (resultSettled) return;
+          resultSettled = true;
+          const stdoutTail = stdoutRedactor.flush();
+          const stderrTail = stderrRedactor.flush();
+          if (stdoutTail.length > 0) stdoutCollector.push(0, stdoutTail);
+          if (stderrTail.length > 0) stderrCollector.push(0, stderrTail);
+          const stdoutMeta = stdoutCollector.meta();
+          const stderrMeta = stderrCollector.meta();
+          resolve({
+            exitCode: code,
+            signal,
+            stdout: stdoutCollector.combined(),
+            stderr: stderrCollector.combined(),
+            stdoutMeta,
+            stderrMeta,
+            truncated: stdoutMeta.truncated || stderrMeta.truncated,
+            cleanupFailed,
+          });
+        };
+        doCancel = () => {
           cancelRequested = true;
           if (cancellationWork !== null) return cancellationWork;
           const cp = child;
-          if (cp?.pid === undefined) return Promise.resolve();
+          if (cp?.pid === undefined) return Promise.resolve({ cleanupFailed: false });
           const pgid = cp.pid;
           cancellationWork = (async () => {
             const send = (signal: NodeJS.Signals): void => {
@@ -192,66 +234,42 @@ function spawnSupervised(params: {
               return !await processGroupIsRunning(pgid);
             };
             send("SIGTERM");
-            if (await waitForGroup(5000)) return;
-            send("SIGKILL");
-            if (!await waitForGroup(2000)) cleanupFailed = true;
+            if (!await waitForGroup(5000)) {
+              send("SIGKILL");
+              if (!await waitForGroup(2000)) cleanupFailed = true;
+            }
+            // Failed signals must still return captured bytes and a failed
+            // cleanup outcome within the budget, even without a close event.
+            if (!resultSettled) {
+              stdout.destroy();
+              stderr.destroy();
+              settleResult(cp.exitCode, cp.signalCode);
+            }
+            // This remains current even if the parent result settled before
+            // cancellation arrived and descendants required later cleanup.
+            return { cleanupFailed };
           })();
           return cancellationWork;
         };
-        (promise as unknown as { cancel: () => Promise<void> }).cancel = () => doCancel();
-        (promise as unknown as { child?: ChildProcess }).child = child;
-        const stdout = child.stdout;
-        const stderr = child.stderr;
-        if (stdout === null || stderr === null) {
-          reject(new Error("missing stdio"));
-          return;
-        }
-        stdout.on("data", (chunk: Buffer) => {
-          const redacted = stdoutRedactor.push(chunk);
-          stdoutCollector.push(chunk.length, redacted);
-        });
-        stderr.on("data", (chunk: Buffer) => {
-          const redacted = stderrRedactor.push(chunk);
-          stderrCollector.push(chunk.length, redacted);
-        });
-        child.on("error", (err) => reject(err));
-        let closeEmitted = false;
-        const onClose = async (code: number | null, signal: NodeJS.Signals | null): Promise<void> => {
-          if (closeEmitted) return;
-          closeEmitted = true;
+        promise.cancel = () => doCancel();
+        promise.child = child;
+        child.on("close", async (code: number | null, signal: NodeJS.Signals | null) => {
           if (cancelRequested) await doCancel();
-          const stdoutTail = stdoutRedactor.flush();
-          const stderrTail = stderrRedactor.flush();
-          if (stdoutTail.length > 0) stdoutCollector.push(0, stdoutTail);
-          if (stderrTail.length > 0) stderrCollector.push(0, stderrTail);
-          const stdoutMeta = stdoutCollector.meta();
-          const stderrMeta = stderrCollector.meta();
-          const stillAlive = child !== undefined && child.exitCode === null && child.signalCode === null;
-          resolve({
-            exitCode: code,
-            signal: signal as NodeJS.Signals | null,
-            stdout: stdoutCollector.combined(),
-            stderr: stderrCollector.combined(),
-            stdoutMeta,
-            stderrMeta,
-            truncated: stdoutMeta.truncated || stderrMeta.truncated,
-            cleanupFailed: cleanupFailed || stillAlive,
-          });
-        };
-        child.on("close", onClose);
+          settleResult(code, signal);
+        });
         if (cancelRequested) void doCancel();
       } catch (e) {
         reject(e);
       }
     })();
-  }) as Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess };
+  }) as SupervisedProcess;
   promise.cancel = () => doCancel();
   return promise;
 }
 
 export function runSupervised(
   request: FakeActionRequest & { runRoot: string; secrets?: string[]; executable?: string },
-): Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess } {
+): SupervisedProcess {
   const executable = request.executable ?? process.execPath;
   const spec = buildFakeActionArgv(executable, request);
   const base = {
@@ -275,7 +293,7 @@ export function runSupervisedCommand(request: {
   argv: readonly string[];
   secrets?: readonly string[];
   shouldCancel?: () => boolean;
-}): Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess } {
+}): SupervisedProcess {
   validateExecutablePath(request.executable);
   validateArgv(request.argv);
   return spawnSupervised(request);

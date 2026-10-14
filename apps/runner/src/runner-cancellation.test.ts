@@ -57,7 +57,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
-async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeStart?: boolean; revoke?: boolean; publicationFailure?: boolean; shutdown?: boolean; completionRace?: boolean; delayVerification?: boolean; hangPoll?: "initial" | "final"; replayPartition?: boolean; cleanupFailure?: boolean } = {}) {
+async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeStart?: boolean; revoke?: boolean; publicationFailure?: boolean; shutdown?: boolean; completionRace?: boolean; delayVerification?: boolean; hangPoll?: "initial" | "final"; replayPartition?: boolean; cleanupFailure?: boolean; lateIntent?: boolean } = {}) {
   const dataDir = await mkdtemp(path.join(tmpdir(), "stonehush-cancel-unit-"));
   directories.push(dataDir);
   const controller = new AbortController();
@@ -74,17 +74,17 @@ async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeSt
   });
   const completions: { terminalKind: string; reason: string | null }[] = [];
   const probes: string[] = [];
-  const cancel = vi.fn();
+  const cancel = vi.fn(async () => ({ cleanupFailed: options.cleanupFailure === true }));
   vi.mocked(runSupervisedCommand).mockImplementation(() => {
     spawned = true;
-    if (options.completionRace) {
+    if (options.completionRace || options.lateIntent) {
       const handle = Promise.resolve({ ...captured(), exitCode: 0, signal: null }) as ReturnType<typeof runSupervisedCommand>;
       handle.cancel = cancel;
       return handle;
     }
     requested = options.replayPartition !== true;
     const handle = new Promise<ProcessResult>((resolve) => {
-      cancel.mockImplementation(async () => { nativeStopped = true; resolve({ ...captured(), cleanupFailed: options.cleanupFailure === true }); });
+      cancel.mockImplementation(async () => { nativeStopped = true; resolve({ ...captured(), cleanupFailed: options.cleanupFailure === true }); return { cleanupFailed: options.cleanupFailure === true }; });
     }) as ReturnType<typeof runSupervisedCommand>;
     handle.cancel = cancel;
     return handle;
@@ -122,6 +122,7 @@ async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeSt
         verificationRelease = null;
         setImmediate(release);
       }
+      if (spawned && options.lateIntent) requested = true;
       if (spawned && options.revoke) return response({ code: "runner_unauthorized" }, 401);
       if (spawned && options.shutdown) controller.abort();
       return response({ leaseExpiresAt: lease.expiresAt, heartbeatSequence: JSON.parse(String(init?.body)).heartbeatSequence,
@@ -154,7 +155,7 @@ describe("operator cancellation reaches installed action handlers", () => {
   it.each(["nmap", "ffuf", "vhost"] as const)("stops %s, retains exact output, then acknowledges cancellation", async (kind) => {
     const f = await harness(kind);
     await expect(f.execution).resolves.toBe(true);
-    expect(f.cancel).toHaveBeenCalledOnce();
+    expect(f.cancel).toHaveBeenCalled();
     const publish = kind === "nmap" ? publishEvidenceArtifacts : kind === "ffuf" ? publishFfufArtifacts : publishVhostArtifacts;
     expect(publish).toHaveBeenCalledWith(expect.anything(), f.lease, expect.objectContaining({ stdout: captured().stdout }),
       expect.objectContaining({ isCancelled: true, eventSequence: 2 }));
@@ -213,6 +214,19 @@ describe("operator cancellation reaches installed action handlers", () => {
   it("unverified native cleanup cannot acknowledge cancellation", async () => {
     const f = await harness("nmap", { cleanupFailure: true });
     await f.execution;
+    expect(f.completions.at(-1)).toMatchObject({ terminalKind: "failed", reason: "process_cleanup_failed" });
+  });
+  it.each(["nmap", "ffuf", "vhost"] as const)("verifies %s cleanup when cancellation arrives after parent settlement", async (kind) => {
+    const f = await harness(kind, { lateIntent: true });
+    await f.execution;
+    expect(f.cancel).toHaveBeenCalled();
+    expect(f.completions.at(-1)?.terminalKind).toBe("cancelled");
+  });
+  it("a cancel-first completion race cannot ignore failed late cleanup", async () => {
+    const f = await harness("nmap", { completionRace: true, cleanupFailure: true });
+    await f.execution;
+    expect(f.cancel).toHaveBeenCalled();
+    expect(publishEvidenceArtifacts).toHaveBeenCalledOnce();
     expect(f.completions.at(-1)).toMatchObject({ terminalKind: "failed", reason: "process_cleanup_failed" });
   });
   it("reports partial publication failure instead of claiming preservation", async () => {

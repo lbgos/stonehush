@@ -492,10 +492,14 @@ export async function runOnce(
       return true;
     }
 
+    let cancelNative: ReturnType<typeof runSupervisedCommand>["cancel"] | null = null;
+    const stopNative = async () => cancelNative?.();
     const finishOperatorCancellation = async (
       publish: () => Promise<void>,
       cleanupFailed = false,
     ): Promise<boolean> => {
+      const nativeCleanup = await stopNative();
+      cleanupFailed ||= nativeCleanup?.cleanupFailed === true;
       if (isAuthorityLost()) {
         await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
         if (signal?.aborted) throw new RunnerShutdownError();
@@ -520,6 +524,7 @@ export async function runOnce(
     };
     const completeExecution = async (kind: "succeeded" | "failed", reason: string | null): Promise<void> => {
       if (isAuthorityLost()) {
+        await stopNative();
         await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
         if (signal?.aborted) throw new RunnerShutdownError();
         return;
@@ -532,8 +537,14 @@ export async function runOnce(
         // and acknowledge cleanup with the still-current lease.
         if ((e as { code?: string }).code !== "invalid_run_transition") throw e;
         await pollHeartbeat();
-        if (!cancellationRequested || isAuthorityLost()) throw e;
-        await completeRun(config, lease, nextSequence, "cancelled", "operator_cancelled");
+        if (isAuthorityLost()) {
+          await stopNative();
+          await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+          if (signal?.aborted) throw new RunnerShutdownError();
+          return;
+        }
+        if (!cancellationRequested) throw e;
+        await finishOperatorCancellation(async () => {});
       }
     };
 
@@ -577,7 +588,7 @@ export async function runOnce(
       if (cancellationRequested) return await cancelBeforeExecution();
 
       let captured: ProcessResult | null = null;
-      let cancelSpawn: (() => Promise<void>) | null = null;
+      let cancelSpawn: ReturnType<typeof runSupervisedCommand>["cancel"] | null = null;
       const vhostSpawn = (request: { executable: string; argv: readonly string[] }) => {
         const handle = runSupervisedCommand({
           runId: lease.runId,
@@ -590,6 +601,7 @@ export async function runOnce(
           shouldCancel: () => cancellationRequested || isAuthorityLost(),
         });
         cancelSpawn = () => handle.cancel();
+        cancelNative = cancelSpawn;
         return handle.then((result) => {
           captured = result;
           return { exitCode: result.exitCode };
@@ -636,6 +648,7 @@ export async function runOnce(
       };
 
       if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
+        await stopNative();
         if (captured !== null) {
           const partial = await readPartialJson();
           try {
@@ -728,7 +741,7 @@ export async function runOnce(
       if (cancellationRequested) return await cancelBeforeExecution();
 
       let captured: ProcessResult | null = null;
-      let cancelSpawn: (() => Promise<void>) | null = null;
+      let cancelSpawn: ReturnType<typeof runSupervisedCommand>["cancel"] | null = null;
       const ffufSpawn = (request: { executable: string; argv: readonly string[] }) => {
         const handle = runSupervisedCommand({
           runId: lease.runId,
@@ -741,6 +754,7 @@ export async function runOnce(
           shouldCancel: () => cancellationRequested || isAuthorityLost(),
         });
         cancelSpawn = () => handle.cancel();
+        cancelNative = cancelSpawn;
         return handle.then((result) => {
           captured = result;
           return { exitCode: result.exitCode };
@@ -787,6 +801,7 @@ export async function runOnce(
       };
 
       if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
+        await stopNative();
         if (captured !== null) {
           const partial = await readPartialJson();
           try {
@@ -1012,6 +1027,7 @@ export async function runOnce(
         shouldCancel: () => cancellationRequested || isAuthorityLost(),
       });
 
+      cancelNative = () => handle?.cancel() ?? Promise.resolve({ cleanupFailed: true });
       if (signal?.aborted || shutdownAfterStarted) {
         cancelledByFence = true;
         void handle.cancel();
@@ -1060,6 +1076,7 @@ export async function runOnce(
     const isCancelledForEvidence = cancelledByFence || isAuthorityLost();
 
     if (isCancelledForEvidence) {
+      await stopNative();
       if (result !== null) {
         let xml: Buffer | undefined;
         try {

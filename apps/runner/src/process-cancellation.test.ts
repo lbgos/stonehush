@@ -41,6 +41,26 @@ describe("native cancellation admission and descendants", () => {
     expect(result).toMatchObject({ exitCode: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), cleanupFailed: false });
   });
 
+  it("verifies descendants when cancellation arrives after a normal parent close", async () => {
+    const runRoot = await root();
+    const descendantScript = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync('late.pid', String(process.pid)); setInterval(() => {}, 1000);`;
+    const parentScript = `const fs=require('node:fs'); const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendantScript)}],{stdio:'ignore'}); child.unref(); const timer=setInterval(()=>{if(fs.existsSync('late.pid')){clearInterval(timer);process.stdout.write('settled prefix\\n');process.exit(0);}},10);`;
+    const handle = runSupervisedCommand({ runId: "late-descendant", leaseId: "lease-1", fence: "1", runRoot,
+      executable: process.execPath, argv: ["-e", parentScript] });
+    const result = await handle;
+    const pid = Number(await readFile(path.join(runRoot, "run-late-descendant-f1", "late.pid"), "utf8"));
+    try {
+      expect(result.exitCode).toBe(0);
+      expect(await isExecuting(pid)).toBe(true);
+      expect(await handle.cancel()).toEqual({ cleanupFailed: false });
+      expect(await isExecuting(pid)).toBe(false);
+      expect(result.stdout.toString()).toBe("settled prefix\n");
+    } finally {
+      try { process.kill(pid, "SIGKILL"); } catch {}
+      await handle.cancel();
+    }
+  }, 10000);
+
   it("escalates a TERM-resistant descendant after its parent closes with no inherited pipes", async () => {
     const runRoot = await root();
     const descendantScript = `const fs = require('node:fs'); process.on('SIGTERM', () => {}); fs.writeFileSync('descendant.pid', String(process.pid)); setInterval(() => {}, 1000);`;
