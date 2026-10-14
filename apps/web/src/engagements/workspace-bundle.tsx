@@ -13,8 +13,8 @@ import { reportPortableFilename } from "./report-query.js";
 // Portable workspace bundle section (stone-9). This is the working file for
 // continuing an engagement on another machine, not a client report: it
 // carries leads, excerpts, findings, and evidence bytes, and imports as a
-// new engagement with fresh ids. Secrets, flags, and client identifiers stay
-// out unless the labeled private-copy box is checked.
+// new engagement with fresh ids. Private records and engagement context are
+// opt-in; notes and evidence bytes are preserved and may contain sensitive data.
 
 const IMPORT_ERROR_COPY: Record<string, string> = {
   invalid_request: "That file is not a workspace bundle. Pick an exported bundle file.",
@@ -92,8 +92,8 @@ export function WorkspaceBundleSection({
         URL.revokeObjectURL(objectUrl);
         setStatus(
           privateCopy ?
-            "Private workspace bundle exported. It contains secrets, flags metadata, and client identifiers. Handle it as sensitive."
-            : "Workspace bundle exported. No secrets, flags, or client identifiers are in this file.",
+            "Private workspace bundle exported. Private records and engagement context are included. Notes and evidence are unchanged. Handle it as sensitive."
+            : "Workspace bundle exported. Private records and engagement context are excluded. Notes and evidence are unchanged and may contain sensitive data.",
         );
       })
       .catch(() => {
@@ -169,7 +169,8 @@ export function WorkspaceBundleSection({
         <p className="mt-1 mb-0 text-[12px] leading-5 text-muted-foreground">
           Working file for continuing this engagement on another machine. Not a
           client report: importing it creates a new engagement with fresh ids.
-          Evidence bytes are included and integrity-checked on import.
+          Notes and evidence bytes are preserved and may contain sensitive data.
+          Evidence is integrity-checked on import.
         </p>
       </header>
       <div className="grid min-w-0 gap-2">
@@ -182,9 +183,9 @@ export function WorkspaceBundleSection({
             className="mt-1 h-4 w-4 shrink-0 accent-primary"
           />
           <span>
-            <span className="font-semibold">Private copy:</span> include secrets,
-            flag metadata, and client identifiers. Handle the file as sensitive.
-            Leave unchecked for the default bundle without them.
+            <span className="font-semibold">Private copy:</span> also include secret
+            records, objective and flag metadata, engagement description, and
+            authorization context. Handle the file as sensitive.
           </span>
         </label>
         <div className="flex min-w-0 flex-wrap items-center gap-2">

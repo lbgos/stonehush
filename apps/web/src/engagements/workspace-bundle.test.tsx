@@ -180,8 +180,14 @@ describe("workspace bundle section", () => {
     );
     expect(seen).toEqual([`/api/v1/engagements/${engagementId}/workspace-bundle`]);
     expect(
-      await screen.findByText(/No secrets, flags, or client identifiers/),
+      await screen.findByText(/Private records and engagement context are excluded/),
     ).toBeTruthy();
+    expect(
+      screen.getByRole("status").textContent,
+    ).toContain("Notes and evidence are unchanged and may contain sensitive data");
+    expect(
+      screen.queryByText(/No secrets, flags, or client identifiers/),
+    ).toBeNull();
     clickSpy.mockRestore();
   });
 

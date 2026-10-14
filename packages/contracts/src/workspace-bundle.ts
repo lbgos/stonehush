@@ -18,7 +18,9 @@ import { SecretSchema } from "./secrets.js";
  * byte-identical evidence. Hashes are checked on import; ids are always
  * remapped so two imports of the same file never collide.
  *
- * Default exports exclude credentials, flags, and client identifiers.
+ * Default exports exclude secret and objective records, engagement
+ * description, and authorization context. Notes and evidence bytes are
+ * unchanged and may contain sensitive data.
  * `privateCopy: true` is an explicit opt-in that additionally carries the
  * engagement description, authorization context, secret records, and
  * objective proof metadata (digests and hints only, never proof values,
@@ -51,8 +53,9 @@ export const WORKSPACE_BUNDLE_EVIDENCE_BASE64_MAX =
 const UtcTimestampSchema = z.iso.datetime({ offset: true });
 const EngagementIdentifierSchema = z.uuid({ version: "v4" });
 
-// Client identifiers travel only in an explicit private copy. Bounds mirror
-// the engagement contract loosely; the bundle never widens stored data.
+// Description and authorization context travel only in an explicit private
+// copy. Bounds mirror the engagement contract loosely; the bundle never widens
+// stored data.
 const BundleClientTextSchema = z.string().max(16_384).nullable();
 
 export const WorkspaceBundleEngagementSchema = z.strictObject({
