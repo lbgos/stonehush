@@ -221,6 +221,7 @@ export async function heartbeat(
   config: RunnerConfig,
   lease: AcquiredLease["lease"],
   sequence: number,
+  signal?: AbortSignal,
 ): Promise<HeartbeatResponse> {
   const url = `${config.apiBaseUrl}/api/v1/runner/leases/${lease.leaseId}/heartbeat`;
   const rawBody = RunnerHeartbeatRequestSchema.parse({
@@ -236,6 +237,7 @@ export async function heartbeat(
       authorization: authHeader(config.runnerId, config.secret),
     },
     body: JSON.stringify(rawBody),
+    signal: signal ?? AbortSignal.timeout(5000),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { code?: string } | null;
@@ -419,21 +421,25 @@ export async function runOnce(
 
   let cancellationRequested = false;
   let heartbeatInFlight: Promise<void> | null = null;
+  let pendingHeartbeatSentMonotonic: number | null = null;
   const pollHeartbeat = (): Promise<void> => {
     if (hbFailed || signal?.aborted || globalThis.performance.now() >= authorityDeadlineMonotonic - 7000) {
       hbFailed = true;
       return Promise.resolve();
     }
     if (heartbeatInFlight !== null) return heartbeatInFlight;
-    const hbSendMonotonic = globalThis.performance.now();
+    pendingHeartbeatSentMonotonic ??= globalThis.performance.now();
+    const hbSendMonotonic = pendingHeartbeatSentMonotonic;
+    const heartbeatSignal = signal === undefined ? AbortSignal.timeout(5000) : AbortSignal.any([signal, AbortSignal.timeout(5000)]);
     const nextSeq = hbSeq + 1;
-    heartbeatInFlight = heartbeat(config, lease, nextSeq)
+    heartbeatInFlight = heartbeat(config, lease, nextSeq, heartbeatSignal)
       .then((response) => {
         if (hbFailed || globalThis.performance.now() >= authorityDeadlineMonotonic - 7000) {
           hbFailed = true;
           return;
         }
         hbSeq = nextSeq;
+        pendingHeartbeatSentMonotonic = null;
         authorityDeadlineMonotonic = hbSendMonotonic + config.leaseDurationMs;
         cancellationRequested ||= response.cancellationRequested === true;
       })
@@ -537,11 +543,10 @@ export async function runOnce(
       if (signal?.aborted) throw new RunnerShutdownError();
       return true;
     }
-    if (cancellationRequested) {
-      return await finishOperatorCancellation(() => publishHttpProbeArtifacts(config, lease, {
-        stdout: Buffer.alloc(0), rawArtifacts: [], isCancelled: true, eventSequence: nextSequence,
-      }));
-    }
+    const cancelBeforeExecution = (): Promise<boolean> => finishOperatorCancellation(() => publishHttpProbeArtifacts(config, lease, {
+      stdout: Buffer.alloc(0), rawArtifacts: [], isCancelled: true, eventSequence: nextSequence,
+    }));
+    if (cancellationRequested) return await cancelBeforeExecution();
 
     // vhost discovery runs before ffuf content discovery: the vhost marker
     // is an IP target with Host header fuzzing, so it never collides with a
@@ -569,6 +574,8 @@ export async function runOnce(
         return true;
       }
 
+      if (cancellationRequested) return await cancelBeforeExecution();
+
       let captured: ProcessResult | null = null;
       let cancelSpawn: (() => Promise<void>) | null = null;
       const vhostSpawn = (request: { executable: string; argv: readonly string[] }) => {
@@ -580,6 +587,7 @@ export async function runOnce(
           executable: request.executable,
           argv: request.argv,
           secrets: [config.secret],
+          shouldCancel: () => cancellationRequested || isAuthorityLost(),
         });
         cancelSpawn = () => handle.cancel();
         return handle.then((result) => {
@@ -717,6 +725,8 @@ export async function runOnce(
         return true;
       }
 
+      if (cancellationRequested) return await cancelBeforeExecution();
+
       let captured: ProcessResult | null = null;
       let cancelSpawn: (() => Promise<void>) | null = null;
       const ffufSpawn = (request: { executable: string; argv: readonly string[] }) => {
@@ -728,6 +738,7 @@ export async function runOnce(
           executable: request.executable,
           argv: request.argv,
           secrets: [config.secret],
+          shouldCancel: () => cancellationRequested || isAuthorityLost(),
         });
         cancelSpawn = () => handle.cancel();
         return handle.then((result) => {
@@ -998,6 +1009,7 @@ export async function runOnce(
         executable: config.executable,
         argv: nmapArgv,
         secrets: [config.secret],
+        shouldCancel: () => cancellationRequested || isAuthorityLost(),
       });
 
       if (signal?.aborted || shutdownAfterStarted) {

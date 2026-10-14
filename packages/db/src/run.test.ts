@@ -1328,3 +1328,31 @@ describe("operator cancellation and lease authority", () => {
     expect(fixture.runs.getRun(runId)).toMatchObject({ ok: true, value: { state: "succeeded" } });
   });
 });
+
+
+it.each(["cancelled", "failed", "expired"] as const)("keeps a warning-paused %s terminal readable and preserves its warning evidence", (terminalKind) => {
+  const fixture = createFixture();
+  const { engagementId, runId } = queuedAction(fixture);
+  const { lease } = acquire(fixture, runId);
+  startRun(fixture, lease);
+  const action = fixture.engagements.getAction(engagementId, "action-fixture-1");
+  if (!action.ok) throw new Error(action.error.code);
+  const paused = fixture.engagements.recordLateWarning({
+    engagementId, actionId: "action-fixture-1", expectedRevision: action.value.revision,
+    snapshotVersion: 1, snapshotBinding: action.value.action.snapshots[0]?.binding,
+    reasonCodes: ["risk_tier_t2"], addition: { origin: "https://other.test:443", resolvedAddress: "192.0.2.41" },
+    pendingEventId: 7, occurredAt: "2026-08-09T12:00:06.000Z",
+  });
+  if (!paused.ok) throw new Error(paused.error.code);
+  const cancelled = fixture.engagements.cancelAction({ engagementId, actionId: "action-fixture-1", expectedRevision: paused.value.revision });
+  if (!cancelled.ok) throw new Error(cancelled.error.code);
+  const completed = terminalKind === "expired" ? fixture.runs.expireLease({ runId, serverNow: "2026-08-09T12:00:31.000Z" }) : fixture.runs.completeRun({ presented: presentation(lease), sequence: 2,
+    terminalKind, reason: terminalKind === "cancelled" ? "operator_cancelled" : "evidence_publication_failed",
+    serverNow: "2026-08-09T12:00:08.000Z" });
+  if (!completed.ok) throw new Error(completed.error.code);
+  expect(JSON.parse(completed.value.event.payloadJson).pendingWarning).toEqual(paused.value.action.pendingWarning);
+  expect(fixture.engagements.getAction(engagementId, "action-fixture-1")).toMatchObject({ ok: true,
+    value: { action: { state: terminalKind === "expired" ? "failed" : terminalKind, pendingWarning: null, snapshots: action.value.action.snapshots } } });
+  expect(fixture.engagements.retryActionContext(engagementId, "action-fixture-1")).toMatchObject({ ok: true,
+    value: { snapshotBinding: action.value.action.snapshots[0]?.binding, warningAcknowledgment: action.value.action.warningAcknowledgment } });
+});

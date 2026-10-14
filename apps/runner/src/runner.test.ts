@@ -393,8 +393,11 @@ describe("cancellation and cleanup", () => {
     const cancelPromise = handle.cancel();
     const res = await handle;
     await cancelPromise;
-    // Should have terminated quickly, not run full 60s
-    expect(res.signal).toBe("SIGTERM");
+    expect(handle.child).toBeUndefined();
+    expect(res.signal).toBeNull();
+    expect(res.stdout).toEqual(Buffer.alloc(0));
+    expect(res.stderr).toEqual(Buffer.alloc(0));
+    expect(res.cleanupFailed).toBe(false);
     await rm(runRoot, { recursive: true, force: true });
   }, 10000);
 });
@@ -1386,5 +1389,4 @@ describe("readNmapXmlSecurely", () => {
     }
   });
 });
-
 

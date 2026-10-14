@@ -20,7 +20,7 @@ vi.mock("./evidence-client.js", async (original) => ({
   publishVhostArtifacts: vi.fn(async () => {}),
   publishHttpProbeArtifacts: vi.fn(async () => {}),
 }));
-import { runSupervisedCommand } from "./process.js";
+import { runSupervisedCommand, verifyExecutable } from "./process.js";
 import { EvidencePublicationError, publishEvidenceArtifacts, publishFfufArtifacts, publishHttpProbeArtifacts, publishVhostArtifacts } from "./evidence-client.js";
 import { runOnce, RunnerShutdownError } from "./runner.js";
 
@@ -54,14 +54,24 @@ const directories: string[] = [];
 beforeEach(() => { vi.clearAllMocks(); });
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
-async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeStart?: boolean; revoke?: boolean; publicationFailure?: boolean; shutdown?: boolean; completionRace?: boolean } = {}) {
+async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeStart?: boolean; revoke?: boolean; publicationFailure?: boolean; shutdown?: boolean; completionRace?: boolean; delayVerification?: boolean; hangPoll?: "initial" | "final"; replayPartition?: boolean; cleanupFailure?: boolean } = {}) {
   const dataDir = await mkdtemp(path.join(tmpdir(), "stonehush-cancel-unit-"));
   directories.push(dataDir);
   const controller = new AbortController();
   let requested = options.beforeStart === true;
   let spawned = false;
+  let nativeStopped = false;
+  let verificationRelease: (() => void) | null = null;
+  let heartbeatCalls = 0;
+  let monotonic = 0;
+  if (options.replayPartition) vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+  if (options.delayVerification) vi.mocked(verifyExecutable).mockImplementationOnce(async () => {
+    requested = true;
+    await new Promise<void>((resolve) => { verificationRelease = resolve; });
+  });
   const completions: { terminalKind: string; reason: string | null }[] = [];
   const probes: string[] = [];
   const cancel = vi.fn();
@@ -72,9 +82,9 @@ async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeSt
       handle.cancel = cancel;
       return handle;
     }
-    requested = true;
+    requested = options.replayPartition !== true;
     const handle = new Promise<ProcessResult>((resolve) => {
-      cancel.mockImplementation(async () => { resolve(captured()); });
+      cancel.mockImplementation(async () => { nativeStopped = true; resolve({ ...captured(), cleanupFailed: options.cleanupFailure === true }); });
     }) as ReturnType<typeof runSupervisedCommand>;
     handle.cancel = cancel;
     return handle;
@@ -95,6 +105,23 @@ async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeSt
       currentFence: "1", terminalKind: null, terminalReason: null, createdAt: now, updatedAt: now, contractVersion: 1 } });
     if (url.endsWith("/events")) return event("started");
     if (url.endsWith("/heartbeat")) {
+      heartbeatCalls += 1;
+      if (options.hangPoll === "initial" || (options.hangPoll === "final" && nativeStopped)) {
+        setImmediate(() => controller.abort());
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("shutdown", "AbortError")), { once: true });
+        });
+      }
+      if (options.replayPartition) {
+        if (heartbeatCalls === 1) throw new TypeError("stored heartbeat response lost");
+        if (heartbeatCalls === 2) monotonic = 10000;
+        else { monotonic = 24000; throw new TypeError("subsequent partition"); }
+      }
+      if (verificationRelease !== null) {
+        const release = verificationRelease;
+        verificationRelease = null;
+        setImmediate(release);
+      }
       if (spawned && options.revoke) return response({ code: "runner_unauthorized" }, 401);
       if (spawned && options.shutdown) controller.abort();
       return response({ leaseExpiresAt: lease.expiresAt, heartbeatSequence: JSON.parse(String(init?.body)).heartbeatSequence,
@@ -163,6 +190,30 @@ describe("operator cancellation reaches installed action handlers", () => {
     expect(publishEvidenceArtifacts).toHaveBeenCalledWith(expect.anything(), f.lease, expect.anything(),
       expect.objectContaining({ isCancelled: false }));
     expect(f.completions.map((entry) => entry.terminalKind)).toEqual(["succeeded", "cancelled"]);
+  });
+  it.each(["ffuf", "vhost"] as const)("does not start %s after intent arrives during verification", async (kind) => {
+    const f = await harness(kind, { delayVerification: true });
+    await f.execution;
+    expect(runSupervisedCommand).not.toHaveBeenCalled();
+    expect(f.completions.at(-1)?.terminalKind).toBe("cancelled");
+  });
+  it.each(["initial", "final"] as const)("shutdown interrupts a hung %s heartbeat poll", async (hangPoll) => {
+    const f = await harness("nmap", { hangPoll });
+    await expect(f.execution).rejects.toBeInstanceOf(RunnerShutdownError);
+    expect(f.completions.at(-1)).toMatchObject({ terminalKind: "failed", reason: "runner_lost" });
+    if (hangPoll === "initial") expect(runSupervisedCommand).not.toHaveBeenCalled();
+    else expect(f.cancel).toHaveBeenCalled();
+  });
+  it("a lost-response heartbeat replay cannot extend the original local authority", async () => {
+    const f = await harness("nmap", { replayPartition: true });
+    await f.execution;
+    expect(f.cancel).toHaveBeenCalled();
+    expect(f.completions.at(-1)).toMatchObject({ terminalKind: "failed", reason: "runner_lost" });
+  });
+  it("unverified native cleanup cannot acknowledge cancellation", async () => {
+    const f = await harness("nmap", { cleanupFailure: true });
+    await f.execution;
+    expect(f.completions.at(-1)).toMatchObject({ terminalKind: "failed", reason: "process_cleanup_failed" });
   });
   it("reports partial publication failure instead of claiming preservation", async () => {
     const f = await harness("nmap", { publicationFailure: true });

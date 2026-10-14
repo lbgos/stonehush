@@ -797,14 +797,16 @@ export function expirePersistedRunLease(
     runState: null,
     cleanupRequired: false,
     resumeRequested: false,
-    pendingWarningJson: expiration.terminal ? action.pendingWarningJson : null,
+    pendingWarningJson: null,
     updatedAt: timestamp,
   });
   if (leaseUpdate.changes !== 1 || runUpdate.changes !== 1 || !actionUpdate.ok) {
     abortInvalidWrite();
   }
 
-  const payload = payloadJsonForStorage({ reason: expiration.reason });
+  const payload = payloadJsonForStorage({ reason: expiration.reason,
+    ...(action.pendingWarningJson === null ? {} : { pendingWarning: JSON.parse(action.pendingWarningJson) }),
+  });
   if (!payload.ok) abortInvalidWrite();
   const inserted = insertEvent(context.client, {
     runId: runRow.id,
@@ -1061,12 +1063,18 @@ export function completePersistedRun(
     if (!transition.ok) return failed(mapDomainError(transition.error));
     const action = loadAction(context.client, runRow.actionId);
     if (action === undefined) return failed({ code: "action_not_found" });
+    // Clear the mutable pending pointer at terminal state, but retain its
+    // exact warning context in the append-only completion event.
+    const terminalPayload = action.pendingWarningJson === null ? payload : payloadJsonForStorage({
+      completion: JSON.parse(payload.value), pendingWarning: JSON.parse(action.pendingWarningJson),
+    });
+    if (!terminalPayload.ok) return terminalPayload;
     const inserted = insertEvent(context.client, {
       runId: runRow.id,
       sequence: presentedSequence,
       type: parsed.data.terminalKind,
       fence: current.fence,
-      payloadJson: payload.value,
+      payloadJson: terminalPayload.value,
       digest,
       createdAt: timestamp,
     });
@@ -1091,6 +1099,7 @@ export function completePersistedRun(
       runState: null,
       cleanupRequired: false,
       resumeRequested: false,
+      pendingWarningJson: null,
       updatedAt: timestamp,
     });
     if (leaseUpdate.changes !== 1 || runUpdate.changes !== 1 || !actionUpdate.ok) {
@@ -1122,6 +1131,10 @@ export function completePersistedRun(
   if (!transition.ok) return failed(mapDomainError(transition.error));
   const action = loadAction(context.client, runRow.actionId);
   if (action === undefined) return failed({ code: "action_not_found" });
+  const terminalPayload = action.pendingWarningJson === null ? payload : payloadJsonForStorage({
+    completion: JSON.parse(payload.value), pendingWarning: JSON.parse(action.pendingWarningJson),
+  });
+  if (!terminalPayload.ok) return terminalPayload;
   // Effective fence is computed once and reused for gating and insertion.
   const fence = current?.fence ?? runRow.currentFence;
   if (fence === "0") return failed({ code: "invalid_run_transition" });
@@ -1135,7 +1148,7 @@ export function completePersistedRun(
     sequence: presentedSequence,
     type: parsed.data.terminalKind,
     fence,
-    payloadJson: payload.value,
+    payloadJson: terminalPayload.value,
     digest,
     createdAt: timestamp,
   });
@@ -1162,6 +1175,7 @@ export function completePersistedRun(
     runState: null,
     cleanupRequired: false,
     resumeRequested: false,
+    pendingWarningJson: null,
     updatedAt: timestamp,
   });
   if (runUpdate.changes !== 1 || !actionUpdate.ok) abortInvalidWrite();
