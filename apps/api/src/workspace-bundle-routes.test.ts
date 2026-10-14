@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { WorkspaceBundleSchema } from "@stonehush/contracts";
 import {
   EngagementRepository,
   ExcerptRepository,
@@ -146,7 +147,7 @@ async function seedArtifact(
     artifactId: string;
     eventSequence: number;
     slot: string;
-    kind: "tool_raw" | "stdout";
+    kind: "tool_raw" | "stdout" | "stderr";
     completeness: "complete";
     bytes: Buffer;
   },
@@ -154,7 +155,7 @@ async function seedArtifact(
   const digest = sha256Hex(input.bytes);
   const now = new Date(Date.UTC(2026, 8, 1, 12, 0)).toISOString();
   const redaction =
-    input.kind === "stdout" ? [1, "runner_stream", 0] : [0, "none", 1];
+    input.kind !== "tool_raw" ? [1, "runner_stream", 0] : [0, "none", 1];
   harness.database.sqlite
     .prepare(
       "insert into evidence_artifacts (artifact_id, contract_version, profile, run_id, fence, event_sequence, artifact_slot, kind, size_bytes, digest, relative_path, completeness, redaction_applied, redaction_boundary, raw_bytes_preserved, created_at) values (?,1,'d3-v1','run-seed-1','1',?,?,?,?,?,?,?,?,?,?,?)",
@@ -348,6 +349,77 @@ function minimalBundle(
 }
 
 describe("workspace bundle routes", () => {
+  it("round-trips empty stdout and stderr without dropping evidence", async () => {
+    const harness = await createHarness();
+    const dataDirectory = temporaryDirectories[temporaryDirectories.length - 1] as string;
+    const { engagementId } = await seedEngagement(harness, dataDirectory);
+    for (const [index, stream] of (["stdout", "stderr"] as const).entries()) {
+      await seedArtifact(harness, dataDirectory, {
+        engagementId,
+        artifactId: `empty-${stream}`,
+        eventSequence: 3 + index,
+        slot: `empty-${stream}`,
+        kind: stream,
+        completeness: "complete",
+        bytes: Buffer.alloc(0),
+      });
+    }
+    const bundle = WorkspaceBundleSchema.parse(
+      await exportBundle(harness.app, engagementId, false),
+    );
+    expect(bundle.evidence.filter((entry) => entry.sizeBytes === 0)).toHaveLength(2);
+    const imported = await harness.app.inject({
+      method: "POST",
+      url: "/api/v1/workspace-bundles/import",
+      payload: bundle,
+    });
+    expect(imported.statusCode).toBe(201);
+    const importedId: string = imported.json().engagementId;
+    const roundTrip = WorkspaceBundleSchema.parse(
+      await exportBundle(harness.app, importedId, false),
+    );
+    expect(roundTrip.evidence).toHaveLength(4);
+    for (const entry of roundTrip.evidence.filter((row) => row.sizeBytes === 0)) {
+      expect(entry.contentBase64).toBe("");
+      expect(entry.digest).toBe(sha256Hex(Buffer.alloc(0)));
+      expect(entry.artifactId).not.toBe(`empty-${entry.kind}`);
+    }
+  });
+
+  it("rejects empty or malformed evidence with wrong size or digest before writes", async () => {
+    const harness = await createHarness();
+    const valid = {
+      artifactId: "empty-stderr",
+      kind: "stderr",
+      sizeBytes: 0,
+      digest: sha256Hex(Buffer.alloc(0)),
+      completeness: "complete",
+      artifactSlot: "stderr",
+      originalRunId: "source-run",
+      contentBase64: "",
+    };
+    const before = countRows(harness, "engagements");
+    for (const patch of [
+      { sizeBytes: 1 },
+      { digest: sha256Hex("nonempty") },
+      { contentBase64: "!" },
+      { contentBase64: " ", sizeBytes: 0 },
+      { contentBase64: "YQ==", sizeBytes: 0 },
+      { contentBase64: "YQ==", sizeBytes: 1 },
+      { contentBase64: "YR==", sizeBytes: 1, digest: sha256Hex("a") },
+    ]) {
+      const response = await harness.app.inject({
+        method: "POST",
+        url: "/api/v1/workspace-bundles/import",
+        payload: minimalBundle({ evidence: [{ ...valid, ...patch }] }),
+      });
+      expect(response.statusCode).toBe(422);
+      expect(response.json()).toEqual({ code: "bundle_digest_mismatch" });
+      expect(countRows(harness, "engagements")).toBe(before);
+      expect(countRows(harness, "evidence_artifacts")).toBe(0);
+    }
+  });
+
   it("round-trips leads, excerpts, findings, and byte-identical evidence", async () => {
     const harness = await createHarness();
     const dataDirectory = temporaryDirectories[temporaryDirectories.length - 1] as string;

@@ -307,7 +307,9 @@ function decodeBounded(
   } catch {
     return undefined;
   }
-  if (bytes.length !== expectedSizeBytes) return undefined;
+  if (bytes.length !== expectedSizeBytes || bytes.toString("base64") !== contentBase64) {
+    return undefined;
+  }
   return bytes;
 }
 

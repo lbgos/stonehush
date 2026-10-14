@@ -90,7 +90,8 @@ export const WorkspaceBundleEvidenceSchema = z.strictObject({
   completeness: PublishedCompletenessSchema,
   artifactSlot: OpaqueArtifactIdSchema,
   originalRunId: z.string().min(1).max(255),
-  contentBase64: z.string().min(1).max(WORKSPACE_BUNDLE_EVIDENCE_BASE64_MAX),
+  // Empty streams are valid evidence and encode as an empty string.
+  contentBase64: z.string().max(WORKSPACE_BUNDLE_EVIDENCE_BASE64_MAX),
 });
 
 export type WorkspaceBundleEvidence = z.infer<
