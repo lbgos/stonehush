@@ -122,7 +122,7 @@ export function SettingsNav({ onCloseMobile }: { onCloseMobile?: () => void }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="settings-nav">
-      <div className="mx-2 mb-2.5 flex h-8 min-h-8 items-center gap-2 overflow-hidden rounded-lg px-2 focus-within:bg-accent">
+      <div className="settings-search mx-2 mb-2.5 flex h-8 min-h-8 items-center gap-2 overflow-hidden rounded-lg px-2 focus-within:bg-accent">
         <SearchIcon />
         <input
           ref={inputRef}

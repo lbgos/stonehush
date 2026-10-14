@@ -808,6 +808,11 @@ html[data-theme="light"] .glass-slider {
 /* Coarse input needs a full touch target even when desktop controls are dense.
    Checkbox and radio inputs keep their glyph size; their labels own the hit area. */
 @media (pointer: coarse) {
+  .settings-search {
+    height: auto;
+    min-height: 44px;
+  }
+
   button,
   select,
   input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="file"]),

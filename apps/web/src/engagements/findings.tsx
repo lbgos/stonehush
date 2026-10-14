@@ -593,14 +593,16 @@ function FindingRow({
             title={finding.title}
           >
             {onToggleAdvisor !== undefined ? (
-              <input
-                type="checkbox"
-                checked={selectedForAdvisor === true}
-                disabled={archived}
-                onChange={onToggleAdvisor}
-                aria-label={`Select finding ${finding.title} for advisor`}
-                className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary"
-              />
+              <label className="inline-flex shrink-0 items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={selectedForAdvisor === true}
+                  disabled={archived}
+                  onChange={onToggleAdvisor}
+                  aria-label={`Select finding ${finding.title} for advisor`}
+                  className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary"
+                />
+              </label>
             ) : null}
             <span className="min-w-0 flex-1 break-all">{finding.title}</span>
           </p>
