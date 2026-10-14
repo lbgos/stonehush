@@ -47,6 +47,7 @@ import {
 import {
   allocateQueuedRun,
   cancelQueuedRunForAction,
+  requestRunCancellationForAction,
 } from "./run.js";
 import * as schema from "./schema.js";
 import {
@@ -643,6 +644,11 @@ function writeActionProjection(
     persisted.action.state,
     next.state,
   );
+
+  if (next.runState === "cancel_requested" && persisted.action.runState === "running") {
+    const requested = requestRunCancellationForAction(context, next.actionId);
+    if (!requested.ok) throw new Error(`action persist write aborted: ${requested.error.code}`);
+  }
 
   return loadPersistedAction(context.client, engagementId, next.actionId);
 }

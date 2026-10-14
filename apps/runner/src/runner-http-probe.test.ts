@@ -239,6 +239,7 @@ describe("runner http probe abort and fence", () => {
       }
       if (u.includes("/events") && !u.includes("/artifacts")) return startedResponse();
       if (u.includes("/heartbeat")) {
+        if (probed.length === 0) return apiResponse({ leaseExpiresAt: new Date(Date.now() + 30000).toISOString(), heartbeatSequence: 2 });
         return apiResponse({ code: "stale_fence" }, 409);
       }
       if (u.includes("/complete") && !u.includes("/artifacts")) {

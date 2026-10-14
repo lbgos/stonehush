@@ -6,6 +6,7 @@ import {
   bindActionSnapshot,
   EngagementRepository,
   OperatorCommandRepository,
+  RunRepository,
   openEngagementDatabase,
 } from "@stonehush/db";
 import { afterEach, describe, expect, it } from "vitest";
@@ -1114,7 +1115,7 @@ describe("action query and mutation routes", () => {
   });
 
   it("rejects late-warning continue across ownership, archive, and lifecycle boundaries", async () => {
-    const { app, engagementRepository } = await fixture();
+    const { app, database, engagementRepository } = await fixture();
     const engagement = await createEngagement(app);
     const base = `/api/v1/engagements/${engagement.id}`;
     const scope = (
@@ -1191,11 +1192,12 @@ describe("action query and mutation routes", () => {
       }),
     ).toMatchObject({ statusCode: 404, body: '{"code":"action_not_found"}' });
 
-    const activated = engagementRepository.activateAction({
-      engagementId: engagement.id,
-      actionId,
-      expectedRevision: planned.revision,
-    });
+    const runRepository = new RunRepository(database.db);
+    const run = database.sqlite.prepare("select id from runs where action_id = ?").get(actionId) as { id: string };
+    const acquired = runRepository.acquireLease({ runId: run.id, runnerId: "runner-late-fixture",
+      sessionId: "session-late-fixture", serverNow: "2026-08-12T12:14:00.000Z" });
+    if (!acquired.ok) throw new Error(acquired.error.code);
+    const activated = engagementRepository.getAction(engagement.id, actionId);
     if (!activated.ok) throw new Error(activated.error.code);
     const paused = engagementRepository.recordLateWarning({
       engagementId: engagement.id,

@@ -254,6 +254,7 @@ export function registerRunnerControlRoutes(
     const validated = RunnerHeartbeatResponseSchema.safeParse({
       leaseExpiresAt,
       heartbeatSequence,
+      cancellationRequested: result.value.cancellationRequested,
     });
     if (!validated.success) {
       return sendRunnerError(reply, 500, { code: "invalid_persisted_data" });

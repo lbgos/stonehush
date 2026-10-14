@@ -417,590 +417,694 @@ export async function runOnce(
     else signal.addEventListener("abort", onAbortAfterStarted, { once: true });
   }
 
-  const startHeartbeat = (): void => {
-    hbTimer = setInterval(() => {
-      if (signal?.aborted) {
-        hbFailed = true;
-        if (hbTimer !== null) clearInterval(hbTimer);
-        return;
-      }
-      const hbSendMonotonic = globalThis.performance.now();
-      const nextSeq = hbSeq + 1;
-      void heartbeat(config, lease, nextSeq)
-        .then(() => {
-          hbSeq = nextSeq;
-          authorityDeadlineMonotonic = hbSendMonotonic + config.leaseDurationMs;
-        })
-        .catch((e: unknown) => {
-          const code = (e as { code?: string })?.code;
-          if (code === "stale_fence" || code === "lease_expired" || code === "lease_owner_mismatch") {
-            hbFailed = true;
-            if (hbTimer !== null) clearInterval(hbTimer);
-          }
-        });
-    }, config.heartbeatIntervalMs);
-    if (hbTimer !== null && typeof (hbTimer as unknown as { unref?: () => void }).unref === "function") {
-      (hbTimer as unknown as { unref: () => void }).unref?.();
+  let cancellationRequested = false;
+  let heartbeatInFlight: Promise<void> | null = null;
+  const pollHeartbeat = (): Promise<void> => {
+    if (hbFailed || signal?.aborted || globalThis.performance.now() >= authorityDeadlineMonotonic - 7000) {
+      hbFailed = true;
+      return Promise.resolve();
     }
+    if (heartbeatInFlight !== null) return heartbeatInFlight;
+    const hbSendMonotonic = globalThis.performance.now();
+    const nextSeq = hbSeq + 1;
+    heartbeatInFlight = heartbeat(config, lease, nextSeq)
+      .then((response) => {
+        if (hbFailed || globalThis.performance.now() >= authorityDeadlineMonotonic - 7000) {
+          hbFailed = true;
+          return;
+        }
+        hbSeq = nextSeq;
+        authorityDeadlineMonotonic = hbSendMonotonic + config.leaseDurationMs;
+        cancellationRequested ||= response.cancellationRequested === true;
+      })
+      .catch((e: unknown) => {
+        const error = e as { code?: string; status?: number };
+        if (error.status === 401 || error.status === 403 ||
+          error.code === "stale_fence" || error.code === "lease_expired" || error.code === "lease_owner_mismatch") {
+          hbFailed = true;
+        }
+      })
+      .finally(() => { heartbeatInFlight = null; });
+    return heartbeatInFlight;
   };
-  startHeartbeat();
+  hbTimer = setInterval(() => {
+    if (signal?.aborted) return;
+    void pollHeartbeat();
+  }, config.heartbeatIntervalMs);
+  hbTimer.unref();
 
   const cleanup = (): void => {
     if (hbTimer !== null) clearInterval(hbTimer);
     if (signal) signal.removeEventListener("abort", onAbortAfterStarted);
   };
 
-  const prepared = prepareNmapExecution({
-    snapshot: acquired.actionSnapshot,
-    runRoot: config.runRoot,
-    runId: lease.runId,
-    fence: lease.fence,
-  });
-  let executableUnavailable = false;
-  if (prepared.ok) {
-    try {
-      await verifyExecutable(config.executable);
-    } catch {
-      executableUnavailable = true;
+  try {
+    const prepared = prepareNmapExecution({
+      snapshot: acquired.actionSnapshot,
+      runRoot: config.runRoot,
+      runId: lease.runId,
+      fence: lease.fence,
+    });
+    let executableUnavailable = false;
+    if (prepared.ok) {
+      try {
+        await verifyExecutable(config.executable);
+      } catch {
+        executableUnavailable = true;
+      }
     }
-  }
 
-  const isAuthorityLost = (): boolean =>
-    Boolean(signal?.aborted) ||
-    shutdownAfterStarted ||
-    hbFailed ||
-    globalThis.performance.now() >= authorityDeadlineMonotonic - 7000;
+    const isAuthorityLost = (): boolean =>
+      Boolean(signal?.aborted) ||
+      shutdownAfterStarted ||
+      hbFailed ||
+      globalThis.performance.now() >= authorityDeadlineMonotonic - 7000;
 
-  if (isAuthorityLost()) {
-    cleanup();
-    await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
-    if (signal?.aborted) throw new RunnerShutdownError();
-    return true;
-  }
-
-  // vhost discovery runs before ffuf content discovery: the vhost marker
-  // is an IP target with Host header fuzzing, so it never collides with a
-  // URL-origin ffuf action. Corrupt markers fail closed here.
-  const vhost = prepareVhostExecution({
-    snapshot: acquired.actionSnapshot,
-    runRoot: config.runRoot,
-    runId: lease.runId,
-    fence: lease.fence,
-  });
-  if (vhost.ok || vhost.reason === "invalid_action_snapshot") {
-    if (!vhost.ok) {
-      cleanup();
-      await completeRun(config, lease, nextSequence, "failed", "invalid_ffuf_vhost_contract").catch(() => {});
-      return true;
-    }
-    try {
-      await verifyExecutable(FFUF_DEFAULT_EXECUTABLE);
-    } catch {
-      cleanup();
-      await completeRun(config, lease, nextSequence, "failed", "ffuf_missing").catch(() => {});
-      return true;
-    }
     if (isAuthorityLost()) {
-      cleanup();
       await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
       if (signal?.aborted) throw new RunnerShutdownError();
       return true;
     }
 
-    let captured: ProcessResult | null = null;
-    let cancelSpawn: (() => Promise<void>) | null = null;
-    const vhostSpawn = (request: { executable: string; argv: readonly string[] }) => {
-      const handle = runSupervisedCommand({
-        runId: lease.runId,
-        leaseId: lease.leaseId,
-        fence: lease.fence,
-        runRoot: config.runRoot,
-        executable: request.executable,
-        argv: request.argv,
-        secrets: [config.secret],
-      });
-      cancelSpawn = () => handle.cancel();
-      return handle.then((result) => {
-        captured = result;
-        return { exitCode: result.exitCode };
-      });
+    const finishOperatorCancellation = async (
+      publish: () => Promise<void>,
+      cleanupFailed = false,
+    ): Promise<boolean> => {
+      if (isAuthorityLost()) {
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
+      }
+      try {
+        await publish();
+      } catch (e) {
+        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
+        if (e instanceof EvidencePublicationError) throw e;
+        throw new EvidencePublicationError("evidence_publication_failed");
+      }
+      if (isAuthorityLost()) {
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
+      }
+      await completeRun(config, lease, nextSequence,
+        cleanupFailed ? "failed" : "cancelled",
+        cleanupFailed ? "process_cleanup_failed" : "operator_cancelled");
+      return true;
     };
-    const readVhostOutput = async (absolutePath: string): Promise<Buffer> => {
-      if (absolutePath !== vhost.options.outputJsonPath) throw new Error("vhost_json_unavailable");
-      return readVhostJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+    const completeExecution = async (kind: "succeeded" | "failed", reason: string | null): Promise<void> => {
+      if (isAuthorityLost()) {
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return;
+      }
+      try {
+        await completeRun(config, lease, nextSequence, kind, reason);
+      } catch (e) {
+        // Cancellation and success serialize in the control plane. If cancel
+        // committed first after publication, retain immutable completed bytes
+        // and acknowledge cleanup with the still-current lease.
+        if ((e as { code?: string }).code !== "invalid_run_transition") throw e;
+        await pollHeartbeat();
+        if (!cancellationRequested || isAuthorityLost()) throw e;
+        await completeRun(config, lease, nextSequence, "cancelled", "operator_cancelled");
+      }
     };
-    let vhostFenceCheck: ReturnType<typeof setInterval> | null = null;
-    vhostFenceCheck = setInterval(() => {
-      const nowMonotonic = globalThis.performance.now();
-      if (nowMonotonic >= authorityDeadlineMonotonic - 7000 || hbFailed || signal?.aborted || shutdownAfterStarted) {
-        void cancelSpawn?.();
+
+    await pollHeartbeat();
+    if (isAuthorityLost()) {
+      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+      if (signal?.aborted) throw new RunnerShutdownError();
+      return true;
+    }
+    if (cancellationRequested) {
+      return await finishOperatorCancellation(() => publishHttpProbeArtifacts(config, lease, {
+        stdout: Buffer.alloc(0), rawArtifacts: [], isCancelled: true, eventSequence: nextSequence,
+      }));
+    }
+
+    // vhost discovery runs before ffuf content discovery: the vhost marker
+    // is an IP target with Host header fuzzing, so it never collides with a
+    // URL-origin ffuf action. Corrupt markers fail closed here.
+    const vhost = prepareVhostExecution({
+      snapshot: acquired.actionSnapshot,
+      runRoot: config.runRoot,
+      runId: lease.runId,
+      fence: lease.fence,
+    });
+    if (vhost.ok || vhost.reason === "invalid_action_snapshot") {
+      if (!vhost.ok) {
+        await completeRun(config, lease, nextSequence, "failed", "invalid_ffuf_vhost_contract").catch(() => {});
+        return true;
+      }
+      try {
+        await verifyExecutable(FFUF_DEFAULT_EXECUTABLE);
+      } catch {
+        await completeRun(config, lease, nextSequence, "failed", "ffuf_missing").catch(() => {});
+        return true;
+      }
+      if (isAuthorityLost()) {
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
+      }
+
+      let captured: ProcessResult | null = null;
+      let cancelSpawn: (() => Promise<void>) | null = null;
+      const vhostSpawn = (request: { executable: string; argv: readonly string[] }) => {
+        const handle = runSupervisedCommand({
+          runId: lease.runId,
+          leaseId: lease.leaseId,
+          fence: lease.fence,
+          runRoot: config.runRoot,
+          executable: request.executable,
+          argv: request.argv,
+          secrets: [config.secret],
+        });
+        cancelSpawn = () => handle.cancel();
+        return handle.then((result) => {
+          captured = result;
+          return { exitCode: result.exitCode };
+        });
+      };
+      const readVhostOutput = async (absolutePath: string): Promise<Buffer> => {
+        if (absolutePath !== vhost.options.outputJsonPath) throw new Error("vhost_json_unavailable");
+        return readVhostJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+      };
+      let vhostFenceCheck: ReturnType<typeof setInterval> | null = null;
+      vhostFenceCheck = setInterval(() => {
+        if (cancellationRequested || isAuthorityLost()) {
+          void cancelSpawn?.();
+          if (vhostFenceCheck !== null) clearInterval(vhostFenceCheck);
+        }
+      }, 500);
+      if (typeof (vhostFenceCheck as unknown as { unref?: () => void }).unref === "function") {
+        (vhostFenceCheck as unknown as { unref: () => void }).unref?.();
+      }
+
+      let discovery: Awaited<ReturnType<typeof runVhostDiscovery>>;
+      try {
+        discovery = await runVhostDiscovery(
+          {
+            runContext: { runId: lease.runId, leaseId: lease.leaseId, fence: lease.fence, runRoot: config.runRoot },
+            ffufExecutable: FFUF_DEFAULT_EXECUTABLE,
+            spawn: vhostSpawn,
+            readOutputJson: readVhostOutput,
+          },
+          vhost.options,
+        );
+      } catch {
+        discovery = { ok: false, error: { code: "ffuf_parse_error" } };
+      } finally {
         if (vhostFenceCheck !== null) clearInterval(vhostFenceCheck);
       }
-    }, 500);
-    if (typeof (vhostFenceCheck as unknown as { unref?: () => void }).unref === "function") {
-      (vhostFenceCheck as unknown as { unref: () => void }).unref?.();
-    }
 
-    let discovery: Awaited<ReturnType<typeof runVhostDiscovery>>;
-    try {
-      discovery = await runVhostDiscovery(
-        {
-          runContext: { runId: lease.runId, leaseId: lease.leaseId, fence: lease.fence, runRoot: config.runRoot },
-          ffufExecutable: FFUF_DEFAULT_EXECUTABLE,
-          spawn: vhostSpawn,
-          readOutputJson: readVhostOutput,
-        },
-        vhost.options,
-      );
-    } catch {
-      discovery = { ok: false, error: { code: "ffuf_parse_error" } };
-    } finally {
-      if (vhostFenceCheck !== null) clearInterval(vhostFenceCheck);
-    }
-    cleanup();
+      const readPartialJson = async (): Promise<Buffer | undefined> => {
+        try {
+          return await readVhostJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+        } catch {
+          return undefined;
+        }
+      };
 
-    const readPartialJson = async (): Promise<Buffer | undefined> => {
-      try {
-        return await readVhostJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
-      } catch {
-        return undefined;
+      if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
+        if (captured !== null) {
+          const partial = await readPartialJson();
+          try {
+            await publishVhostArtifacts(config, lease, captured, {
+              isCancelled: true,
+              eventSequence: nextSequence,
+              ...(partial === undefined ? {} : { vhostJson: partial }),
+              vhostExitCode: discovery.ok ? discovery.exitCode : null,
+            });
+          } catch {}
+        }
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
       }
-    };
 
-    if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
-      if (captured !== null) {
+      await pollHeartbeat();
+      if (cancellationRequested) {
         const partial = await readPartialJson();
+        const result = captured as ProcessResult | null;
+        if (result === null) {
+          await completeRun(config, lease, nextSequence, "failed", "process_cleanup_failed");
+          return true;
+        }
+        return await finishOperatorCancellation(() => publishVhostArtifacts(config, lease, result, {
+          isCancelled: true,
+          eventSequence: nextSequence,
+          ...(partial === undefined ? {} : { vhostJson: partial }),
+          vhostExitCode: discovery.ok ? discovery.exitCode : null,
+        }), result.cleanupFailed === true);
+      }
+
+      if (captured !== null) {
+        const preserved = await readPartialJson();
         try {
           await publishVhostArtifacts(config, lease, captured, {
-            isCancelled: true,
+            isCancelled: false,
             eventSequence: nextSequence,
-            ...(partial === undefined ? {} : { vhostJson: partial }),
+            ...(preserved === undefined ? {} : { vhostJson: preserved }),
             vhostExitCode: discovery.ok ? discovery.exitCode : null,
           });
-        } catch {}
+        } catch (e) {
+          await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
+          if (e instanceof EvidencePublicationError) throw e;
+          throw new EvidencePublicationError("evidence_publication_failed");
+        }
       }
-      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
-      if (signal?.aborted) throw new RunnerShutdownError();
+      if (!discovery.ok) {
+        const reason =
+          discovery.error.code === "invalid_ffuf_vhost_contract"
+            ? "invalid_ffuf_vhost_contract"
+            : discovery.error.code;
+        await completeRun(config, lease, nextSequence, "failed", reason).catch(() => {});
+        return true;
+      }
+      if (discovery.exitCode === 0) {
+        await completeExecution("succeeded", null);
+      } else {
+        await completeExecution("failed", "process_failed");
+      }
       return true;
     }
 
-    if (captured !== null) {
-      const preserved = await readPartialJson();
+    // ffuf discovery runs before the HTTP probe branch: an ffuf origin is also
+    // a URL target, so the ffuf marker must win dispatch. Corrupt markers fail
+    // closed here instead of falling through to a plain probe.
+    const ffuf = prepareFfufExecution({
+      snapshot: acquired.actionSnapshot,
+      runRoot: config.runRoot,
+      runId: lease.runId,
+      fence: lease.fence,
+    });
+    if (ffuf.ok || ffuf.reason === "invalid_action_snapshot") {
+      if (!ffuf.ok) {
+        await completeRun(config, lease, nextSequence, "failed", "invalid_ffuf_action_contract").catch(() => {});
+        return true;
+      }
       try {
-        await publishVhostArtifacts(config, lease, captured, {
+        await verifyExecutable(FFUF_DEFAULT_EXECUTABLE);
+      } catch {
+        await completeRun(config, lease, nextSequence, "failed", "ffuf_missing").catch(() => {});
+        return true;
+      }
+      if (isAuthorityLost()) {
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
+      }
+
+      let captured: ProcessResult | null = null;
+      let cancelSpawn: (() => Promise<void>) | null = null;
+      const ffufSpawn = (request: { executable: string; argv: readonly string[] }) => {
+        const handle = runSupervisedCommand({
+          runId: lease.runId,
+          leaseId: lease.leaseId,
+          fence: lease.fence,
+          runRoot: config.runRoot,
+          executable: request.executable,
+          argv: request.argv,
+          secrets: [config.secret],
+        });
+        cancelSpawn = () => handle.cancel();
+        return handle.then((result) => {
+          captured = result;
+          return { exitCode: result.exitCode };
+        });
+      };
+      const readFfufOutput = async (absolutePath: string): Promise<Buffer> => {
+        if (absolutePath !== ffuf.options.outputJsonPath) throw new Error("ffuf_json_unavailable");
+        return readFfufJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+      };
+      let ffufFenceCheck: ReturnType<typeof setInterval> | null = null;
+      ffufFenceCheck = setInterval(() => {
+        if (cancellationRequested || isAuthorityLost()) {
+          void cancelSpawn?.();
+          if (ffufFenceCheck !== null) clearInterval(ffufFenceCheck);
+        }
+      }, 500);
+      if (typeof (ffufFenceCheck as unknown as { unref?: () => void }).unref === "function") {
+        (ffufFenceCheck as unknown as { unref: () => void }).unref?.();
+      }
+
+      let discovery: Awaited<ReturnType<typeof runFfufDiscovery>>;
+      try {
+        discovery = await runFfufDiscovery(
+          {
+            runContext: { runId: lease.runId, leaseId: lease.leaseId, fence: lease.fence, runRoot: config.runRoot },
+            ffufExecutable: FFUF_DEFAULT_EXECUTABLE,
+            spawn: ffufSpawn,
+            readOutputJson: readFfufOutput,
+          },
+          ffuf.options,
+        );
+      } catch {
+        discovery = { ok: false, error: { code: "ffuf_parse_error" } };
+      } finally {
+        if (ffufFenceCheck !== null) clearInterval(ffufFenceCheck);
+      }
+
+      const readPartialJson = async (): Promise<Buffer | undefined> => {
+        try {
+          return await readFfufJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+        } catch {
+          return undefined;
+        }
+      };
+
+      if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
+        if (captured !== null) {
+          const partial = await readPartialJson();
+          try {
+            await publishFfufArtifacts(config, lease, captured, {
+              isCancelled: true,
+              eventSequence: nextSequence,
+              ...(partial === undefined ? {} : { ffufJson: partial }),
+              ffufExitCode: discovery.ok ? discovery.exitCode : null,
+            });
+          } catch {}
+        }
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
+      }
+
+      await pollHeartbeat();
+      if (cancellationRequested) {
+        const partial = await readPartialJson();
+        const result = captured as ProcessResult | null;
+        if (result === null) {
+          await completeRun(config, lease, nextSequence, "failed", "process_cleanup_failed");
+          return true;
+        }
+        return await finishOperatorCancellation(() => publishFfufArtifacts(config, lease, result, {
+          isCancelled: true,
+          eventSequence: nextSequence,
+          ...(partial === undefined ? {} : { ffufJson: partial }),
+          ffufExitCode: discovery.ok ? discovery.exitCode : null,
+        }), result.cleanupFailed === true);
+      }
+
+      if (captured !== null) {
+        const preserved = await readPartialJson();
+        try {
+          await publishFfufArtifacts(config, lease, captured, {
+            isCancelled: false,
+            eventSequence: nextSequence,
+            ...(preserved === undefined ? {} : { ffufJson: preserved }),
+            ffufExitCode: discovery.ok ? discovery.exitCode : null,
+          });
+        } catch (e) {
+          await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
+          if (e instanceof EvidencePublicationError) throw e;
+          throw new EvidencePublicationError("evidence_publication_failed");
+        }
+      }
+      if (!discovery.ok) {
+        await completeRun(config, lease, nextSequence, "failed", discovery.error.code).catch(() => {});
+        return true;
+      }
+      if (discovery.exitCode === 0) {
+        await completeExecution("succeeded", null);
+      } else {
+        await completeExecution("failed", "process_failed");
+      }
+      return true;
+    }
+
+    const probeUrls = probeUrlsFromSnapshot(acquired.actionSnapshot);
+    if (probeUrls !== null) {
+      const httpProbeController = new AbortController();
+      const onOuterAbortHttp = (): void => {
+        try {
+          httpProbeController.abort();
+        } catch {}
+      };
+      if (signal) {
+        if (signal.aborted) {
+          try {
+            httpProbeController.abort();
+          } catch {}
+        } else {
+          signal.addEventListener("abort", onOuterAbortHttp, { once: true });
+        }
+      }
+      let httpFenceCheck: ReturnType<typeof setInterval> | null = setInterval(() => {
+        if (cancellationRequested || isAuthorityLost()) {
+          try {
+            httpProbeController.abort();
+          } catch {}
+          if (httpFenceCheck !== null) {
+            clearInterval(httpFenceCheck);
+            httpFenceCheck = null;
+          }
+        }
+      }, 500);
+      if (typeof (httpFenceCheck as unknown as { unref?: () => void }).unref === "function") {
+        (httpFenceCheck as unknown as { unref: () => void }).unref?.();
+      }
+      if (isAuthorityLost()) {
+        try {
+          httpProbeController.abort();
+        } catch {}
+      }
+      const rawArtifacts: Buffer[] = [];
+      let probeFailed = false;
+      let probeAborted = false;
+      for (const url of probeUrls) {
+        if (httpProbeController.signal.aborted || cancellationRequested || isAuthorityLost()) {
+          probeAborted = true;
+          break;
+        }
+        try {
+          const probed = await probeOneUrl(url, { signal: httpProbeController.signal });
+          rawArtifacts.push(probed.rawBytes);
+        } catch (e) {
+          if (
+            e instanceof ProbeAbortedError ||
+            e instanceof RunnerShutdownError ||
+            (e as { name?: string })?.name === "AbortError" ||
+            httpProbeController.signal.aborted ||
+            isAuthorityLost()
+          ) {
+            probeAborted = true;
+          } else {
+            probeFailed = true;
+          }
+          break;
+        }
+      }
+      if (httpFenceCheck !== null) {
+        clearInterval(httpFenceCheck);
+        httpFenceCheck = null;
+      }
+      if (signal) signal.removeEventListener("abort", onOuterAbortHttp);
+      await pollHeartbeat();
+      if (cancellationRequested && !isAuthorityLost()) {
+        return await finishOperatorCancellation(() => publishHttpProbeArtifacts(config, lease, {
+          stdout: Buffer.from(`probed ${String(rawArtifacts.length)} of ${String(probeUrls.length)} url(s) with http-probe-raw-v1`, "utf8"),
+          rawArtifacts,
+          isCancelled: true,
+          eventSequence: nextSequence,
+        }));
+      }
+      if (probeAborted || isAuthorityLost()) {
+        // Preserve a fully completed URL set as partial evidence only when the
+        // fence still permits publication. A partial URL subset is discarded to
+        // preserve all-or-nothing run-target correspondence; an expired or
+        // superseded lease is never published.
+        const fenceStillValid =
+          !hbFailed && globalThis.performance.now() < authorityDeadlineMonotonic - 7000;
+        if (rawArtifacts.length === probeUrls.length && rawArtifacts.length > 0 && fenceStillValid) {
+          try {
+            const stdout = Buffer.from(
+              `probed ${String(rawArtifacts.length)} url(s) with http-probe-raw-v1`,
+              "utf8",
+            );
+            await publishHttpProbeArtifacts(config, lease, {
+              stdout,
+              rawArtifacts,
+              isCancelled: true,
+              eventSequence: nextSequence,
+            });
+          } catch {}
+        }
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
+      }
+      if (probeFailed || rawArtifacts.length !== probeUrls.length) {
+        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
+        throw new EvidencePublicationError("evidence_publication_failed");
+      }
+      if (isAuthorityLost()) {
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
+      }
+      try {
+        const stdout = Buffer.from(
+          `probed ${String(rawArtifacts.length)} url(s) with http-probe-raw-v1`,
+          "utf8",
+        );
+        await publishHttpProbeArtifacts(config, lease, {
+          stdout,
+          rawArtifacts,
           isCancelled: false,
           eventSequence: nextSequence,
-          ...(preserved === undefined ? {} : { vhostJson: preserved }),
-          vhostExitCode: discovery.ok ? discovery.exitCode : null,
         });
       } catch (e) {
-        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
+        try {
+          await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed");
+        } catch {}
         if (e instanceof EvidencePublicationError) throw e;
         throw new EvidencePublicationError("evidence_publication_failed");
       }
-    }
-    if (!discovery.ok) {
-      const reason =
-        discovery.error.code === "invalid_ffuf_vhost_contract"
-          ? "invalid_ffuf_vhost_contract"
-          : discovery.error.code;
-      await completeRun(config, lease, nextSequence, "failed", reason).catch(() => {});
+      await completeExecution("succeeded", null);
       return true;
     }
-    if (discovery.exitCode === 0) {
-      await completeRun(config, lease, nextSequence, "succeeded", null);
-    } else {
-      await completeRun(config, lease, nextSequence, "failed", "process_failed");
-    }
-    return true;
-  }
 
-  // ffuf discovery runs before the HTTP probe branch: an ffuf origin is also
-  // a URL target, so the ffuf marker must win dispatch. Corrupt markers fail
-  // closed here instead of falling through to a plain probe.
-  const ffuf = prepareFfufExecution({
-    snapshot: acquired.actionSnapshot,
-    runRoot: config.runRoot,
-    runId: lease.runId,
-    fence: lease.fence,
-  });
-  if (ffuf.ok || ffuf.reason === "invalid_action_snapshot") {
-    if (!ffuf.ok) {
-      cleanup();
-      await completeRun(config, lease, nextSequence, "failed", "invalid_ffuf_action_contract").catch(() => {});
+    if (!prepared.ok) {
+      await completeRun(config, lease, nextSequence, "failed", prepared.reason).catch(() => {});
       return true;
     }
+
+    if (executableUnavailable) {
+      await completeRun(config, lease, nextSequence, "failed", "nmap_unavailable").catch(() => {});
+      return true;
+    }
+
+    const nmapArgv = prepared.argv;
+
+    let result: Awaited<ReturnType<typeof runSupervisedCommand>> | null = null;
+    let cancelledByFence = false;
+    let handle: ReturnType<typeof runSupervisedCommand> | null = null;
+    let fenceCheck: ReturnType<typeof setInterval> | null = null;
+
+    const fullCleanup = (): void => {
+      if (fenceCheck !== null) clearInterval(fenceCheck);
+    };
+
     try {
-      await verifyExecutable(FFUF_DEFAULT_EXECUTABLE);
-    } catch {
-      cleanup();
-      await completeRun(config, lease, nextSequence, "failed", "ffuf_missing").catch(() => {});
-      return true;
-    }
-    if (isAuthorityLost()) {
-      cleanup();
-      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
-      if (signal?.aborted) throw new RunnerShutdownError();
-      return true;
-    }
-
-    let captured: ProcessResult | null = null;
-    let cancelSpawn: (() => Promise<void>) | null = null;
-    const ffufSpawn = (request: { executable: string; argv: readonly string[] }) => {
-      const handle = runSupervisedCommand({
+      throwIfAborted(signal);
+      handle = runSupervisedCommand({
         runId: lease.runId,
         leaseId: lease.leaseId,
         fence: lease.fence,
         runRoot: config.runRoot,
-        executable: request.executable,
-        argv: request.argv,
+        executable: config.executable,
+        argv: nmapArgv,
         secrets: [config.secret],
       });
-      cancelSpawn = () => handle.cancel();
-      return handle.then((result) => {
-        captured = result;
-        return { exitCode: result.exitCode };
-      });
-    };
-    const readFfufOutput = async (absolutePath: string): Promise<Buffer> => {
-      if (absolutePath !== ffuf.options.outputJsonPath) throw new Error("ffuf_json_unavailable");
-      return readFfufJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
-    };
-    let ffufFenceCheck: ReturnType<typeof setInterval> | null = null;
-    ffufFenceCheck = setInterval(() => {
-      const nowMonotonic = globalThis.performance.now();
-      if (nowMonotonic >= authorityDeadlineMonotonic - 7000 || hbFailed || signal?.aborted || shutdownAfterStarted) {
-        void cancelSpawn?.();
-        if (ffufFenceCheck !== null) clearInterval(ffufFenceCheck);
-      }
-    }, 500);
-    if (typeof (ffufFenceCheck as unknown as { unref?: () => void }).unref === "function") {
-      (ffufFenceCheck as unknown as { unref: () => void }).unref?.();
-    }
 
-    let discovery: Awaited<ReturnType<typeof runFfufDiscovery>>;
-    try {
-      discovery = await runFfufDiscovery(
-        {
-          runContext: { runId: lease.runId, leaseId: lease.leaseId, fence: lease.fence, runRoot: config.runRoot },
-          ffufExecutable: FFUF_DEFAULT_EXECUTABLE,
-          spawn: ffufSpawn,
-          readOutputJson: readFfufOutput,
-        },
-        ffuf.options,
-      );
+      if (signal?.aborted || shutdownAfterStarted) {
+        cancelledByFence = true;
+        void handle.cancel();
+      }
+
+      fenceCheck = setInterval(() => {
+        if (cancellationRequested || isAuthorityLost()) {
+          cancelledByFence = isAuthorityLost();
+          void handle?.cancel();
+          if (fenceCheck !== null) clearInterval(fenceCheck);
+        }
+      }, 500);
+      if (typeof (fenceCheck as unknown as { unref?: () => void }).unref === "function") {
+        (fenceCheck as unknown as { unref: () => void }).unref?.();
+      }
+
+      result = await handle;
+      if (fenceCheck !== null) clearInterval(fenceCheck);
     } catch {
-      discovery = { ok: false, error: { code: "ffuf_parse_error" } };
-    } finally {
-      if (ffufFenceCheck !== null) clearInterval(ffufFenceCheck);
-    }
-    cleanup();
-
-    const readPartialJson = async (): Promise<Buffer | undefined> => {
-      try {
-        return await readFfufJsonSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
-      } catch {
-        return undefined;
+      fullCleanup();
+      if (isAuthorityLost()) {
+        await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
+        if (signal?.aborted) throw new RunnerShutdownError();
+        return true;
       }
-    };
-
-    if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
-      if (captured !== null) {
-        const partial = await readPartialJson();
-        try {
-          await publishFfufArtifacts(config, lease, captured, {
-            isCancelled: true,
-            eventSequence: nextSequence,
-            ...(partial === undefined ? {} : { ffufJson: partial }),
-            ffufExitCode: discovery.ok ? discovery.exitCode : null,
-          });
-        } catch {}
-      }
-      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
-      if (signal?.aborted) throw new RunnerShutdownError();
+      await completeRun(config, lease, nextSequence, "failed", "nmap_unavailable").catch(() => {});
       return true;
     }
-
-    if (captured !== null) {
-      const preserved = await readPartialJson();
-      try {
-        await publishFfufArtifacts(config, lease, captured, {
-          isCancelled: false,
-          eventSequence: nextSequence,
-          ...(preserved === undefined ? {} : { ffufJson: preserved }),
-          ffufExitCode: discovery.ok ? discovery.exitCode : null,
-        });
-      } catch (e) {
-        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
-        if (e instanceof EvidencePublicationError) throw e;
-        throw new EvidencePublicationError("evidence_publication_failed");
-      }
-    }
-    if (!discovery.ok) {
-      await completeRun(config, lease, nextSequence, "failed", discovery.error.code).catch(() => {});
-      return true;
-    }
-    if (discovery.exitCode === 0) {
-      await completeRun(config, lease, nextSequence, "succeeded", null);
-    } else {
-      await completeRun(config, lease, nextSequence, "failed", "process_failed");
-    }
-    return true;
-  }
-
-  const probeUrls = probeUrlsFromSnapshot(acquired.actionSnapshot);
-  if (probeUrls !== null) {
-    const httpProbeController = new AbortController();
-    const onOuterAbortHttp = (): void => {
-      try {
-        httpProbeController.abort();
-      } catch {}
-    };
-    if (signal) {
-      if (signal.aborted) {
-        try {
-          httpProbeController.abort();
-        } catch {}
-      } else {
-        signal.addEventListener("abort", onOuterAbortHttp, { once: true });
-      }
-    }
-    let httpFenceCheck: ReturnType<typeof setInterval> | null = setInterval(() => {
-      const nowMonotonic = globalThis.performance.now();
-      if (nowMonotonic >= authorityDeadlineMonotonic - 7000 || hbFailed || signal?.aborted || shutdownAfterStarted) {
-        try {
-          httpProbeController.abort();
-        } catch {}
-        if (httpFenceCheck !== null) {
-          clearInterval(httpFenceCheck);
-          httpFenceCheck = null;
-        }
-      }
-    }, 500);
-    if (typeof (httpFenceCheck as unknown as { unref?: () => void }).unref === "function") {
-      (httpFenceCheck as unknown as { unref: () => void }).unref?.();
-    }
-    if (isAuthorityLost()) {
-      try {
-        httpProbeController.abort();
-      } catch {}
-    }
-    const rawArtifacts: Buffer[] = [];
-    let probeFailed = false;
-    let probeAborted = false;
-    for (const url of probeUrls) {
-      if (httpProbeController.signal.aborted || isAuthorityLost()) {
-        probeAborted = true;
-        break;
-      }
-      try {
-        const probed = await probeOneUrl(url, { signal: httpProbeController.signal });
-        rawArtifacts.push(probed.rawBytes);
-      } catch (e) {
-        if (
-          e instanceof ProbeAbortedError ||
-          e instanceof RunnerShutdownError ||
-          (e as { name?: string })?.name === "AbortError" ||
-          httpProbeController.signal.aborted ||
-          isAuthorityLost()
-        ) {
-          probeAborted = true;
-        } else {
-          probeFailed = true;
-        }
-        break;
-      }
-    }
-    if (httpFenceCheck !== null) {
-      clearInterval(httpFenceCheck);
-      httpFenceCheck = null;
-    }
-    if (signal) signal.removeEventListener("abort", onOuterAbortHttp);
-    cleanup();
-    if (probeAborted || isAuthorityLost()) {
-      // Preserve a fully completed URL set as partial evidence only when the
-      // fence still permits publication. A partial URL subset is discarded to
-      // preserve all-or-nothing run-target correspondence; an expired or
-      // superseded lease is never published.
-      const fenceStillValid =
-        !hbFailed && globalThis.performance.now() < authorityDeadlineMonotonic - 7000;
-      if (rawArtifacts.length === probeUrls.length && rawArtifacts.length > 0 && fenceStillValid) {
-        try {
-          const stdout = Buffer.from(
-            `probed ${String(rawArtifacts.length)} url(s) with http-probe-raw-v1`,
-            "utf8",
-          );
-          await publishHttpProbeArtifacts(config, lease, {
-            stdout,
-            rawArtifacts,
-            isCancelled: true,
-            eventSequence: nextSequence,
-          });
-        } catch {}
-      }
-      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
-      if (signal?.aborted) throw new RunnerShutdownError();
-      return true;
-    }
-    if (probeFailed || rawArtifacts.length !== probeUrls.length) {
-      await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
-      throw new EvidencePublicationError("evidence_publication_failed");
-    }
-    if (isAuthorityLost()) {
-      await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
-      if (signal?.aborted) throw new RunnerShutdownError();
-      return true;
-    }
-    try {
-      const stdout = Buffer.from(
-        `probed ${String(rawArtifacts.length)} url(s) with http-probe-raw-v1`,
-        "utf8",
-      );
-      await publishHttpProbeArtifacts(config, lease, {
-        stdout,
-        rawArtifacts,
-        isCancelled: false,
-        eventSequence: nextSequence,
-      });
-    } catch (e) {
-      try {
-        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed");
-      } catch {}
-      if (e instanceof EvidencePublicationError) throw e;
-      throw new EvidencePublicationError("evidence_publication_failed");
-    }
-    await completeRun(config, lease, nextSequence, "succeeded", null);
-    return true;
-  }
-
-  if (!prepared.ok) {
-    cleanup();
-    await completeRun(config, lease, nextSequence, "failed", prepared.reason).catch(() => {});
-    return true;
-  }
-
-  if (executableUnavailable) {
-    cleanup();
-    await completeRun(config, lease, nextSequence, "failed", "nmap_unavailable").catch(() => {});
-    return true;
-  }
-
-  const nmapArgv = prepared.argv;
-
-  let result: Awaited<ReturnType<typeof runSupervisedCommand>> | null = null;
-  let cancelledByFence = false;
-  let handle: ReturnType<typeof runSupervisedCommand> | null = null;
-  let fenceCheck: ReturnType<typeof setInterval> | null = null;
-
-  const fullCleanup = (): void => {
-    if (fenceCheck !== null) clearInterval(fenceCheck);
-    cleanup();
-  };
-
-  try {
-    throwIfAborted(signal);
-    handle = runSupervisedCommand({
-      runId: lease.runId,
-      leaseId: lease.leaseId,
-      fence: lease.fence,
-      runRoot: config.runRoot,
-      executable: config.executable,
-      argv: nmapArgv,
-      secrets: [config.secret],
-    });
+    fullCleanup();
 
     if (signal?.aborted || shutdownAfterStarted) {
       cancelledByFence = true;
-      void handle.cancel();
     }
 
-    fenceCheck = setInterval(() => {
-      const nowMonotonic = globalThis.performance.now();
-      if (nowMonotonic >= authorityDeadlineMonotonic - 7000 || hbFailed || signal?.aborted || shutdownAfterStarted) {
-        cancelledByFence = true;
-        void handle?.cancel();
-        if (fenceCheck !== null) clearInterval(fenceCheck);
+    await pollHeartbeat();
+    if (cancellationRequested && !isAuthorityLost() && result !== null) {
+      let xml: Buffer | undefined;
+      try { xml = await readNmapXmlSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence }); } catch {}
+      const captured = result;
+      return await finishOperatorCancellation(() => publishEvidenceArtifacts(config, lease, captured, {
+        isCancelled: true, eventSequence: nextSequence, nmapExitCode: captured.exitCode,
+        ...(xml === undefined ? {} : { nmapXml: xml }),
+      }), captured.cleanupFailed === true);
+    }
+
+    const isCancelledForEvidence = cancelledByFence || isAuthorityLost();
+
+    if (isCancelledForEvidence) {
+      if (result !== null) {
+        let xml: Buffer | undefined;
+        try {
+          xml = await readNmapXmlSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
+        } catch {}
+        try {
+          if (xml !== undefined) {
+            await publishEvidenceArtifacts(config, lease, result, { isCancelled: true, eventSequence: nextSequence, nmapXml: xml, nmapExitCode: result.exitCode });
+          } else {
+            await publishEvidenceArtifacts(config, lease, result, { isCancelled: true, eventSequence: nextSequence, nmapExitCode: result.exitCode });
+          }
+        } catch {}
       }
-    }, 500);
-    if (typeof (fenceCheck as unknown as { unref?: () => void }).unref === "function") {
-      (fenceCheck as unknown as { unref: () => void }).unref?.();
-    }
-
-    result = await handle;
-    if (fenceCheck !== null) clearInterval(fenceCheck);
-  } catch {
-    fullCleanup();
-    if (isAuthorityLost()) {
       await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
       if (signal?.aborted) throw new RunnerShutdownError();
       return true;
     }
-    await completeRun(config, lease, nextSequence, "failed", "nmap_unavailable").catch(() => {});
-    return true;
-  }
-  fullCleanup();
 
-  if (signal?.aborted || shutdownAfterStarted) {
-    cancelledByFence = true;
-  }
-
-  const isCancelledForEvidence = cancelledByFence || hbFailed || Boolean(signal?.aborted) || shutdownAfterStarted;
-
-  if (isCancelledForEvidence) {
     if (result !== null) {
       let xml: Buffer | undefined;
+      let xmlOk = false;
       try {
         xml = await readNmapXmlSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
-      } catch {}
-      try {
-        if (xml !== undefined) {
-          await publishEvidenceArtifacts(config, lease, result, { isCancelled: true, eventSequence: nextSequence, nmapXml: xml, nmapExitCode: result.exitCode });
-        } else {
-          await publishEvidenceArtifacts(config, lease, result, { isCancelled: true, eventSequence: nextSequence, nmapExitCode: result.exitCode });
-        }
-      } catch {}
-    }
-    await completeRun(config, lease, nextSequence, "failed", "runner_lost").catch(() => {});
-    if (signal?.aborted) throw new RunnerShutdownError();
-    return true;
-  }
-
-  if (result !== null) {
-    let xml: Buffer | undefined;
-    let xmlOk = false;
-    try {
-      xml = await readNmapXmlSecurely({ runRoot: config.runRoot, runId: lease.runId, fence: lease.fence });
-      xmlOk = true;
-    } catch {
-      xmlOk = false;
-    }
-    const isSuccess = result.exitCode === 0;
-    if (isSuccess && !xmlOk) {
-      try {
-        await publishEvidenceArtifacts(config, lease, result, { isCancelled: false, eventSequence: nextSequence });
-      } catch {}
-      await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
-      throw new EvidencePublicationError("evidence_publication_failed");
-    }
-    try {
-      if (xmlOk && xml !== undefined) {
-        await publishEvidenceArtifacts(config, lease, result, { isCancelled: false, eventSequence: nextSequence, nmapXml: xml, nmapExitCode: result.exitCode });
-      } else {
-        await publishEvidenceArtifacts(config, lease, result, { isCancelled: false, eventSequence: nextSequence, nmapExitCode: result.exitCode });
+        xmlOk = true;
+      } catch {
+        xmlOk = false;
       }
-    } catch (e) {
+      const isSuccess = result.exitCode === 0;
+      if (isSuccess && !xmlOk) {
+        try {
+          await publishEvidenceArtifacts(config, lease, result, { isCancelled: false, eventSequence: nextSequence });
+        } catch {}
+        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed").catch(() => {});
+        throw new EvidencePublicationError("evidence_publication_failed");
+      }
       try {
-        await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed");
-      } catch {}
-      if (e instanceof EvidencePublicationError) throw e;
-      throw new EvidencePublicationError("evidence_publication_failed");
+        if (xmlOk && xml !== undefined) {
+          await publishEvidenceArtifacts(config, lease, result, { isCancelled: false, eventSequence: nextSequence, nmapXml: xml, nmapExitCode: result.exitCode });
+        } else {
+          await publishEvidenceArtifacts(config, lease, result, { isCancelled: false, eventSequence: nextSequence, nmapExitCode: result.exitCode });
+        }
+      } catch (e) {
+        try {
+          await completeRun(config, lease, nextSequence, "failed", "evidence_publication_failed");
+        } catch {}
+        if (e instanceof EvidencePublicationError) throw e;
+        throw new EvidencePublicationError("evidence_publication_failed");
+      }
     }
-  }
 
-  const terminalKind = result !== null && result.exitCode === 0 ? "succeeded" : "failed";
-  const reason: string | null = terminalKind === "succeeded" ? null : "process_failed";
-  await completeRun(config, lease, nextSequence, terminalKind, reason);
-  return true;
+    const terminalKind = result !== null && result.exitCode === 0 ? "succeeded" : "failed";
+    const reason: string | null = terminalKind === "succeeded" ? null : "process_failed";
+    await completeExecution(terminalKind, reason);
+    return true;
+  } finally {
+    cleanup();
+  }
 }
 
 export function createRunnerLoop(

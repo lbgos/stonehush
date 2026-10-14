@@ -1245,3 +1245,86 @@ describe("run persistence schema", () => {
     );
   });
 });
+
+
+describe("operator cancellation and lease authority", () => {
+  it.each([false, true])("retains lease intent across the started race, started=%s", (started) => {
+    const fixture = createFixture();
+    const { engagementId, runId } = queuedAction(fixture);
+    const { lease } = acquire(fixture, runId);
+    if (started) startRun(fixture, lease);
+    const before = fixture.engagements.getAction(engagementId, "action-fixture-1");
+    if (!before.ok) throw new Error(before.error.code);
+    const heartbeat = {
+      presented: presentation(lease), heartbeatSequence: 1,
+      requestDigest: digestB, serverNow: "2026-08-09T12:00:06.000Z",
+    };
+    expect(fixture.runs.heartbeat(heartbeat)).toMatchObject({ ok: true, value: { cancellationRequested: false } });
+    expect(fixture.engagements.cancelAction({
+      engagementId, actionId: "action-fixture-1", expectedRevision: before.value.revision - 1,
+    })).toMatchObject({ ok: false, error: { code: "revision_conflict" } });
+    expect(fixture.engagements.cancelAction({
+      engagementId: "foreign-engagement", actionId: "action-fixture-1", expectedRevision: before.value.revision,
+    }).ok).toBe(false);
+    const cancel = fixture.engagements.cancelAction({
+      engagementId, actionId: "action-fixture-1", expectedRevision: before.value.revision,
+    });
+    if (!cancel.ok) throw new Error(cancel.error.code);
+    expect(cancel.value.action).toMatchObject({ state: "active", runState: "cancel_requested", cleanupRequired: true });
+    expect(cancel.value.action.snapshots).toEqual(before.value.action.snapshots);
+    expect(fixture.runs.getRun(runId)).toMatchObject({ ok: true, value: {
+      state: "cancel_requested", currentLeaseId: lease.leaseId, currentFence: lease.fence,
+    } });
+    const storedLease = fixture.database.sqlite.prepare("select * from run_leases where lease_id = ?").get(lease.leaseId);
+    expect(fixture.runs.heartbeat({ ...heartbeat, serverNow: "2026-08-09T12:00:07.000Z" })).toMatchObject({
+      ok: true, value: { cancellationRequested: true, expiryWriteCount: 0, leaseExpiresAt: "2026-08-09T12:00:36.000Z" },
+    });
+    expect(fixture.database.sqlite.prepare("select * from run_leases where lease_id = ?").get(lease.leaseId)).toEqual(storedLease);
+    expect(fixture.engagements.cancelAction({
+      engagementId, actionId: "action-fixture-1", expectedRevision: cancel.value.revision,
+    })).toMatchObject({ ok: false, error: { code: "invalid_action_transition" } });
+    if (!started) startRun(fixture, lease);
+    expect(fixture.runs.getRun(runId)).toMatchObject({ ok: true, value: { state: "cancel_requested" } });
+    const completion = {
+      presented: presentation(lease), sequence: 2, terminalKind: "cancelled", reason: "operator_cancelled",
+      serverNow: "2026-08-09T12:00:08.000Z",
+    };
+    expect(fixture.runs.completeRun({ ...completion, terminalKind: "succeeded", reason: null })).toMatchObject({
+      ok: false, error: { code: "invalid_run_transition" },
+    });
+    for (const presented of [
+      { ...presentation(lease), runnerId: "foreign-runner" },
+      { ...presentation(lease), sessionId: "foreign-session" },
+      { ...presentation(lease), fence: "2" },
+    ]) expect(fixture.runs.completeRun({ ...completion, presented }).ok).toBe(false);
+    expect(fixture.runs.completeRun({ ...completion, serverNow: "2026-08-09T12:00:40.000Z" })).toMatchObject({
+      ok: false, error: { code: "lease_expired" },
+    });
+    expect(fixture.runs.completeRun(completion).ok).toBe(true);
+    expect(fixture.engagements.getAction(engagementId, "action-fixture-1")).toMatchObject({
+      ok: true, value: { action: { state: "cancelled", runState: null, cleanupRequired: false } },
+    });
+    const retry = fixture.engagements.retryActionContext(engagementId, "action-fixture-1");
+    expect(retry).toMatchObject({ ok: true, value: { snapshotBinding: before.value.action.snapshots[0]?.binding, resolutionRefreshed: false, newWarningBudget: false, warningAcknowledgment: before.value.action.warningAcknowledgment } });
+    expect(fixture.runs.completeRun({ ...completion, terminalKind: "succeeded", reason: null })).toMatchObject({
+      ok: false, error: { code: "run_already_terminal" },
+    });
+  });
+
+  it("leaves succeeded results unchanged when completion wins first", () => {
+    const fixture = createFixture();
+    const { engagementId, runId } = queuedAction(fixture);
+    const { lease } = acquire(fixture, runId);
+    startRun(fixture, lease);
+    expect(fixture.runs.completeRun({
+      presented: presentation(lease), sequence: 2, terminalKind: "succeeded", reason: null,
+      serverNow: "2026-08-09T12:00:08.000Z",
+    }).ok).toBe(true);
+    const action = fixture.engagements.getAction(engagementId, "action-fixture-1");
+    if (!action.ok) throw new Error(action.error.code);
+    expect(fixture.engagements.cancelAction({
+      engagementId, actionId: "action-fixture-1", expectedRevision: action.value.revision,
+    })).toMatchObject({ ok: false, error: { code: "invalid_action_transition" } });
+    expect(fixture.runs.getRun(runId)).toMatchObject({ ok: true, value: { state: "succeeded" } });
+  });
+});
