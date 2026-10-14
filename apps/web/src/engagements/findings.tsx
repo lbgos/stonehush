@@ -307,7 +307,7 @@ function FindingsBody({
   };
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <FindingDraftGuard active={!archived && (create.isPending || title.length > 0 || body.length > 0 || severity !== "medium" || linkedExcerpt !== null)} pending={create.isPending} onStay={onNavigationStay} />
       <div>
         {records.length === 0 ? (
@@ -322,7 +322,7 @@ function FindingsBody({
             <p className="m-0 mb-2 text-[12px] text-muted-foreground" aria-live="polite">
               {openCount} open of {records.length} findings
             </p>
-            <ul className="m-0 grid list-none gap-2 p-0">
+            <ul className="m-0 grid grid-cols-1 list-none gap-2 p-0">
               {records.map((finding) => (
                 <FindingRow
                   key={finding.id}
@@ -589,20 +589,22 @@ function FindingRow({
           <p
             ref={titleRef}
             tabIndex={focusNonce === undefined ? undefined : -1}
-            className="m-0 flex items-start gap-2 truncate text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="m-0 flex items-start gap-2 text-[13px] font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title={finding.title}
           >
             {onToggleAdvisor !== undefined ? (
-              <input
-                type="checkbox"
-                checked={selectedForAdvisor === true}
-                disabled={archived}
-                onChange={onToggleAdvisor}
-                aria-label={`Select finding ${finding.title} for advisor`}
-                className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary"
-              />
+              <label className="inline-flex shrink-0 items-center justify-center">
+                <input
+                  type="checkbox"
+                  checked={selectedForAdvisor === true}
+                  disabled={archived}
+                  onChange={onToggleAdvisor}
+                  aria-label={`Select finding ${finding.title} for advisor`}
+                  className="mt-0.5 size-4 shrink-0 cursor-pointer accent-primary"
+                />
+              </label>
             ) : null}
-            <span className="min-w-0 flex-1 truncate">{finding.title}</span>
+            <span className="min-w-0 flex-1 break-all">{finding.title}</span>
           </p>
           <p className="m-0 mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
             <span>{finding.severity}</span>

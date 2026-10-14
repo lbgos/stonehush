@@ -237,7 +237,7 @@ function OpeningScreen() {
           />
         ) : null}
         {!(engagements.data === undefined && engagements.isFetching) ? (
-          <div className="grid gap-6">
+          <div className="grid grid-cols-1 gap-6">
             {engagements.data !== undefined ? (
               <section aria-label="Resume">
                 <h2 className="m-0 text-[13px] font-semibold">Resume</h2>
@@ -246,7 +246,7 @@ function OpeningScreen() {
                     <Link
                       to="/engagements/$engagementId"
                       params={{ engagementId: resume.id }}
-                      className="inline-flex min-h-11 items-center text-[15px] font-semibold text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+                      className="inline-flex min-h-11 max-w-full items-center break-all text-[15px] font-semibold text-foreground outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
                       onClick={() => {
                         storeLastEngagementId(browserStorage(), resume.id);
                         setLastId(resume.id);
