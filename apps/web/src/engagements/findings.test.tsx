@@ -3,7 +3,7 @@
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
@@ -470,6 +470,49 @@ describe("engagement findings", () => {
     ).toBe("Server title");
   });
 
+  it("keeps a fresh conflict reload when an older list response arrives later", async () => {
+    let reads = 0;
+    let oldReadSignal: AbortSignal | null | undefined;
+    let releaseOldRead: ((value: Response) => void) | undefined;
+    const fresh = findingRecord({ title: "Fresh server title", body: "Fresh server body", revision: 3 });
+    stubFindingsWorkspace((url, init) => {
+      if (url.endsWith("/findings") && init?.method === undefined) {
+        reads += 1;
+        if (reads === 1) return Promise.resolve(response([findingRecord()]));
+        if (reads === 2) {
+          oldReadSignal = init?.signal;
+          return new Promise<Response>((resolve) => { releaseOldRead = resolve; });
+        }
+        return Promise.resolve(response([fresh]));
+      }
+      if (init?.method === "PUT") return Promise.resolve(response({
+        code: "revision_conflict", resourceType: "finding", resourceId: fresh.id, currentRevision: 2,
+      }, 409));
+      return undefined;
+    });
+    await renderWorkspace(`/engagements/${activeEngagement.id}?tab=findings`);
+    const row = (await screen.findByText("Default credentials")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    const title = within(row).getByLabelText("Title") as HTMLInputElement;
+    const body = within(row).getByLabelText("Notes Markdown") as HTMLTextAreaElement;
+    fireEvent.change(title, { target: { value: "Conflict draft" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save edit" }));
+    await screen.findByText("This finding changed elsewhere. Your edits are kept.");
+    await waitFor(() => expect(releaseOldRead).toBeDefined());
+    fireEvent.click(within(row).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(title.value).toBe(fresh.title));
+    expect(oldReadSignal?.aborted).toBe(true);
+    const oldResponse = response([findingRecord({ title: "Older server title", revision: 2 })]);
+    const oldJson = vi.spyOn(oldResponse, "json");
+    releaseOldRead!(oldResponse);
+    await waitFor(() => expect(oldJson).toHaveBeenCalled());
+    await waitFor(() => expect(within(row).getByRole("button", { name: "Save edit" }).hasAttribute("disabled")).toBe(false));
+    expect(within(row).getByText(fresh.title)).toBeTruthy();
+    expect(within(row).queryByText("Older server title")).toBeNull();
+    expect(title.value).toBe(fresh.title);
+    expect(body.value).toBe(fresh.body);
+  });
+
   it("prevents duplicate writes while saving", async () => {
     let stored = [findingRecord()];
     let putCalls = 0;
@@ -587,4 +630,80 @@ describe("engagement findings", () => {
     expect(await screen.findByText("The findings request failed.")).toBeTruthy();
     expect(titleInput.value).toBe("Offline draft");
   });
+
+  it.each(["open", "resolved"])("keeps %s edits until explicitly saved or cancelled before a status change", async (status) => {
+    let stored = findingRecord({ status });
+    const transition = status === "open" ? "Resolve" : "Reopen";
+    let writes = 0;
+    stubFindingsWorkspace((url, init) => {
+      if (url.endsWith("/findings")) return Promise.resolve(response([stored]));
+      if (init?.method === "POST") {
+        writes += 1;
+        stored = { ...stored, status: status === "open" ? "resolved" : "open" };
+        return Promise.resolve(response(stored));
+      }
+      return undefined;
+    });
+    await renderWorkspace(`/engagements/${activeEngagement.id}?tab=findings`);
+    const row = (await screen.findByText(stored.title)).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    const title = within(row).getByLabelText("Title") as HTMLInputElement;
+    fireEvent.change(title, { target: { value: "Unsaved exact title" } });
+    const changeStatus = within(row).getByRole("button", { name: transition });
+    expect(changeStatus.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(changeStatus);
+    expect(writes).toBe(0);
+    expect(title.value).toBe("Unsaved exact title");
+    fireEvent.click(within(row).getByRole("button", { name: "Cancel" }));
+    fireEvent.click(within(row).getByRole("button", { name: transition }));
+    await waitFor(() => expect(writes).toBe(1));
+  });
+
+  it.each(["failed", "missing", "foreign"])("keeps a conflict draft after a %s reload and allows a fresh retry", async (failure) => {
+    const stored = findingRecord();
+    let reload = false;
+    let retried = false;
+    let releaseRead: ((value: Response) => void) | undefined;
+    stubFindingsWorkspace((url, init) => {
+      if (url.endsWith("/findings") && init?.method === undefined) {
+        if (!reload) return Promise.resolve(response([stored]));
+        if (retried) return Promise.resolve(response([findingRecord({ title: "Fresh server", body: "Fresh body", revision: 2 })]));
+        return new Promise<Response>((resolve) => { releaseRead = resolve; });
+      }
+      if (init?.method === "PUT") return Promise.resolve(response({
+        code: "revision_conflict", resourceType: "finding", resourceId: stored.id, currentRevision: 2,
+      }, 409));
+      return undefined;
+    });
+    await renderWorkspace(`/engagements/${activeEngagement.id}?tab=findings`);
+    const row = (await screen.findByText(stored.title)).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    const title = within(row).getByLabelText("Title") as HTMLInputElement;
+    const body = within(row).getByLabelText("Notes Markdown") as HTMLTextAreaElement;
+    fireEvent.change(title, { target: { value: "Exact conflict draft" } });
+    fireEvent.change(body, { target: { value: "Exact draft body" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save edit" }));
+    await screen.findByText("This finding changed elsewhere. Your edits are kept.");
+    await waitFor(() => expect(within(row).getByRole("button", { name: "Save edit" }).hasAttribute("disabled")).toBe(false));
+    reload = true;
+    fireEvent.click(within(row).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(releaseRead).toBeDefined());
+    expect(title.disabled).toBe(true);
+    expect(body.disabled).toBe(true);
+    expect(within(row).getByRole("button", { name: "Cancel" }).hasAttribute("disabled")).toBe(true);
+    expect(within(row).getByRole("button", { name: "Save edit" }).hasAttribute("disabled")).toBe(true);
+    releaseRead!(failure === "failed" ? response({ code: "storage_busy" }, 503) : response(
+      failure === "missing" ? [] : [findingRecord({ engagementId: "10000000-0000-4000-8000-000000000002" })],
+    ));
+    await screen.findByText("The latest finding could not be loaded. Try again.");
+    expect(title.value).toBe("Exact conflict draft");
+    expect(body.value).toBe("Exact draft body");
+    retried = true;
+    fireEvent.click(within(row).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(title.value).toBe("Fresh server"));
+    expect(body.value).toBe("Fresh body");
+    expect(title.disabled).toBe(false);
+    expect(screen.queryByText("The latest finding could not be loaded. Try again.")).toBeNull();
+  });
+
 });
