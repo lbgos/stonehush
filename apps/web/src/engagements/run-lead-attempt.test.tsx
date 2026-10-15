@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 
 import { ThemeProvider } from "@stonehush/ui";
+import { createMemoryHistory, RouterContextProvider } from "@tanstack/react-router";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
+import { createAppRouter } from "../router.js";
 import { EngagementLeadsSection } from "./leads.js";
 import { leadAttemptsQueryKey, leadOutlineQueryKey } from "./leads-query.js";
 import { RunHistoryPanel } from "./run-history-panel.js";
@@ -625,11 +627,13 @@ describe("attempt evidence in the Leads tab", () => {
     const queryClient = createAppQueryClient();
     testQueryClients.add(queryClient);
     render(
-      <ThemeProvider>
-        <QueryClientProvider client={queryClient}>
-          <EngagementLeadsSection archived={false} engagementId={ENGAGEMENT_A} />
-        </QueryClientProvider>
-      </ThemeProvider>,
+      <RouterContextProvider router={createAppRouter(createMemoryHistory({ initialEntries: ["/"] }))}>
+        <ThemeProvider>
+          <QueryClientProvider client={queryClient}>
+            <EngagementLeadsSection archived={false} engagementId={ENGAGEMENT_A} />
+          </QueryClientProvider>
+        </ThemeProvider>
+      </RouterContextProvider>,
     );
     fireEvent.click(await screen.findByRole("button", { name: "Detail" }));
     const first = (await screen.findByRole("link", { name: "Download evidence 1 (art-out)" })) as HTMLAnchorElement;
