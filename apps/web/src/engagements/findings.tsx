@@ -509,7 +509,19 @@ function FindingRow({
   const [localError, setLocalError] = useState<string | undefined>(undefined);
   const [reloading, setReloading] = useState(false);
   const reloadRequest = useRef<AbortController | null>(null);
+  const reloadButtonRef = useRef<HTMLButtonElement>(null);
+  const editTitleRef = useRef<HTMLInputElement>(null);
+  const restoreReloadFocus = useRef(false);
   useEffect(() => () => reloadRequest.current?.abort(), []);
+  useEffect(() => {
+    if (reloading || !restoreReloadFocus.current) return;
+    restoreReloadFocus.current = false;
+    // Disabled or removed request controls can send focus to the body.
+    // Keep any focus the operator moved to another control in the meantime.
+    if (document.activeElement === document.body) {
+      (update.isError ? reloadButtonRef.current : editTitleRef.current)?.focus({ preventScroll: true });
+    }
+  }, [reloading, update.isError]);
   const isOpen = finding.status === "open";
   const titleRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -540,6 +552,7 @@ function FindingRow({
     if (reloadRequest.current !== null || update.isPending) return;
     const controller = new AbortController();
     reloadRequest.current = controller;
+    restoreReloadFocus.current = true;
     setReloading(true);
     setLocalError(undefined);
     void fetchFindings(engagementId, controller.signal)
@@ -685,6 +698,7 @@ function FindingRow({
           <label className="grid gap-1 text-[11px] text-muted-foreground" htmlFor={`finding-edit-title-${finding.id}`}>
             <span>Title</span>
             <input
+              ref={editTitleRef}
               id={`finding-edit-title-${finding.id}`}
               value={draftTitle}
               disabled={update.isPending || reloading}
@@ -733,7 +747,7 @@ function FindingRow({
           ) : null}
           <div className="flex flex-wrap justify-end gap-2">
             {showReload ? (
-              <Button type="button" variant="secondary" disabled={reloading} onClick={reloadFromServer}>
+              <Button ref={reloadButtonRef} type="button" variant="secondary" disabled={reloading} onClick={reloadFromServer}>
                 {reloading ? "Reloading" : "Reload"}
               </Button>
             ) : null}
