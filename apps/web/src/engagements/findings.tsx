@@ -19,6 +19,7 @@ import {
   useFindingsQuery,
   useUpdateFindingMutation,
   findingsQueryKey,
+  fetchFindings,
 } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
 import { takePendingFindingExcerpt, useExcerptsQuery } from "./run-output-query.js";
@@ -506,6 +507,9 @@ function FindingRow({
   const [baseRevision, setBaseRevision] = useState(0);
   const editBase = useRef({ title: "", severity: "medium", body: "" });
   const [localError, setLocalError] = useState<string | undefined>(undefined);
+  const [reloading, setReloading] = useState(false);
+  const reloadRequest = useRef<AbortController | null>(null);
+  useEffect(() => () => reloadRequest.current?.abort(), []);
   const isOpen = finding.status === "open";
   const titleRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -530,32 +534,44 @@ function FindingRow({
     setLocalError(undefined);
     if (update.isError) update.reset();
   };
-  // Reload refetches the list and seeds the draft from the latest loaded
-  // row. Background refreshes never touch the draft while editing; only
-  // this explicit action does.
+  // Only a successful fresh read may replace the draft. Query invalidation
+  // can finish with stale cached data after a failed request.
   const reloadFromServer = () => {
-    update.reset();
+    if (reloadRequest.current !== null || update.isPending) return;
+    const controller = new AbortController();
+    reloadRequest.current = controller;
+    setReloading(true);
     setLocalError(undefined);
-    void queryClient
-      .invalidateQueries({ queryKey: findingsQueryKey(engagementId) })
-      .then(() => {
-        const fresh = queryClient
-          .getQueryData<Finding[]>(findingsQueryKey(engagementId))
-          ?.find((entry) => entry.id === finding.id);
+    void fetchFindings(engagementId, controller.signal)
+      .then((records) => {
+        if (controller.signal.aborted) return;
+        const fresh = records.find((entry) => entry.id === finding.id && entry.engagementId === engagementId);
         if (fresh === undefined) {
           setLocalError("The latest finding could not be loaded. Try again.");
           return;
         }
+        queryClient.setQueryData<Finding[]>(findingsQueryKey(engagementId), (current) =>
+          current?.map((entry) => entry.id === fresh.id ? fresh : entry),
+        );
         editBase.current = { title: fresh.title, severity: fresh.severity, body: fresh.body };
         setDraftTitle(fresh.title);
         setDraftSeverity(fresh.severity);
         setDraftBody(fresh.body);
         setBaseRevision(fresh.revision);
+        update.reset();
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setLocalError("The latest finding could not be loaded. Try again.");
+      })
+      .finally(() => {
+        if (controller.signal.aborted) return;
+        reloadRequest.current = null;
+        setReloading(false);
       });
   };
 
   const saveEdit = () => {
-    if (update.isPending) return;
+    if (update.isPending || reloadRequest.current !== null) return;
     setLocalError(undefined);
     if (update.isError) update.reset();
     const trimmedTitle = draftTitle.trim();
@@ -575,7 +591,7 @@ function FindingRow({
     );
   };
 
-  const editError = update.isError ? findingMutationMessage(update.error) : localError;
+  const editError = localError ?? (update.isError ? findingMutationMessage(update.error) : undefined);
   const showReload = update.isError && isFindingRevisionConflict(update.error);
   return (
     <li
@@ -583,7 +599,7 @@ function FindingRow({
       aria-current={focusNonce === undefined ? undefined : "true"}
       className={`rounded-[10px] border px-3 py-2.5 ${focusNonce === undefined ? "border-border" : "border-foreground"}`}
     >
-      <FindingDraftGuard active={!archived && editing && (update.isPending || draftTitle !== editBase.current.title || draftSeverity !== editBase.current.severity || draftBody !== editBase.current.body)} pending={update.isPending} onStay={onNavigationStay} />
+      <FindingDraftGuard active={!archived && editing && (update.isPending || reloading || draftTitle !== editBase.current.title || draftSeverity !== editBase.current.severity || draftBody !== editBase.current.body)} pending={update.isPending || reloading} onStay={onNavigationStay} />
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p
@@ -637,11 +653,8 @@ function FindingRow({
             <Button
               type="button"
               variant="secondary"
-              disabled={archived || pending}
-              onClick={() => {
-                closeEditor();
-                onResolve();
-              }}
+              disabled={archived || pending || editing}
+              onClick={onResolve}
             >
               Resolve
             </Button>
@@ -649,11 +662,8 @@ function FindingRow({
             <Button
               type="button"
               variant="secondary"
-              disabled={archived || pending}
-              onClick={() => {
-                closeEditor();
-                onReopen();
-              }}
+              disabled={archived || pending || editing}
+              onClick={onReopen}
             >
               Reopen
             </Button>
@@ -677,7 +687,7 @@ function FindingRow({
             <input
               id={`finding-edit-title-${finding.id}`}
               value={draftTitle}
-              disabled={update.isPending}
+              disabled={update.isPending || reloading}
               maxLength={120}
               className="w-full rounded-md border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onChange={(event) => setDraftTitle(event.target.value)}
@@ -688,7 +698,7 @@ function FindingRow({
             <select
               id={`finding-edit-severity-${finding.id}`}
               value={draftSeverity}
-              disabled={update.isPending}
+              disabled={update.isPending || reloading}
               className="w-full rounded-md border border-input bg-transparent px-2.5 py-2 text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onChange={(event) =>
                 setDraftSeverity(event.target.value as typeof draftSeverity)
@@ -707,7 +717,7 @@ function FindingRow({
               id={`finding-edit-body-${finding.id}`}
               value={draftBody}
               rows={5}
-              disabled={update.isPending}
+              disabled={update.isPending || reloading}
               spellCheck={false}
               className="min-h-24 w-full rounded-md border border-input bg-transparent px-2.5 py-2 font-mono text-[13px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onChange={(event) => setDraftBody(event.target.value)}
@@ -723,21 +733,21 @@ function FindingRow({
           ) : null}
           <div className="flex flex-wrap justify-end gap-2">
             {showReload ? (
-              <Button type="button" variant="secondary" onClick={reloadFromServer}>
-                Reload
+              <Button type="button" variant="secondary" disabled={reloading} onClick={reloadFromServer}>
+                {reloading ? "Reloading" : "Reload"}
               </Button>
             ) : null}
             <Button
               type="button"
               variant="secondary"
-              disabled={update.isPending}
+              disabled={update.isPending || reloading}
               onClick={closeEditor}
             >
               Cancel
             </Button>
             <Button
               type="button"
-              disabled={update.isPending || draftTitle.trim().length === 0}
+              disabled={update.isPending || reloading || draftTitle.trim().length === 0}
               onClick={saveEdit}
             >
               {update.isPending ? "Saving" : "Save edit"}
@@ -756,7 +766,7 @@ function FindingDraftGuard({ active, pending, onStay }: { active: boolean; pendi
   return (
     <section role="alertdialog" aria-label="Unsaved finding" className="mb-3 border border-border px-3 py-3">
       <h3 className="m-0 text-[13px] font-semibold">Unsaved finding</h3>
-      <p className="mt-1 text-[12px] text-muted-foreground">{pending ? "Saving. Leave is available after the save finishes." : "Leaving now will discard this finding draft."}</p>
+      <p className="mt-1 text-[12px] text-muted-foreground">{pending ? "A request is in progress. Leave is available when it finishes." : "Leaving now will discard this finding draft."}</p>
       <div className="flex gap-2">
         <Button type="button" autoFocus onClick={() => { onStay?.(); blocker.reset?.(); }}>Stay</Button>
         <Button type="button" variant="secondary" disabled={pending} onClick={() => { if (!pending) blocker.proceed?.(); }}>Leave</Button>
