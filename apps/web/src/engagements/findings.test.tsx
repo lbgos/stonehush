@@ -470,6 +470,49 @@ describe("engagement findings", () => {
     ).toBe("Server title");
   });
 
+  it("keeps a fresh conflict reload when an older list response arrives later", async () => {
+    let reads = 0;
+    let oldReadSignal: AbortSignal | null | undefined;
+    let releaseOldRead: ((value: Response) => void) | undefined;
+    const fresh = findingRecord({ title: "Fresh server title", body: "Fresh server body", revision: 3 });
+    stubFindingsWorkspace((url, init) => {
+      if (url.endsWith("/findings") && init?.method === undefined) {
+        reads += 1;
+        if (reads === 1) return Promise.resolve(response([findingRecord()]));
+        if (reads === 2) {
+          oldReadSignal = init?.signal;
+          return new Promise<Response>((resolve) => { releaseOldRead = resolve; });
+        }
+        return Promise.resolve(response([fresh]));
+      }
+      if (init?.method === "PUT") return Promise.resolve(response({
+        code: "revision_conflict", resourceType: "finding", resourceId: fresh.id, currentRevision: 2,
+      }, 409));
+      return undefined;
+    });
+    await renderWorkspace(`/engagements/${activeEngagement.id}?tab=findings`);
+    const row = (await screen.findByText("Default credentials")).closest("li")!;
+    fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
+    const title = within(row).getByLabelText("Title") as HTMLInputElement;
+    const body = within(row).getByLabelText("Notes Markdown") as HTMLTextAreaElement;
+    fireEvent.change(title, { target: { value: "Conflict draft" } });
+    fireEvent.click(within(row).getByRole("button", { name: "Save edit" }));
+    await screen.findByText("This finding changed elsewhere. Your edits are kept.");
+    await waitFor(() => expect(releaseOldRead).toBeDefined());
+    fireEvent.click(within(row).getByRole("button", { name: "Reload" }));
+    await waitFor(() => expect(title.value).toBe(fresh.title));
+    expect(oldReadSignal?.aborted).toBe(true);
+    const oldResponse = response([findingRecord({ title: "Older server title", revision: 2 })]);
+    const oldJson = vi.spyOn(oldResponse, "json");
+    releaseOldRead!(oldResponse);
+    await waitFor(() => expect(oldJson).toHaveBeenCalled());
+    await waitFor(() => expect(within(row).getByRole("button", { name: "Save edit" }).hasAttribute("disabled")).toBe(false));
+    expect(within(row).getByText(fresh.title)).toBeTruthy();
+    expect(within(row).queryByText("Older server title")).toBeNull();
+    expect(title.value).toBe(fresh.title);
+    expect(body.value).toBe(fresh.body);
+  });
+
   it("prevents duplicate writes while saving", async () => {
     let stored = [findingRecord()];
     let putCalls = 0;

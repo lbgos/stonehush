@@ -556,13 +556,16 @@ function FindingRow({
     setReloading(true);
     setLocalError(undefined);
     void fetchFindings(engagementId, controller.signal)
-      .then((records) => {
+      .then(async (records) => {
         if (controller.signal.aborted) return;
         const fresh = records.find((entry) => entry.id === finding.id && entry.engagementId === engagementId);
         if (fresh === undefined) {
           setLocalError("The latest finding could not be loaded. Try again.");
           return;
         }
+        // A list read started before Reload must not overwrite the fresh row.
+        await queryClient.cancelQueries({ queryKey: findingsQueryKey(engagementId), exact: true });
+        if (controller.signal.aborted) return;
         queryClient.setQueryData<Finding[]>(findingsQueryKey(engagementId), (current) =>
           current?.map((entry) => entry.id === fresh.id ? fresh : entry),
         );
