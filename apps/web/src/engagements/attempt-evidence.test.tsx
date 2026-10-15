@@ -886,3 +886,141 @@ async function openFromSurfaceArchived() {
   fireEvent.click(within(list).getByRole("button", { name: /Default creds/ }));
   await within(dialog()).findByText(/This engagement is archived/);
 }
+
+
+describe("inline lead draft navigation", () => {
+  const secondId = "20000000-0000-4000-8000-000000000002";
+  const guard = () => screen.getByRole("alertdialog", { name: "Unsaved lead edits" });
+  const summary = () => screen.getByLabelText<HTMLInputElement>("Attempt summary");
+  const evidence = () => screen.getByLabelText<HTMLInputElement>("Evidence artifact ids, comma separated");
+
+  async function openInline(server: Server) {
+    const fetchMock = serve(server);
+    const router = await renderAt(engagement.id, "?tab=leads");
+    fireEvent.click((await screen.findAllByRole("button", { name: "Detail" }))[0]!);
+    await screen.findByLabelText("Attempt summary");
+    return { router, fetchMock };
+  }
+
+  function inlineServer(): Server {
+    return {
+      engagements: [engagement, otherEngagement],
+      leads: {
+        [engagement.id]: [lead(LEAD_ID, engagement.id), lead(secondId, engagement.id, { title: "Second lead" })],
+        [otherEngagement.id]: [lead(LEAD_ID, otherEngagement.id)],
+      },
+      attempts: {},
+    };
+  }
+
+  it("holds tab and engagement navigation, retains exact fields on Stay, and discards without leaking", async () => {
+    const { router, fetchMock } = await openInline(inlineServer());
+    fireEvent.change(summary(), { target: { value: "  Exact local summary  " } });
+    fireEvent.change(evidence(), { target: { value: "typed-ref, manual-ref" } });
+    for (const tab of ["notes", "report"] as const) {
+      void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab } });
+      await screen.findByRole("alertdialog", { name: "Unsaved lead edits" });
+      fireEvent.click(within(guard()).getByRole("button", { name: "Stay" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      expect(router.state.location.search.tab).toBe("leads");
+      expect(summary().value).toBe("  Exact local summary  ");
+      expect(evidence().value).toBe("typed-ref, manual-ref");
+    }
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: otherEngagement.id }, search: { tab: "leads" } });
+    await screen.findByRole("alertdialog", { name: "Unsaved lead edits" });
+    fireEvent.click(within(guard()).getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/engagements/${otherEngagement.id}`));
+    fireEvent.click(await screen.findByRole("button", { name: "Detail" }));
+    expect((await screen.findByLabelText<HTMLInputElement>("Attempt summary")).value).toBe("");
+    expect(evidence().value).toBe("");
+    expect(writes(fetchMock)).toEqual([]);
+  });
+
+  it("protects evidence-only drafts on Hide and lead switches and remembers only the latest destination", async () => {
+    const { fetchMock } = await openInline(inlineServer());
+    fireEvent.change(evidence(), { target: { value: "evidence-only-ref" } });
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(evidence().value).toBe("evidence-only-ref");
+    fireEvent.click(within(guard()).getByRole("button", { name: "Stay" }));
+    expect(evidence().value).toBe("evidence-only-ref");
+    fireEvent.click(screen.getByRole("button", { name: "Detail" }));
+    fireEvent.keyDown(guard(), { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(evidence().value).toBe("evidence-only-ref");
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Detail" }));
+    fireEvent.click(within(guard()).getByRole("button", { name: "Discard" }));
+    expect(evidence().value).toBe("");
+    expect(summary().id).toBe(`attempt-summary-${secondId}`);
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.queryByLabelText("Attempt summary")).toBeNull();
+    fireEvent.click(screen.getAllByRole("button", { name: "Detail" })[0]!);
+    expect(evidence().value).toBe("");
+    expect(writes(fetchMock)).toEqual([]);
+  });
+
+  it("holds a pending failed save, retains its exact input for one retry, and keeps unrelated park edits", async () => {
+    const server = inlineServer();
+    let finish: ((value: Response) => void) | undefined;
+    server.recordAttempt = (_leadId, body) => new Promise<Response>((resolve) => {
+      finish = (value) => {
+        if (value.ok) server.attempts[LEAD_ID] = [attempt(LEAD_ID, 1, body)];
+        resolve(value);
+      };
+    });
+    const { router, fetchMock } = await openInline(server);
+    fireEvent.change(summary(), { target: { value: "  Retry this attempt  " } });
+    fireEvent.change(evidence(), { target: { value: "exact-ref, manual-ref" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record attempt" }));
+    await screen.findByRole("button", { name: "Saving" });
+    void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    await screen.findByRole("alertdialog", { name: "Unsaved lead edits" });
+    expect(within(guard()).queryByRole("button", { name: "Discard" })).toBeNull();
+    finish?.(response({ code: "storage_busy" }, 503));
+    await screen.findByText("Storage is busy. Try again.");
+    expect(router.state.location.search.tab).toBe("leads");
+    expect(summary().value).toBe("  Retry this attempt  ");
+    expect(evidence().value).toBe("exact-ref, manual-ref");
+    fireEvent.click(within(guard()).getByRole("button", { name: "Stay" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    fireEvent.change(screen.getByLabelText("Park reason"), { target: { value: "Keep this different draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record attempt" }));
+    await screen.findByRole("button", { name: "Saving" });
+    finish?.(response(attempt(LEAD_ID, 1, posts(fetchMock)[1]!), 201));
+    await waitFor(() => expect(summary().value).toBe(""));
+    expect(evidence().value).toBe("");
+    expect(screen.getByLabelText<HTMLInputElement>("Park reason").value).toBe("Keep this different draft");
+    expect(posts(fetchMock)).toEqual([
+      { summary: "Retry this attempt", outcome: "observed", evidenceArtifactIds: ["exact-ref", "manual-ref"] },
+      { summary: "Retry this attempt", outcome: "observed", evidenceArtifactIds: ["exact-ref", "manual-ref"] },
+    ]);
+    expect(server.attempts[LEAD_ID]).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(guard()).toBeTruthy();
+  });
+
+  it.each(["route", "lead switch"] as const)("continues a held %s after a successful save without copying its draft", async (destination) => {
+    const server = inlineServer();
+    let finish: (() => void) | undefined;
+    server.recordAttempt = (leadId, body) => new Promise<Response>((resolve) => {
+      finish = () => {
+        server.attempts[leadId] = [attempt(leadId, 1, body)];
+        resolve(response(server.attempts[leadId]![0], 201));
+      };
+    });
+    const { router, fetchMock } = await openInline(server);
+    fireEvent.change(summary(), { target: { value: "Save before leaving" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record attempt" }));
+    await screen.findByRole("button", { name: "Saving" });
+    if (destination === "route") void router.navigate({ to: "/engagements/$engagementId", params: { engagementId: engagement.id }, search: { tab: "notes" } });
+    else fireEvent.click(screen.getByRole("button", { name: "Detail" }));
+    await screen.findByRole("alertdialog", { name: "Unsaved lead edits" });
+    finish?.();
+    if (destination === "route") await waitFor(() => expect(router.state.location.search.tab).toBe("notes"));
+    else await waitFor(() => expect(summary().id).toBe(`attempt-summary-${secondId}`));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posts(fetchMock)).toHaveLength(1);
+    expect(server.attempts[LEAD_ID]).toHaveLength(1);
+    if (destination === "lead switch") expect(summary().value).toBe("");
+  });
+});

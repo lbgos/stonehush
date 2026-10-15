@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 import { ThemeProvider } from "@stonehush/ui";
+import { createMemoryHistory, RouterContextProvider } from "@tanstack/react-router";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
+import { createAppRouter } from "../router.js";
 import { EngagementLeadsSection, LeadDetail } from "./leads.js";
 
 const ENGAGEMENT_ID = "10000000-0000-4000-8000-000000000001";
@@ -104,12 +106,15 @@ const testQueryClients = new Set<QueryClient>();
 function renderLeads(archived = false) {
   const queryClient = createAppQueryClient();
   testQueryClients.add(queryClient);
+  const router = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
   return render(
-    <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <EngagementLeadsSection archived={archived} engagementId={ENGAGEMENT_ID} />
-      </QueryClientProvider>
-    </ThemeProvider>,
+    <RouterContextProvider router={router}>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <EngagementLeadsSection archived={archived} engagementId={ENGAGEMENT_ID} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    </RouterContextProvider>,
   );
 }
 
@@ -324,13 +329,18 @@ describe("save a lead's attempts as a technique", () => {
     expect(screen.queryByRole("button", { name: "Save as technique" })).toBe(null);
   });
 
-  it("drops an open draft on inline Hide without leaking it to the next open", async () => {
+  it("guards an open technique draft on inline Hide and discards only on request", async () => {
     serve({});
     renderLeads();
     await openDraft([1]);
     expect(screen.getByRole("heading", { name: "Technique draft" })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(screen.getByRole("heading", { name: "Technique draft" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Stay" }));
+    expect(screen.getByRole("heading", { name: "Technique draft" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(screen.queryByRole("heading", { name: "Technique draft" })).toBe(null);
 
     fireEvent.click(screen.getByRole("button", { name: "Detail" }));

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import type {
   Lead,
@@ -38,6 +38,7 @@ import { AttemptEvidencePicker, parseEvidenceInput } from "./attempt-evidence.js
 import { AttemptFindingChooser, LinkedFinding, findingLinkProblem } from "./attempt-finding.js";
 import { openingFindingsRead, useOpeningFindingsQuery } from "./findings-query.js";
 import { formatEngagementTimestamp } from "./format.js";
+import { useNotesDraftGuard } from "./notes-guard.js";
 import { LeadTechniquePanel, LeadTechniqueStart, LeadTechniqueToggle, useLeadTechnique } from "./lead-technique.js";
 
 const LEAD_SOURCE_KINDS = [
@@ -131,10 +132,10 @@ export function EngagementLeadsSection({
           description="The latest refresh failed. Existing leads are still available."
           onRetry={retry}
         >
-          {body}
+          {null}
         </StaleDataState>
       ) : null}
-      {hasData && !leads.isError ? body : null}
+      {hasData ? body : null}
     </section>
   );
 }
@@ -162,6 +163,60 @@ function LeadsBody({
   const [formError, setFormError] = useState<string | undefined>(undefined);
 
   const selected = leads.find((lead) => lead.id === selectedLeadId) ?? null;
+  const [detailDraft, setDetailDraft] = useState<{ leadId: string; state: LeadDraftState }>();
+  const [selectionRequest, setSelectionRequest] = useState<{ leadId: string | null } | null>(null);
+  const [failedNavigation, setFailedNavigation] = useState(false);
+  const promptCopyId = useId();
+  const acknowledgedNavigation = useRef<(() => void) | undefined>(undefined);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const held = selected !== null && detailDraft?.leadId === selected.id ? detailDraft.state : undefined;
+  const dirty = held?.dirty ?? false;
+  const pending = held?.pending ?? false;
+  const failed = held?.failed ?? false;
+  const blocker = useNotesDraftGuard(dirty || pending || failedNavigation);
+  const navigationBlocked = blocker.status === "blocked";
+  const prompt = navigationBlocked || selectionRequest !== null;
+  const updateDraft = useCallback((state: LeadDraftState) => {
+    if (selectedLeadId !== null) setDetailDraft({ leadId: selectedLeadId, state });
+  }, [selectedLeadId]);
+
+  const selectLead = (leadId: string | null) => {
+    if (dirty || pending || navigationBlocked) {
+      returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setSelectionRequest({ leadId });
+    } else {
+      onSelectLead(leadId);
+    }
+  };
+
+  // A pending save holds its destination. Only a successful write with no
+  // remaining draft may continue automatically; a failure still asks.
+  useEffect(() => {
+    if (pending || dirty || failed) return;
+    if (navigationBlocked && blocker.reset !== acknowledgedNavigation.current) {
+      blocker.proceed?.();
+    } else if (selectionRequest !== null) {
+      onSelectLead(selectionRequest.leadId);
+      setSelectionRequest(null);
+    }
+  }, [pending, dirty, failed, navigationBlocked, blocker, selectionRequest, onSelectLead]);
+  useEffect(() => {
+    if (navigationBlocked && !pending && failed && !dirty) setFailedNavigation(true);
+  }, [navigationBlocked, pending, failed, dirty]);
+
+  const stay = () => {
+    acknowledgedNavigation.current = blocker.reset;
+    blocker.reset?.();
+    setFailedNavigation(false);
+    setSelectionRequest(null);
+    if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
+  };
+  const discard = () => {
+    if (pending) return;
+    if (navigationBlocked) blocker.proceed?.();
+    else if (selectionRequest !== null) onSelectLead(selectionRequest.leadId);
+    setSelectionRequest(null);
+  };
   const openCount = leads.filter((lead) => lead.disposition === "open").length;
   const mutationError = create.isError ? mutationMessage(create.error, "The leads request failed.") : formError;
 
@@ -191,7 +246,8 @@ function LeadsBody({
           setTarget("");
           setSourceRef("");
           setNextStep("");
-          onSelectLead(lead.id);
+          // The inline draft may have changed while this create was pending.
+          setSelectionRequest({ leadId: lead.id });
         },
       },
     );
@@ -254,7 +310,7 @@ function LeadsBody({
                     <Button
                       type="button"
                       variant="secondary"
-                      onClick={() => onSelectLead(selected?.id === lead.id ? null : lead.id)}
+                      onClick={() => selectLead(selected?.id === lead.id ? null : lead.id)}
                     >
                       {selected?.id === lead.id ? "Hide" : "Detail"}
                     </Button>
@@ -271,17 +327,40 @@ function LeadsBody({
         ) : null}
       </div>
 
+      {prompt ? (
+        <section
+          role="alertdialog"
+          aria-label="Unsaved lead edits"
+          aria-describedby={promptCopyId}
+          className="border border-border px-3 py-3"
+          data-keybinding-capture=""
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              stay();
+            }
+          }}
+        >
+          <p id={promptCopyId} className="m-0 text-[12px] text-foreground">
+            {pending ? "Saving. Leaving continues after the save finishes." : "Discard unsaved lead edits?"}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" autoFocus onClick={stay}>Stay</Button>
+            {pending ? null : <Button type="button" variant="secondary" onClick={discard}>Discard</Button>}
+          </div>
+        </section>
+      ) : null}
+
       {selected !== null ? (
         <LeadDetail
-          key={selected.id}
+          key={`${engagementId}/${selected.id}`}
+          onDraftChange={updateDraft}
           archived={archived}
           engagementId={engagementId}
           lead={selected}
         />
       ) : null}
-      {/* Inline Detail unmounts on Hide or lead switch without a prompt.
-          Only the Surface and Resume overlays guard an open draft, including
-          the technique draft. */}
 
       <div className="border border-border">
         <div className="border-b border-border px-3 py-2">
