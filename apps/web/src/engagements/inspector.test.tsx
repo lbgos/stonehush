@@ -1033,7 +1033,7 @@ describe("surface inspector", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy note reference" }));
     rerender(view(b));
     rerender(view(a));
-    fireEvent.click(screen.getByRole("button", { name: "Copy" , exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     await act(async () => { pending[2]!.resolve(); });
     const currentFeedback = screen.getByRole("button", { name: "Copied" });
     await act(async () => { pending[1]![outcome](); });

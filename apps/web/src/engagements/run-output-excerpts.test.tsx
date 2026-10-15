@@ -485,7 +485,7 @@ describe("capture feedback ownership", () => {
             if (mode === "selection") selectRange();
             else {
               fireEvent.change(screen.getByPlaceholderText("error, login, 10.0.0"), { target: { value: "line two" } });
-              fireEvent.click(screen.getByRole("button", { name: "Search", exact: true }));
+              fireEvent.click(screen.getByRole("button", { name: "Search" }));
               await screen.findByTestId("run-output-search-match");
             }
           };
