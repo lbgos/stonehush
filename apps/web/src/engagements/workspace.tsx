@@ -387,7 +387,7 @@ function EngagementDetail({
     setDestination(next);
     const tab = destinationTab(next);
     if (tab === activeTab) return;
-    // A dirty notes or finding draft may block navigation; Stay drops the
+    // A dirty notes, finding or inline lead draft may block navigation; Stay drops the
     // destination through onNavigationStay below.
     void navigate({
       to: "/engagements/$engagementId",
@@ -869,6 +869,7 @@ function EngagementDetail({
             key={`leads-${displayed.id}`}
             archived={archived}
             engagementId={displayed.id}
+            onNavigationStay={dismissDestination}
           />
           <EngagementObjectivesSection
             key={`objectives-${displayed.id}`}

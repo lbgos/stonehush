@@ -936,6 +936,36 @@ describe("inline lead draft navigation", () => {
     expect(writes(fetchMock)).toEqual([]);
   });
 
+  it("drops a Search destination on Stay before an unrelated Findings navigation", async () => {
+    const server = inlineServer();
+    server.findings = { [engagement.id]: [finding(FINDING_ID, engagement.id)] };
+    const { fetchMock } = await openInline(server);
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => {
+      if (String(input).includes("/search?q=")) return Promise.resolve(response({
+        engagementId: engagement.id,
+        query: "password",
+        groups: {
+          target: [], hostname: [], note: [], lead: [], artifact: [], excerpt: [],
+          finding: [{ kind: "finding", id: FINDING_ID, title: "Weak admin password", snippet: "Weak admin password", anchor: `finding:${FINDING_ID}`, unindexed: false }],
+        },
+        unindexedKinds: ["lead", "excerpt"],
+      }));
+      return original(input, init);
+    });
+    fireEvent.change(summary(), { target: { value: "Keep this inline draft" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search notes and findings" }));
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search notes and findings" }), { target: { value: "password" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Weak admin password/ }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: "Unsaved lead edits" })).getByRole("button", { name: "Stay" }));
+    expect(summary().value).toBe("Keep this inline draft");
+    fireEvent.click(screen.getByRole("link", { name: "Findings" }));
+    fireEvent.click(within(await screen.findByRole("alertdialog", { name: "Unsaved lead edits" })).getByRole("button", { name: "Discard" }));
+    await screen.findByText("Weak admin password");
+    expect(document.querySelector('[aria-current="true"][data-finding-id]')).toBeNull();
+    expect(screen.queryByRole("status", { name: "Search result" })).toBeNull();
+  });
+
   it("protects evidence-only drafts on Hide and lead switches and remembers only the latest destination", async () => {
     const { fetchMock } = await openInline(inlineServer());
     fireEvent.change(evidence(), { target: { value: "evidence-only-ref" } });

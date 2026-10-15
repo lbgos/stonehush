@@ -82,9 +82,11 @@ function mutationMessage(error: unknown, fallback: string): string {
 export function EngagementLeadsSection({
   archived,
   engagementId,
+  onNavigationStay,
 }: {
   archived: boolean;
   engagementId: string;
+  onNavigationStay?: () => void;
 }) {
   const leads = useLeadsQuery(engagementId);
   const retry = () => void leads.refetch();
@@ -98,6 +100,7 @@ export function EngagementLeadsSection({
       leads={leads.data ?? []}
       selectedLeadId={selectedLeadId}
       onSelectLead={setSelectedLeadId}
+      onNavigationStay={onNavigationStay}
     />
   );
 
@@ -146,12 +149,14 @@ function LeadsBody({
   leads,
   selectedLeadId,
   onSelectLead,
+  onNavigationStay,
 }: {
   archived: boolean;
   engagementId: string;
   leads: Lead[];
   selectedLeadId: string | null;
   onSelectLead: (leadId: string | null) => void;
+  onNavigationStay?: (() => void) | undefined;
 }) {
   const create = useCreateLeadMutation(engagementId);
   const [title, setTitle] = useState("");
@@ -207,6 +212,7 @@ function LeadsBody({
   const stay = () => {
     acknowledgedNavigation.current = blocker.reset;
     blocker.reset?.();
+    if (navigationBlocked) onNavigationStay?.();
     setFailedNavigation(false);
     setSelectionRequest(null);
     if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true });
