@@ -417,6 +417,7 @@ describe("runner enrollment and lease routes", () => {
     expect(heartbeat.json()).toEqual({
       heartbeatSequence: 1,
       leaseExpiresAt: "2026-08-09T12:00:40.000Z",
+      cancellationRequested: false,
     });
     const started = await harness.app.inject({
       method: "POST",
@@ -1008,4 +1009,41 @@ describe("runner lease snapshot seam (M4)", () => {
     expect(JSON.stringify(leased.json())).not.toContain(marker);
     expect(JSON.stringify(leased.json())).not.toContain("192.0.2.99");
   });
+});
+
+
+it("operator cancel reaches authenticated heartbeat replay without extending its expiry", async () => {
+  const harness = await createHarness();
+  const enrolled = await enroll(harness.app);
+  await handshake(harness.app, enrolled.runner.id, enrolled.secret);
+  await queueRun(harness, "20000000-0000-4000-8000-000000000077");
+  const leased = await harness.app.inject({ method: "POST", url: "/api/v1/runner/lease",
+    headers: runnerHeaders(enrolled.runner.id, enrolled.secret), payload: { sessionId: "session-fixture-1" } });
+  expect(leased.statusCode).toBe(200);
+  const lease = leased.json().lease;
+  const heartbeatRequest = { method: "POST" as const, url: `/api/v1/runner/leases/${lease.leaseId}/heartbeat`,
+    headers: runnerHeaders(enrolled.runner.id, enrolled.secret), payload: {
+      runId: lease.runId, sessionId: lease.sessionId, fence: lease.fence, heartbeatSequence: 1,
+    } };
+  const first = await harness.app.inject(heartbeatRequest);
+  expect(first.json().cancellationRequested).toBe(false);
+  const row = harness.database.sqlite.prepare("select engagement_id as engagementId, revision from actions where id = ?")
+    .get("20000000-0000-4000-8000-000000000077") as { engagementId: string; revision: number };
+  const url = `/api/v1/engagements/${row.engagementId}/actions/20000000-0000-4000-8000-000000000077/cancel`;
+  const cancelRequest = { method: "POST" as const, url,
+    headers: operatorHeaders(operatorKey("active-cancel")), payload: { expectedRevision: row.revision } };
+  const accepted = await harness.app.inject(cancelRequest);
+  expect(accepted.statusCode).toBe(200);
+  expect(accepted.json().action.runState).toBe("cancel_requested");
+  expect((await harness.app.inject(cancelRequest)).json()).toEqual(accepted.json());
+  harness.setNow("2026-08-09T12:00:05.000Z");
+  const replay = await harness.app.inject(heartbeatRequest);
+  expect(replay.json()).toEqual({ ...first.json(), cancellationRequested: true });
+  const stale = await harness.app.inject({ ...cancelRequest, headers: operatorHeaders(operatorKey("stale-active-cancel")) });
+  expect(stale.statusCode).toBe(409);
+  expect(stale.json().code).toBe("revision_conflict");
+  const foreign = await harness.app.inject({ ...cancelRequest,
+    url: "/api/v1/engagements/foreign/actions/20000000-0000-4000-8000-000000000077/cancel",
+    headers: operatorHeaders(operatorKey("foreign-active-cancel")) });
+  expect(foreign.statusCode).not.toBe(200);
 });

@@ -287,14 +287,8 @@ export const ActionPlanningAggregateSchema = z
       context.addIssue({ code: "custom", message: "invalid planning run state" });
     }
     if (
-      action.state === "active" &&
-      action.runState !== "running"
-    ) {
-      context.addIssue({ code: "custom", message: "invalid active run state" });
-    }
-    if (
       action.cleanupRequired !==
-      (action.state === "active_paused_for_warning" &&
+      ((action.state === "active" || action.state === "active_paused_for_warning") &&
         action.runState === "cancel_requested")
     ) {
       context.addIssue({ code: "custom", message: "invalid cleanup state" });

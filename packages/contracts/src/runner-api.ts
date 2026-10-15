@@ -189,6 +189,7 @@ export const RunnerHeartbeatRequestSchema = z.strictObject({
 export const RunnerHeartbeatResponseSchema = z.strictObject({
   leaseExpiresAt: TimestampSchema,
   heartbeatSequence: RunnerSequenceSchema,
+  cancellationRequested: z.boolean().optional(),
 });
 
 export const RunnerAppendStartedRequestSchema = z.strictObject({

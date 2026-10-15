@@ -512,6 +512,23 @@ export function cancelQueuedRunForAction(
   return runFromRow(stored);
 }
 
+/** Request cleanup without revoking the lease used to publish captured evidence. */
+export function requestRunCancellationForAction(
+  context: RunPersistenceContext,
+  actionId: string,
+): RunResult<true> {
+  const current = latestRunForAction(context.client, actionId);
+  if (current === undefined) return failed({ code: "run_not_found" });
+  const transition = transitionRunState({ from: current.state, to: "cancel_requested" });
+  if (!transition.ok) return failed(mapDomainError(transition.error));
+  const updated = context.client.update(runs).set({
+    state: "cancel_requested",
+    updatedAt: context.now().toISOString(),
+  }).where(and(eq(runs.id, current.id), eq(runs.state, current.state))).run();
+  if (updated.changes !== 1) return failed({ code: "invalid_persisted_data" });
+  return { ok: true, value: true };
+}
+
 export function acquireRunLease(
   context: RunPersistenceContext,
   input: unknown,
@@ -643,7 +660,7 @@ export function acquireRunLease(
 export function heartbeatRunLease(
   context: RunPersistenceContext,
   input: unknown,
-): RunResult<AcceptHeartbeatResult & { expiryWriteCount: number }> {
+): RunResult<AcceptHeartbeatResult & { expiryWriteCount: number; cancellationRequested: boolean }> {
   const parsed = PersistRunHeartbeatInputSchema.safeParse(input);
   if (!parsed.success) return failed({ code: "invalid_repository_input" });
   const presentedLease = context.client
@@ -652,6 +669,9 @@ export function heartbeatRunLease(
     .where(eq(runLeases.leaseId, parsed.data.presented.leaseId))
     .get();
   if (presentedLease === undefined) return failed({ code: "stale_fence" });
+  // Intent is current even when expiry and sequence replay their stored values.
+  const cancellationRequested = context.client.select({ state: runs.state }).from(runs)
+    .where(eq(runs.id, presentedLease.runId)).get()?.state === "cancel_requested";
   const storedHeartbeat =
     presentedLease.latestHeartbeatSequence === parsed.data.heartbeatSequence &&
     presentedLease.latestHeartbeatDigest !== null
@@ -674,7 +694,7 @@ export function heartbeatRunLease(
     });
     if (!replayed.ok) return failed(mapDomainError(replayed.error));
     if (replayed.disposition === "stored_heartbeat_replayed") {
-      return { ok: true, value: { ...replayed, expiryWriteCount: 0 } };
+      return { ok: true, value: { ...replayed, expiryWriteCount: 0, cancellationRequested } };
     }
   }
 
@@ -697,7 +717,7 @@ export function heartbeatRunLease(
   });
   if (!accepted.ok) return failed(mapDomainError(accepted.error));
   if (accepted.disposition === "stored_heartbeat_replayed") {
-    return { ok: true, value: { ...accepted, expiryWriteCount: 0 } };
+    return { ok: true, value: { ...accepted, expiryWriteCount: 0, cancellationRequested } };
   }
 
   context.client
@@ -723,7 +743,7 @@ export function heartbeatRunLease(
     digest: accepted.heartbeat.requestDigest,
     createdAt: parsed.data.serverNow,
   });
-  return { ok: true, value: { ...accepted, expiryWriteCount: 1 } };
+  return { ok: true, value: { ...accepted, expiryWriteCount: 1, cancellationRequested } };
 }
 
 export function expirePersistedRunLease(
@@ -777,14 +797,16 @@ export function expirePersistedRunLease(
     runState: null,
     cleanupRequired: false,
     resumeRequested: false,
-    pendingWarningJson: expiration.terminal ? action.pendingWarningJson : null,
+    pendingWarningJson: null,
     updatedAt: timestamp,
   });
   if (leaseUpdate.changes !== 1 || runUpdate.changes !== 1 || !actionUpdate.ok) {
     abortInvalidWrite();
   }
 
-  const payload = payloadJsonForStorage({ reason: expiration.reason });
+  const payload = payloadJsonForStorage({ reason: expiration.reason,
+    ...(action.pendingWarningJson === null ? {} : { pendingWarning: JSON.parse(action.pendingWarningJson) }),
+  });
   if (!payload.ok) abortInvalidWrite();
   const inserted = insertEvent(context.client, {
     runId: runRow.id,
@@ -887,8 +909,12 @@ export function appendRunEvent(
     return failed({ code: "artifact_upload_in_progress" });
   }
 
-  const transition = transitionRunState({ from: runRow.state, to: "running" });
-  if (!transition.ok) return failed(mapDomainError(transition.error));
+  // Cancel may win after lease acquisition but before started. Record the
+  // sequence without clearing intent; the runner polls before any execution.
+  if (runRow.state !== "cancel_requested") {
+    const transition = transitionRunState({ from: runRow.state, to: "running" });
+    if (!transition.ok) return failed(mapDomainError(transition.error));
+  }
   const inserted = insertEvent(context.client, {
     runId: runRow.id,
     sequence: parsed.data.sequence,
@@ -905,8 +931,8 @@ export function appendRunEvent(
     .run();
   const runUpdate = context.client
     .update(runs)
-    .set({ state: "running", updatedAt: parsed.data.serverNow })
-    .where(and(eq(runs.id, runRow.id), eq(runs.state, "leased")))
+    .set({ state: runRow.state === "cancel_requested" ? "cancel_requested" : "running", updatedAt: parsed.data.serverNow })
+    .where(and(eq(runs.id, runRow.id), eq(runs.state, runRow.state)))
     .run();
   if (leaseUpdate.changes !== 1 || runUpdate.changes !== 1) abortInvalidWrite();
   const event = eventFromRow(inserted);
@@ -1037,12 +1063,18 @@ export function completePersistedRun(
     if (!transition.ok) return failed(mapDomainError(transition.error));
     const action = loadAction(context.client, runRow.actionId);
     if (action === undefined) return failed({ code: "action_not_found" });
+    // Clear the mutable pending pointer at terminal state, but retain its
+    // exact warning context in the append-only completion event.
+    const terminalPayload = action.pendingWarningJson === null ? payload : payloadJsonForStorage({
+      completion: JSON.parse(payload.value), pendingWarning: JSON.parse(action.pendingWarningJson),
+    });
+    if (!terminalPayload.ok) return terminalPayload;
     const inserted = insertEvent(context.client, {
       runId: runRow.id,
       sequence: presentedSequence,
       type: parsed.data.terminalKind,
       fence: current.fence,
-      payloadJson: payload.value,
+      payloadJson: terminalPayload.value,
       digest,
       createdAt: timestamp,
     });
@@ -1067,6 +1099,7 @@ export function completePersistedRun(
       runState: null,
       cleanupRequired: false,
       resumeRequested: false,
+      pendingWarningJson: null,
       updatedAt: timestamp,
     });
     if (leaseUpdate.changes !== 1 || runUpdate.changes !== 1 || !actionUpdate.ok) {
@@ -1098,6 +1131,10 @@ export function completePersistedRun(
   if (!transition.ok) return failed(mapDomainError(transition.error));
   const action = loadAction(context.client, runRow.actionId);
   if (action === undefined) return failed({ code: "action_not_found" });
+  const terminalPayload = action.pendingWarningJson === null ? payload : payloadJsonForStorage({
+    completion: JSON.parse(payload.value), pendingWarning: JSON.parse(action.pendingWarningJson),
+  });
+  if (!terminalPayload.ok) return terminalPayload;
   // Effective fence is computed once and reused for gating and insertion.
   const fence = current?.fence ?? runRow.currentFence;
   if (fence === "0") return failed({ code: "invalid_run_transition" });
@@ -1111,7 +1148,7 @@ export function completePersistedRun(
     sequence: presentedSequence,
     type: parsed.data.terminalKind,
     fence,
-    payloadJson: payload.value,
+    payloadJson: terminalPayload.value,
     digest,
     createdAt: timestamp,
   });
@@ -1138,6 +1175,7 @@ export function completePersistedRun(
     runState: null,
     cleanupRequired: false,
     resumeRequested: false,
+    pendingWarningJson: null,
     updatedAt: timestamp,
   });
   if (runUpdate.changes !== 1 || !actionUpdate.ok) abortInvalidWrite();
@@ -1366,7 +1404,7 @@ export class RunRepository {
   heartbeat(
     input: unknown,
     transaction?: RunWriteClient,
-  ): RunResult<AcceptHeartbeatResult & { expiryWriteCount: number }> {
+  ): RunResult<AcceptHeartbeatResult & { expiryWriteCount: number; cancellationRequested: boolean }> {
     return this.write((context) => heartbeatRunLease(context, input), transaction);
   }
 

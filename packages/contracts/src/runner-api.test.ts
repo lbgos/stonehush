@@ -10,6 +10,7 @@ import {
   InstallationFingerprintSchema,
   PersistedRunnerIdentitySchema,
   RunnerHandshakeRequestSchema,
+  RunnerHeartbeatResponseSchema,
   RunnerMutationErrorSchema,
   RunnerEvidenceGrantErrorSchema,
   RunnerProtocolUnsupportedErrorSchema,
@@ -315,4 +316,12 @@ describe("runner API contracts", () => {
       }).success,
     ).toBe(false);
   });
+});
+
+
+it("accepts old heartbeat responses and validates optional cancellation intent", () => {
+  const response = { leaseExpiresAt: "2026-08-09T12:00:30.000Z", heartbeatSequence: 1 };
+  expect(RunnerHeartbeatResponseSchema.parse(response).cancellationRequested).toBeUndefined();
+  expect(RunnerHeartbeatResponseSchema.parse({ ...response, cancellationRequested: true }).cancellationRequested).toBe(true);
+  expect(RunnerHeartbeatResponseSchema.safeParse({ ...response, cancellationRequested: "true" }).success).toBe(false);
 });

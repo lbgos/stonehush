@@ -1,4 +1,4 @@
-import { access, lstat, mkdir, open, realpath, stat as fsStat } from "node:fs/promises";
+import { access, lstat, mkdir, open, readFile, readdir, realpath, stat as fsStat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
@@ -19,6 +19,11 @@ export interface ProcessResult {
   truncated: boolean;
   cleanupFailed?: boolean;
 }
+
+export type SupervisedProcess = Promise<ProcessResult> & {
+  cancel: () => Promise<{ cleanupFailed: boolean }>;
+  child?: ChildProcess;
+};
 
 export interface RunDirectories {
   runDir: string;
@@ -100,6 +105,26 @@ function validateArgv(argv: readonly string[]): void {
   for (const a of argv) if (a.includes("\0")) throw new Error("argv element contains NUL");
 }
 
+/** Ignore dead zombies, but fail closed if group membership cannot be inspected. */
+async function processGroupIsRunning(pgid: number): Promise<boolean> {
+  try { process.kill(-pgid, 0); } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+  try {
+    for (const pid of await readdir("/proc")) {
+      if (!/^\d+$/.test(pid)) continue;
+      try {
+        const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+        const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        if (Number(fields[2]) === pgid && fields[0] !== "Z" && fields[0] !== "X") return true;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ESRCH") return true;
+      }
+    }
+    return false;
+  } catch { return true; }
+}
+
 function spawnSupervised(params: {
   runId: string;
   leaseId: string;
@@ -108,13 +133,16 @@ function spawnSupervised(params: {
   executable: string;
   argv: readonly string[];
   secrets?: readonly string[];
-}): Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess } {
+  shouldCancel?: () => boolean;
+}): SupervisedProcess {
   const { runId, fence, runRoot, executable, argv, secrets } = params;
   let child: ChildProcess | undefined;
   let cancelRequested = false;
-  let terminatedByRunner = false;
-  let doCancel: () => Promise<void> = async () => {
+  let cancellationWork: Promise<{ cleanupFailed: boolean }> | null = null;
+  let cleanupFailed = false;
+  let doCancel: SupervisedProcess["cancel"] = async () => {
     cancelRequested = true;
+    return { cleanupFailed: false };
   };
   const promise = new Promise<ProcessResult>((resolve, reject) => {
     (async () => {
@@ -130,6 +158,13 @@ function spawnSupervised(params: {
         const stderrRedactor = createRedactor({ secrets: secrets ?? [] });
         const stdoutCollector = new BoundedCollector(DEFAULT_COMBINED_RETAINED_OUTPUT);
         const stderrCollector = new BoundedCollector(DEFAULT_COMBINED_RETAINED_OUTPUT);
+        // Preparation awaits filesystem work. Recheck intent at the actual
+        // spawn boundary so a cancelled run never launches new target work.
+        if (cancelRequested || params.shouldCancel?.() === true) {
+          resolve({ exitCode: null, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0),
+            stdoutMeta: stdoutCollector.meta(), stderrMeta: stderrCollector.meta(), truncated: false, cleanupFailed: false });
+          return;
+        }
         try {
           child = nodeSpawn(executable, [...argv], {
             cwd: runDir,
@@ -142,49 +177,6 @@ function spawnSupervised(params: {
           reject(e);
           return;
         }
-        const waitForClose = (cp: ChildProcess, timeoutMs: number): Promise<boolean> => {
-          return new Promise((res) => {
-            if (cp.exitCode !== null || cp.signalCode !== null) {
-              res(true);
-              return;
-            }
-            const onClose = (): void => {
-              clearTimeout(timer);
-              res(true);
-            };
-            const timer = setTimeout(() => {
-              cp.off("close", onClose);
-              res(false);
-            }, timeoutMs);
-            cp.once("close", onClose);
-          });
-        };
-        doCancel = async () => {
-          cancelRequested = true;
-          if (child === undefined || child.pid === undefined) return;
-          terminatedByRunner = true;
-          const pgid = child.pid;
-          try {
-            process.kill(-pgid, "SIGTERM");
-          } catch {
-            try {
-              child.kill("SIGTERM");
-            } catch {}
-          }
-          const termDone = await waitForClose(child, 5000);
-          if (termDone) return;
-          try {
-            process.kill(-pgid, "SIGKILL");
-          } catch {
-            try {
-              child?.kill("SIGKILL");
-            } catch {}
-          }
-          await waitForClose(child!, 2000);
-          void terminatedByRunner;
-        };
-        (promise as unknown as { cancel: () => Promise<void> }).cancel = () => doCancel();
-        (promise as unknown as { child?: ChildProcess }).child = child;
         const stdout = child.stdout;
         const stderr = child.stderr;
         if (stdout === null || stderr === null) {
@@ -200,42 +192,84 @@ function spawnSupervised(params: {
           stderrCollector.push(chunk.length, redacted);
         });
         child.on("error", (err) => reject(err));
-        let closeEmitted = false;
-        const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
-          if (closeEmitted) return;
-          closeEmitted = true;
+        let resultSettled = false;
+        const settleResult = (code: number | null, signal: NodeJS.Signals | null): void => {
+          if (resultSettled) return;
+          resultSettled = true;
           const stdoutTail = stdoutRedactor.flush();
           const stderrTail = stderrRedactor.flush();
           if (stdoutTail.length > 0) stdoutCollector.push(0, stdoutTail);
           if (stderrTail.length > 0) stderrCollector.push(0, stderrTail);
           const stdoutMeta = stdoutCollector.meta();
           const stderrMeta = stderrCollector.meta();
-          const stillAlive = child !== undefined && child.exitCode === null && child.signalCode === null;
           resolve({
             exitCode: code,
-            signal: signal as NodeJS.Signals | null,
+            signal,
             stdout: stdoutCollector.combined(),
             stderr: stderrCollector.combined(),
             stdoutMeta,
             stderrMeta,
             truncated: stdoutMeta.truncated || stderrMeta.truncated,
-            cleanupFailed: stillAlive,
+            cleanupFailed,
           });
         };
-        child.on("close", onClose);
+        doCancel = () => {
+          cancelRequested = true;
+          if (cancellationWork !== null) return cancellationWork;
+          const cp = child;
+          if (cp?.pid === undefined) return Promise.resolve({ cleanupFailed: false });
+          const pgid = cp.pid;
+          cancellationWork = (async () => {
+            const send = (signal: NodeJS.Signals): void => {
+              try { process.kill(-pgid, signal); } catch (e) {
+                if ((e as NodeJS.ErrnoException).code !== "ESRCH") cleanupFailed = true;
+              }
+            };
+            const waitForGroup = async (budgetMs: number): Promise<boolean> => {
+              const deadline = performance.now() + budgetMs;
+              do {
+                if (!await processGroupIsRunning(pgid)) return true;
+                await new Promise<void>((done) => setTimeout(done, 25));
+              } while (performance.now() < deadline);
+              return !await processGroupIsRunning(pgid);
+            };
+            send("SIGTERM");
+            if (!await waitForGroup(5000)) {
+              send("SIGKILL");
+              if (!await waitForGroup(2000)) cleanupFailed = true;
+            }
+            // Failed signals must still return captured bytes and a failed
+            // cleanup outcome within the budget, even without a close event.
+            if (!resultSettled) {
+              stdout.destroy();
+              stderr.destroy();
+              settleResult(cp.exitCode, cp.signalCode);
+            }
+            // This remains current even if the parent result settled before
+            // cancellation arrived and descendants required later cleanup.
+            return { cleanupFailed };
+          })();
+          return cancellationWork;
+        };
+        promise.cancel = () => doCancel();
+        promise.child = child;
+        child.on("close", async (code: number | null, signal: NodeJS.Signals | null) => {
+          if (cancelRequested) await doCancel();
+          settleResult(code, signal);
+        });
         if (cancelRequested) void doCancel();
       } catch (e) {
         reject(e);
       }
     })();
-  }) as Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess };
+  }) as SupervisedProcess;
   promise.cancel = () => doCancel();
   return promise;
 }
 
 export function runSupervised(
   request: FakeActionRequest & { runRoot: string; secrets?: string[]; executable?: string },
-): Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess } {
+): SupervisedProcess {
   const executable = request.executable ?? process.execPath;
   const spec = buildFakeActionArgv(executable, request);
   const base = {
@@ -258,7 +292,8 @@ export function runSupervisedCommand(request: {
   executable: string;
   argv: readonly string[];
   secrets?: readonly string[];
-}): Promise<ProcessResult> & { cancel: () => Promise<void>; child?: ChildProcess } {
+  shouldCancel?: () => boolean;
+}): SupervisedProcess {
   validateExecutablePath(request.executable);
   validateArgv(request.argv);
   return spawnSupervised(request);

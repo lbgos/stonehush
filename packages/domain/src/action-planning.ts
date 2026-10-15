@@ -596,7 +596,7 @@ export function cancelAction(input: unknown): ActionPlanningResult {
     return accepted({ ...action, state: "cancelled" });
   }
   if (
-    action.state === "active_paused_for_warning" &&
+    (action.state === "active" || action.state === "active_paused_for_warning") &&
     action.runState === "running"
   ) {
     return accepted({
