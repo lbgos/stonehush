@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
 import { ThemeProvider } from "@stonehush/ui";
+import { createMemoryHistory, RouterContextProvider } from "@tanstack/react-router";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
+import { createAppRouter } from "../router.js";
 import {
   EngagementLeadsSection,
   EngagementObjectivesSection,
@@ -28,14 +30,17 @@ const testQueryClients = new Set<QueryClient>();
 function renderSections() {
   const queryClient = createAppQueryClient();
   testQueryClients.add(queryClient);
+  const router = createAppRouter(createMemoryHistory({ initialEntries: ["/"] }));
   return render(
-    <ThemeProvider>
-      <QueryClientProvider client={queryClient}>
-        <EngagementLeadsSection archived={false} engagementId={ENGAGEMENT_ID} />
-        <EngagementObjectivesSection archived={false} engagementId={ENGAGEMENT_ID} />
-        <EngagementSecretsSection archived={false} engagementId={ENGAGEMENT_ID} />
-      </QueryClientProvider>
-    </ThemeProvider>,
+    <RouterContextProvider router={router}>
+      <ThemeProvider>
+        <QueryClientProvider client={queryClient}>
+          <EngagementLeadsSection archived={false} engagementId={ENGAGEMENT_ID} />
+          <EngagementObjectivesSection archived={false} engagementId={ENGAGEMENT_ID} />
+          <EngagementSecretsSection archived={false} engagementId={ENGAGEMENT_ID} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    </RouterContextProvider>,
   );
 }
 
