@@ -1008,6 +1008,45 @@ describe("surface inspector", () => {
     expect(onOpenNotes).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["resolve", "reject"] as const)("ignores old clipboard %s across A-B-A and overlapping copies", async (outcome) => {
+    stubFindings([]);
+    const pending: { resolve: () => void; reject: () => void }[] = [];
+    const writeText = vi.fn((_value: string) => new Promise<void>((resolve, reject) => {
+      pending.push({ resolve, reject: () => reject(new Error("clipboard unavailable")) });
+    }));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    // A rejected modern clipboard can still succeed through the legacy path.
+    Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn(() => true) });
+    const a = pathInspectorRecord(pathResult, engagementId);
+    const b = serviceInspectorRecord(webService, engagementId);
+    const view = (record: typeof a, engagement = engagementId) => (
+      <QueryClientProvider client={queryClient}>
+        <SurfaceInspector engagementId={engagement} loading={false} onClose={vi.fn()} record={record} selectionKey={record.key} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(a));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy note reference" }));
+    rerender(view(b));
+    await act(async () => { pending[0]![outcome](); });
+    expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
+    rerender(view(a));
+    fireEvent.click(screen.getByRole("button", { name: "Copy note reference" }));
+    rerender(view(b));
+    rerender(view(a));
+    fireEvent.click(screen.getByRole("button", { name: "Copy" , exact: true }));
+    await act(async () => { pending[2]!.resolve(); });
+    const currentFeedback = screen.getByRole("button", { name: "Copied" });
+    await act(async () => { pending[1]![outcome](); });
+    expect(screen.getByRole("button", { name: "Copied" })).toBe(currentFeedback);
+    expect(screen.getByRole("button", { name: "Copy note reference" })).toBeTruthy();
+    // Engagement identity is separate even if a row key happens to match.
+    fireEvent.click(screen.getByRole("button", { name: "Copy note reference" }));
+    rerender(view(a, "10000000-0000-4000-8000-000000000002"));
+    await act(async () => { pending[3]!.resolve(); });
+    expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
+    expect(writeText.mock.calls[0]?.[0]).toBe(a.noteReference);
+  });
+
   it("copies a note reference for pasting into engagement notes", async () => {
     stubFindings([]);
     const writeText = vi.fn(async (_value: string) => undefined);

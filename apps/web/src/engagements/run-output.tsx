@@ -150,6 +150,14 @@ function RawOutputBody({
   }
   return (
     <RawOutputContent
+      // Remount capture observers for each source visit. Requests still persist
+      // their original excerpts, but their callbacks cannot update a new visit.
+      key={JSON.stringify([
+        engagementId,
+        query.data.run.id,
+        query.data.stdout.present ? query.data.stdout.artifactId : null,
+        query.data.stderr.present ? query.data.stderr.artifactId : null,
+      ])}
       engagementId={engagementId}
       output={query.data}
       onRefresh={retry}
@@ -778,7 +786,7 @@ function RawStream({
       },
       {
         onSuccess: () => {
-          setSelection(null);
+          setSelection((current) => current === selection ? null : current);
           announce("Excerpt kept. Open the Findings tab to create a linked finding.");
         },
         onError: () => undefined,
@@ -865,7 +873,9 @@ function RawStream({
           <AddToLeadButton excerpt={null} onAddToLead={onAddToLead} />
         </div>
       ) : null}
-      {create.isError && selection !== null ? (
+      {create.isError && selection !== null &&
+        create.variables?.byteOffset === selection.byteOffset &&
+        create.variables.byteLength === selection.byteLength ? (
         <p className="mt-1 mb-0 text-[12px] text-destructive" role="alert">
           The excerpt could not be kept. Retry from the selection above.
         </p>

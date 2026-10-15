@@ -3,11 +3,12 @@
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
+import { excerptsQueryKey, runOutputQueryKey } from "./run-output-query.js";
 
 function response(payload: unknown, status = 200): Response {
   return {
@@ -24,13 +25,14 @@ async function renderAt(initialEntry: string) {
   await router.load();
   const queryClient = createAppQueryClient();
   testQueryClients.add(queryClient);
-  return render(
+  const view = render(
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
     </ThemeProvider>,
   );
+  return { ...view, router, queryClient };
 }
 
 beforeEach(() => {
@@ -399,4 +401,128 @@ describe("run output fast capture", () => {
     expect(await screen.findByText("Selected 8 bytes at offset 9.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Keep excerpt" })).toBeTruthy();
   });
+});
+
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function selectRange(start = 9, end = 17) {
+  const pre = screen.getByTestId("raw-output-stdout");
+  const range = document.createRange();
+  range.setStart(pre.firstChild!, start);
+  range.setEnd(pre.firstChild!, end);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  fireEvent.keyUp(pre);
+}
+
+describe("capture feedback ownership", () => {
+  it.each(["success", "failure"] as const)("retains a newer range in the same source after old %s", async (outcome) => {
+    const pending = deferred<Response>();
+    let posts = 0;
+    stubFetch(async (url, init) => {
+      const shell = shellResponse(url);
+      if (shell !== undefined) return shell;
+      if (url.endsWith("/runs/latest/output")) return response(runOutput());
+      if (url.endsWith("/excerpts") && init?.method === "POST") { posts += 1; return pending.promise; }
+      if (url.endsWith("/excerpts")) return response([]);
+      return response({ code: "invalid_request" }, 400);
+    });
+    await renderAt(`/engagements/${ENGAGEMENT_ID}`);
+    fireEvent.click(screen.getByRole("tab", { name: "Raw output" }));
+    await screen.findByTestId("raw-output-stdout");
+    selectRange();
+    fireEvent.click(screen.getByRole("button", { name: "Keep excerpt" }));
+    await waitFor(() => expect(posts).toBe(1));
+    selectRange(0, 4);
+    await act(async () => { pending.resolve(outcome === "success" ? response(KEPT_EXCERPT, 201) : response({ code: "storage_busy" }, 503)); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Keep excerpt" }).hasAttribute("disabled")).toBe(false));
+    expect(screen.getByText("Selected 4 bytes at offset 0.")).toBeTruthy();
+    expect(screen.queryByText(/The excerpt could not be kept/)).toBeNull();
+    expect(posts).toBe(1);
+  });
+
+  for (const mode of ["selection", "search"] as const) {
+    for (const settles of ["success", "failure"] as const) {
+      for (const returnToA of [false, true]) {
+        it(`${mode}: old A ${settles} cannot affect ${returnToA ? "a new A visit" : "B"}`, async () => {
+          const pending = deferred<Response>();
+          const current = deferred<Response>();
+          const posts: Record<string, unknown>[] = [];
+          const saved: unknown[] = [];
+          const outputA = runOutput();
+          const outputB = { ...runOutput(), run: { ...runOutput().run, id: "run-excerpt-2" }, stdout: { ...runOutput().stdout, artifactId: "artifact-b" } };
+          stubFetch(async (url, init) => {
+            const shell = shellResponse(url);
+            if (shell !== undefined) return shell;
+            if (url.endsWith("/runs/run-excerpt-1/output")) return response(outputA);
+            if (url.endsWith("/runs/run-excerpt-2/output")) return response(outputB);
+            if (url.includes("/output/search")) return response({
+              matches: [{ artifactId: url.includes("run-excerpt-2") ? "artifact-b" : "artifact-stdout", stream: "stdout", byteOffset: 9, byteLength: 8, snippet: "line two", redactions: 0 }],
+              searchedBytes: OUTPUT_CONTENT.length, scanCapped: false, unavailableArtifactIds: [],
+            });
+            if (url.endsWith("/excerpts") && init?.method === "POST") {
+              const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+              posts.push(body);
+              const result = posts.length === 1 ? await pending.promise : posts.length === 2 && returnToA ? await current.promise : response({ ...KEPT_EXCERPT, ...body, id: `20000000-0000-4000-8000-${String(posts.length).padStart(12, "0")}` }, 201);
+              if (result.ok) saved.push(await result.json());
+              return result;
+            }
+            if (url.endsWith("/excerpts")) return response(saved);
+            return response({ code: "invalid_request" }, 400);
+          });
+          const { router, queryClient } = await renderAt(`/engagements/${ENGAGEMENT_ID}?run=run-excerpt-1`);
+          queryClient.setQueryData(runOutputQueryKey(ENGAGEMENT_ID, "run-excerpt-1"), outputA);
+          queryClient.setQueryData(runOutputQueryKey(ENGAGEMENT_ID, "run-excerpt-2"), outputB);
+          fireEvent.click(screen.getByRole("tab", { name: "Raw output" }));
+          await screen.findByTestId("raw-output-stdout");
+          const choose = async () => {
+            if (mode === "selection") selectRange();
+            else {
+              fireEvent.change(screen.getByPlaceholderText("error, login, 10.0.0"), { target: { value: "line two" } });
+              fireEvent.click(screen.getByRole("button", { name: "Search", exact: true }));
+              await screen.findByTestId("run-output-search-match");
+            }
+          };
+          await choose();
+          fireEvent.click(screen.getByRole("button", { name: "Keep excerpt" }));
+          await waitFor(() => expect(posts).toHaveLength(1));
+          const go = async (run: string) => {
+            await act(async () => { await router.navigate({ to: "/engagements/$engagementId", params: { engagementId: ENGAGEMENT_ID }, search: { run } }); });
+            await screen.findByRole("region", { name: `stdout for run ${run}` });
+          };
+          await go("run-excerpt-2");
+          if (returnToA) await go("run-excerpt-1");
+          await choose();
+          if (returnToA) {
+            fireEvent.click(screen.getByRole("button", { name: "Keep excerpt" }));
+            await waitFor(() => expect(posts).toHaveLength(2));
+          }
+          await act(async () => { pending.resolve(settles === "success" ? response(KEPT_EXCERPT, 201) : response({ code: "storage_busy" }, 503)); });
+          await waitFor(() => expect(queryClient.isMutating()).toBe(returnToA ? 1 : 0));
+          if (returnToA) {
+            expect(screen.getAllByRole("button", { name: "Keeping" }).every((button) => button.hasAttribute("disabled"))).toBe(true);
+            expect(screen.queryByText(/The excerpt could not be kept/)).toBeNull();
+            await act(async () => { current.resolve(response({ code: "storage_busy" }, 503)); });
+            await waitFor(() => expect(screen.getByText(/The excerpt could not be kept/)).toBeTruthy());
+          }
+          expect(screen.getByRole("button", { name: "Keep excerpt" }).hasAttribute("disabled")).toBe(false);
+          if (!returnToA) expect(screen.queryByText(/The excerpt could not be kept/)).toBeNull();
+          expect(screen.queryByText("Excerpt kept. Open the Findings tab to create a linked finding.")).toBeNull();
+          if (mode === "selection") expect(screen.getByText("Selected 8 bytes at offset 9.")).toBeTruthy();
+          expect(posts[0]).toEqual({ runId: "run-excerpt-1", artifactId: "artifact-stdout", stream: "stdout", byteOffset: 9, byteLength: 8 });
+          expect(posts).toHaveLength(returnToA ? 2 : 1);
+          if (settles === "success") expect(queryClient.getQueryData(excerptsQueryKey(ENGAGEMENT_ID))).toEqual([KEPT_EXCERPT]);
+          fireEvent.click(screen.getByRole("button", { name: "Keep excerpt" }));
+          await waitFor(() => expect(posts).toHaveLength(returnToA ? 3 : 2));
+          expect(posts.at(-1)).toMatchObject({ runId: returnToA ? "run-excerpt-1" : "run-excerpt-2", artifactId: returnToA ? "artifact-stdout" : "artifact-b", byteOffset: 9, byteLength: 8 });
+        });
+      }
+    }
+  }
 });
