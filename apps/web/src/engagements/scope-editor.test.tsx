@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 
+import { EngagementSchema, ScopeRevisionSchema } from "@stonehush/contracts";
 import { ThemeProvider } from "@stonehush/ui";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { createBrowserHistory, createMemoryHistory, RouterProvider } from "@tanstack/react-router";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
 import { createAppRouter } from "../router.js";
+import { engagementDetailQueryKey } from "./query.js";
 
 const activeEngagement = {
   contractVersion: 1,
@@ -103,7 +105,7 @@ type TestEngagement = {
   kind: string;
   status: string;
   description: string | null;
-  authorizationContext: null;
+  authorizationContext: string | null;
   autoContinueWarnings: boolean;
   activeScopeRevisionId: string | null;
   createdAt: string;
@@ -171,11 +173,14 @@ function readResponse(
 }
 
 const testQueryClients = new Set<QueryClient>();
+const testHistories = new Set<ReturnType<typeof createMemoryHistory>>();
 
-async function renderEditor(engagementId = activeEngagement.id) {
-  const router = createAppRouter(
-    createMemoryHistory({ initialEntries: [`/engagements/${engagementId}`] }),
-  );
+async function renderEditor(engagementId = activeEngagement.id, browserHistory = false) {
+  const path = `/engagements/${engagementId}`;
+  if (browserHistory) window.history.replaceState({}, "", path);
+  const history = browserHistory ? createBrowserHistory() : createMemoryHistory({ initialEntries: [path] });
+  testHistories.add(history);
+  const router = createAppRouter(history);
   await router.load();
   const queryClient = createAppQueryClient();
   testQueryClients.add(queryClient);
@@ -220,6 +225,8 @@ afterEach(() => {
   cleanup();
   for (const client of testQueryClients) client.clear();
   testQueryClients.clear();
+  for (const history of testHistories) history.destroy();
+  testHistories.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -496,5 +503,251 @@ describe("saved-scope editor", () => {
     expect(SYNTHETIC_TARGETS).toContain("198.51.100.10");
     expect(screen.queryByText(/example\.com/i)).toBeNull();
     expect(screen.queryByText(/10\.0\.0\./)).toBeNull();
+  });
+});
+
+
+const scopeB = { ...activeEngagement, id: "10000000-0000-4000-8000-000000000003", name: "Scope B" };
+const aTarget = "198.51.100.77";
+const bTarget = "192.0.2.88";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => { resolve = complete; });
+  return { promise, resolve };
+}
+
+async function setupScopeNavigation({ cached = true, pending = false, archived = false, browserHistory = false } = {}) {
+  const records = new Map([activeEngagement, { ...scopeB, status: archived ? "archived" : "active" }]
+    .map((record) => [record.id, EngagementSchema.parse(record)]));
+  const revisions = new Map<string, ReturnType<typeof ScopeRevisionSchema.parse>>();
+  const posts: Array<{ engagementId: string; body: { expectedRevision: number; rules: unknown[] } }> = [];
+  const request = deferred<Response>();
+  let failDetail = false;
+  let completeSave: (() => Response) | undefined;
+  stubFetch((url, init) => {
+    const match = /^\/api\/v1\/engagements\/([^/]+)\/scope-revisions$/.exec(url);
+    if (match?.[1] !== undefined && init?.method === "POST") {
+      const engagementId = match[1];
+      const body = JSON.parse(String(init.body)) as (typeof posts)[number]["body"];
+      posts.push({ engagementId, body });
+      const record = records.get(engagementId)!;
+      const revision = ScopeRevisionSchema.parse({ ...populatedRevision, engagementId, rules: body.rules });
+      const success = () => {
+        records.set(engagementId, { ...record, revision: record.revision + 1, activeScopeRevisionId: revision.id });
+        revisions.set(engagementId, revision);
+        return response(revision, 201);
+      };
+      if (pending && engagementId === activeEngagement.id) {
+        completeSave = success;
+        return request.promise;
+      }
+      return success();
+    }
+    if (url === "/api/v1/engagements") return response([...records.values()]);
+    const id = /^\/api\/v1\/engagements\/([^/?]+)/.exec(url)?.[1];
+    if (failDetail && url === `/api/v1/engagements/${activeEngagement.id}`) return response({}, 503);
+    const record = records.get(id ?? activeEngagement.id) ?? activeEngagement;
+    return readResponse(url, record, revisions.get(record.id) ?? null) ?? response({}, 400);
+  });
+  const view = await renderEditor(activeEngagement.id, browserHistory);
+  await screen.findByRole("heading", { name: "No saved scope yet" });
+  if (cached) view.queryClient.setQueryData(engagementDetailQueryKey(scopeB.id), {
+    engagement: records.get(scopeB.id), activeScopeRevision: null,
+  });
+  const clickEngagement = (id: string) => {
+    const sidebar = screen.getByRole("complementary", { name: "Primary" });
+    const link = sidebar.querySelector<HTMLAnchorElement>(`a[href="/engagements/${id}"]`);
+    if (link === null) throw new Error("Missing engagement link");
+    fireEvent.click(link);
+  };
+  return {
+    ...view, posts, clickEngagement,
+    failDetail: (value: boolean) => { failDetail = value; },
+    finish: (success: boolean) => {
+      if (completeSave === undefined) throw new Error("No pending save");
+      request.resolve(success ? completeSave() : response({ code: "storage_busy" }, 503));
+    },
+  };
+}
+
+function enterScopeTarget(value: string) {
+  fireEvent.change(screen.getByLabelText("Target"), { target: { value } });
+}
+
+async function discardScopeNavigation() {
+  const dialog = await screen.findByRole("alertdialog", { name: "Unsaved scope" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
+}
+
+describe("saved-scope draft ownership", () => {
+  it.each([
+    [true, "typed"], [true, "staged"], [false, "typed"], [false, "staged"],
+  ] as const)("guards %s cached navigation with a %s draft and never saves it under B", async (cached, mode) => {
+    const env = await setupScopeNavigation({ cached });
+    enterScopeTarget(aTarget);
+    if (mode === "staged") fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    env.clickEngagement(scopeB.id);
+    const dialog = await screen.findByRole("alertdialog", { name: "Unsaved scope" });
+    expect(env.router.state.location.pathname).toBe(`/engagements/${activeEngagement.id}`);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stay" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    if (mode === "typed") expect(screen.getByLabelText("Target")).toHaveProperty("value", aTarget);
+    else expect(screen.getByText(aTarget)).toBeTruthy();
+    env.clickEngagement(scopeB.id);
+    await discardScopeNavigation();
+    await screen.findByRole("heading", { level: 1, name: scopeB.name });
+    expect(await screen.findByLabelText("Target")).toHaveProperty("value", "");
+    expect(screen.queryByText(aTarget)).toBeNull();
+    expect(screen.getByRole("button", { name: "Save scope" })).toHaveProperty("disabled", true);
+    expect(env.posts).toHaveLength(0);
+    enterScopeTarget(bTarget);
+    fireEvent.click(screen.getByRole("button", { name: "Save scope" }));
+    await waitFor(() => expect(screen.getByLabelText("Target")).toHaveProperty("value", ""));
+    expect(env.posts).toHaveLength(1);
+    expect(env.posts[0]).toMatchObject({ engagementId: scopeB.id, body: { expectedRevision: 2 } });
+    expect(JSON.stringify(env.posts[0]?.body.rules)).toContain(bTarget);
+    expect(JSON.stringify(env.posts[0]?.body.rules)).not.toContain(aTarget);
+    enterScopeTarget("B unsaved");
+    env.clickEngagement(activeEngagement.id);
+    await discardScopeNavigation();
+    await screen.findByRole("heading", { level: 1, name: activeEngagement.name });
+    expect(screen.getByLabelText("Target")).toHaveProperty("value", "");
+    expect(screen.queryByText(bTarget)).toBeNull();
+    expect(env.posts).toHaveLength(1);
+  });
+
+  it.each([true, false])("holds navigation until A save settles, success=%s", async (success) => {
+    const env = await setupScopeNavigation({ pending: true });
+    enterScopeTarget(aTarget);
+    fireEvent.click(screen.getByRole("button", { name: "Save scope" }));
+    await waitFor(() => expect(env.posts).toHaveLength(1));
+    env.clickEngagement(scopeB.id);
+    const dialog = await screen.findByRole("alertdialog", { name: "Unsaved scope" });
+    expect(within(dialog).queryByRole("button", { name: "Discard" })).toBeNull();
+    expect(screen.getByLabelText("Target")).toHaveProperty("disabled", true);
+    expect(env.router.state.location.pathname).toBe(`/engagements/${activeEngagement.id}`);
+    await act(async () => env.finish(success));
+    if (!success) {
+      await screen.findByRole("button", { name: "Discard" });
+      expect(screen.getByLabelText("Target")).toHaveProperty("value", aTarget);
+      expect(env.router.state.location.pathname).toBe(`/engagements/${activeEngagement.id}`);
+      fireEvent.click(within(dialog).getByRole("button", { name: "Stay" }));
+      await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+      env.clickEngagement(scopeB.id);
+      await discardScopeNavigation();
+    }
+    await screen.findByRole("heading", { level: 1, name: scopeB.name });
+    enterScopeTarget(bTarget);
+    expect(screen.getByLabelText("Target")).toHaveProperty("value", bTarget);
+    expect(within(screen.getByRole("region", { name: "Saved scope" })).queryByRole("alert")).toBeNull();
+    expect(env.posts).toHaveLength(1);
+    expect(env.posts[0]?.engagementId).toBe(activeEngagement.id);
+    expect(JSON.stringify(env.posts[0]?.body.rules)).toContain(aTarget);
+    expect(env.queryClient.getQueryData(engagementDetailQueryKey(activeEngagement.id))).toMatchObject({
+      activeScopeRevision: success ? { engagementId: activeEngagement.id } : null,
+    });
+  });
+
+  // Bypass the route guard deliberately to prove component ownership also
+  // fences late success/error callbacks, including a new A visit.
+  it.each([[true, false], [false, false], [true, true], [false, true]] as const)(
+    "isolates late A completion, success=%s, return to A=%s", async (success, returnToA) => {
+      const env = await setupScopeNavigation({ pending: true });
+      enterScopeTarget(aTarget);
+      fireEvent.click(screen.getByRole("button", { name: "Save scope" }));
+      await waitFor(() => expect(env.posts).toHaveLength(1));
+      await act(async () => { await env.router.navigate({
+        to: "/engagements/$engagementId", params: { engagementId: scopeB.id }, ignoreBlocker: true,
+      }); });
+      await screen.findByRole("heading", { level: 1, name: scopeB.name });
+      expect(screen.getByLabelText("Target")).toHaveProperty("value", "");
+      if (returnToA) {
+        await act(async () => { await env.router.navigate({
+          to: "/engagements/$engagementId", params: { engagementId: activeEngagement.id }, ignoreBlocker: true,
+        }); });
+        await screen.findByRole("heading", { level: 1, name: activeEngagement.name });
+      }
+      enterScopeTarget(bTarget);
+      await act(async () => env.finish(success));
+      await waitFor(() => expect(env.queryClient.isMutating()).toBe(0));
+      expect(screen.getByLabelText("Target")).toHaveProperty("value", bTarget);
+      expect(screen.getByRole("button", { name: "Save scope" })).toHaveProperty("disabled", false);
+      expect(within(screen.getByRole("region", { name: "Saved scope" })).queryByRole("alert")).toBeNull();
+      expect(env.posts).toHaveLength(1);
+      expect(env.posts[0]?.engagementId).toBe(activeEngagement.id);
+    },
+  );
+
+  it("keeps the draft through a failed detail refresh and recovery", async () => {
+    const env = await setupScopeNavigation();
+    enterScopeTarget(aTarget);
+    fireEvent.click(screen.getByRole("button", { name: "Add rule" }));
+    enterScopeTarget(bTarget);
+    env.failDetail(true);
+    await act(async () => { await env.queryClient.refetchQueries({ queryKey: engagementDetailQueryKey(activeEngagement.id), exact: true }); });
+    await screen.findByText("Showing the last successful saved scope");
+    expect(screen.getByLabelText("Target")).toHaveProperty("value", bTarget);
+    expect(screen.getByText(aTarget)).toBeTruthy();
+    env.failDetail(false);
+    await act(async () => { await env.queryClient.refetchQueries({ queryKey: engagementDetailQueryKey(activeEngagement.id), exact: true }); });
+    await waitFor(() => expect(screen.queryByText("Showing the last successful saved scope")).toBeNull());
+    expect(screen.getByLabelText("Target")).toHaveProperty("value", bTarget);
+    expect(screen.getByText(aTarget)).toBeTruthy();
+    expect(env.posts).toHaveLength(0);
+  });
+
+  it("guards tab and Back/Forward navigation and treats options as draft state", async () => {
+    const env = await setupScopeNavigation({ browserHistory: true });
+    env.clickEngagement(scopeB.id);
+    await screen.findByRole("heading", { level: 1, name: scopeB.name });
+    fireEvent.click(screen.getByLabelText("Include subdomains for domain rules"));
+    env.router.history.back();
+    const dialog = await screen.findByRole("alertdialog", { name: "Unsaved scope" });
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(screen.getByLabelText("Include subdomains for domain rules")).toHaveProperty("checked", true);
+    env.router.history.back();
+    await discardScopeNavigation();
+    await screen.findByRole("heading", { level: 1, name: activeEngagement.name });
+    env.router.history.forward();
+    await screen.findByRole("heading", { level: 1, name: scopeB.name });
+    expect(screen.getByLabelText("Include subdomains for domain rules")).toHaveProperty("checked", false);
+    fireEvent.change(screen.getByLabelText("Ports"), { target: { value: "443" } });
+    const tabs = screen.getByRole("navigation", { name: "Engagement sections" });
+    fireEvent.click(within(tabs).getByRole("link", { name: "Notes" }));
+    await discardScopeNavigation();
+    await screen.findByLabelText("Markdown");
+    expect(env.posts).toHaveLength(0);
+  });
+
+  it("keeps same-surface selection and action navigation available with a draft", async () => {
+    const env = await setupScopeNavigation();
+    enterScopeTarget(aTarget);
+    await act(async () => { await env.router.navigate({
+      to: "/engagements/$engagementId", params: { engagementId: activeEngagement.id },
+      search: { target: bTarget, action: "40000000-0000-4000-8000-000000000001" },
+    }); });
+    expect(env.router.state.location.search).toMatchObject({ target: bTarget, action: "40000000-0000-4000-8000-000000000001" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByLabelText("Target")).toHaveProperty("value", aTarget);
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Engagement sections" })).getByRole("link", { name: "Surface" }));
+    await waitFor(() => expect(env.router.state.location.search.tab).toBe("surface"));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.getByLabelText("Target")).toHaveProperty("value", aTarget);
+    expect(env.posts).toHaveLength(0);
+  });
+
+  it("discards A only by choice before opening archived B read-only", async () => {
+    const env = await setupScopeNavigation({ archived: true });
+    enterScopeTarget(aTarget);
+    void env.router.navigate({ to: "/engagements/$engagementId", params: { engagementId: scopeB.id } });
+    await discardScopeNavigation();
+    await screen.findByRole("heading", { level: 1, name: scopeB.name });
+    expect(screen.getByLabelText("Target")).toHaveProperty("value", "");
+    expect(screen.getByLabelText("Target")).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Save scope" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Add rule" })).toHaveProperty("disabled", true);
+    expect(env.posts).toHaveLength(0);
   });
 });

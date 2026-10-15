@@ -813,7 +813,12 @@ function EngagementDetail({
               engagementId={displayed.id}
               pendingActionId={pendingActionId}
             />
-            <SavedScopeEditor archived={archived} engagementId={displayed.id} />
+            <SavedScopeEditor
+              key={displayed.id}
+              archived={archived}
+              engagementId={displayed.id}
+              onNavigationStay={dismissDestination}
+            />
           </div>
         </div>
       ) : null}
