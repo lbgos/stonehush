@@ -57,7 +57,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
-async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeStart?: boolean; revoke?: boolean; publicationFailure?: boolean; shutdown?: boolean; completionRace?: boolean; delayVerification?: boolean; hangPoll?: "initial" | "final"; replayPartition?: boolean; cleanupFailure?: boolean; lateIntent?: boolean } = {}) {
+async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeStart?: boolean; revoke?: boolean; publicationFailure?: boolean; shutdown?: boolean; completionRace?: boolean; delayVerification?: boolean; hangPoll?: "initial" | "final"; replayPartition?: boolean; cleanupFailure?: boolean; lateIntent?: boolean; finalAuthorityLoss?: "revocation" | "deadline" | "partition" } = {}) {
   const dataDir = await mkdtemp(path.join(tmpdir(), "stonehush-cancel-unit-"));
   directories.push(dataDir);
   const controller = new AbortController();
@@ -67,7 +67,7 @@ async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeSt
   let verificationRelease: (() => void) | null = null;
   let heartbeatCalls = 0;
   let monotonic = 0;
-  if (options.replayPartition) vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+  if (options.replayPartition || options.finalAuthorityLoss) vi.spyOn(performance, "now").mockImplementation(() => monotonic);
   if (options.delayVerification) vi.mocked(verifyExecutable).mockImplementationOnce(async () => {
     requested = true;
     await new Promise<void>((resolve) => { verificationRelease = resolve; });
@@ -77,7 +77,8 @@ async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeSt
   const cancel = vi.fn(async () => ({ cleanupFailed: options.cleanupFailure === true }));
   vi.mocked(runSupervisedCommand).mockImplementation(() => {
     spawned = true;
-    if (options.completionRace || options.lateIntent) {
+    if (options.completionRace || options.lateIntent || options.finalAuthorityLoss) {
+      if (options.finalAuthorityLoss === "deadline") monotonic = 24000;
       const handle = Promise.resolve({ ...captured(), exitCode: 0, signal: null }) as ReturnType<typeof runSupervisedCommand>;
       handle.cancel = cancel;
       return handle;
@@ -121,6 +122,11 @@ async function harness(kind: Parameters<typeof snapshot>[0], options: { beforeSt
         const release = verificationRelease;
         verificationRelease = null;
         setImmediate(release);
+      }
+      if (spawned && options.finalAuthorityLoss === "revocation") return response({ code: "runner_unauthorized" }, 401);
+      if (spawned && options.finalAuthorityLoss === "partition") {
+        monotonic = 24000;
+        throw new TypeError("final heartbeat partition");
       }
       if (spawned && options.lateIntent) requested = true;
       if (spawned && options.revoke) return response({ code: "runner_unauthorized" }, 401);
@@ -221,6 +227,21 @@ describe("operator cancellation reaches installed action handlers", () => {
     await f.execution;
     expect(f.cancel).toHaveBeenCalled();
     expect(f.completions.at(-1)?.terminalKind).toBe("cancelled");
+  });
+  it.each([
+    ["ffuf", "revocation"], ["vhost", "revocation"],
+    ["ffuf", "deadline"], ["vhost", "deadline"],
+    ["ffuf", "partition"], ["vhost", "partition"],
+  ] as const)("preserves partial %s output on final %s authority loss", async (kind, finalAuthorityLoss) => {
+    const f = await harness(kind, { finalAuthorityLoss });
+    await f.execution;
+    expect(f.cancel).toHaveBeenCalled();
+    const publish = kind === "ffuf" ? publishFfufArtifacts : publishVhostArtifacts;
+    expect(publish).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledWith(expect.anything(), f.lease,
+      expect.objectContaining({ stdout: captured().stdout }),
+      expect.objectContaining({ isCancelled: true, eventSequence: 2 }));
+    expect(f.completions).toEqual([expect.objectContaining({ terminalKind: "failed", reason: "runner_lost" })]);
   });
   it("a cancel-first completion race cannot ignore failed late cleanup", async () => {
     const f = await harness("nmap", { completionRace: true, cleanupFailure: true });

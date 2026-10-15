@@ -647,7 +647,8 @@ export async function runOnce(
         }
       };
 
-      if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
+      await pollHeartbeat();
+      if (isAuthorityLost()) {
         await stopNative();
         if (captured !== null) {
           const partial = await readPartialJson();
@@ -665,7 +666,6 @@ export async function runOnce(
         return true;
       }
 
-      await pollHeartbeat();
       if (cancellationRequested) {
         const partial = await readPartialJson();
         const result = captured as ProcessResult | null;
@@ -800,7 +800,8 @@ export async function runOnce(
         }
       };
 
-      if (signal?.aborted === true || shutdownAfterStarted || hbFailed) {
+      await pollHeartbeat();
+      if (isAuthorityLost()) {
         await stopNative();
         if (captured !== null) {
           const partial = await readPartialJson();
@@ -818,7 +819,6 @@ export async function runOnce(
         return true;
       }
 
-      await pollHeartbeat();
       if (cancellationRequested) {
         const partial = await readPartialJson();
         const result = captured as ProcessResult | null;
