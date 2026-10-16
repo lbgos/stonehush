@@ -290,6 +290,7 @@ function EngagementDetail({
   const actionSearch = pendingActionId === undefined ? {} : { action: pendingActionId };
   const {
     advisorDraft,
+    registerAdvisorGuard,
     closeAdvisor,
     setAdvisorExcerpts,
     setAdvisorFindingIds,
@@ -950,6 +951,7 @@ function EngagementDetail({
           findingIds={advisorDraft.findingIds}
           onExcerptsChange={setAdvisorExcerpts}
           onFindingIdsChange={setAdvisorFindingIds}
+          registerReplacementGuard={registerAdvisorGuard}
           onClose={closeAdvisor}
         />
       ) : null}

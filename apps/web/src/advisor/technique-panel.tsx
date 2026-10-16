@@ -6,11 +6,16 @@ import {
   matchTechniquePrereqs,
 } from "@stonehush/domain";
 import { Button } from "@stonehush/ui";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 
 import { copyTextToClipboard } from "../engagements/report-query.js";
 import { checkTechniqueInput, useTechniqueSave } from "./technique-editor.js";
 import { useTechniquesQuery, type SaveTechniqueInput } from "./technique-query.js";
+
+export interface TechniqueDraftState {
+  readonly dirty: boolean;
+  readonly pending: boolean;
+}
 
 export interface TechniqueDraft extends SaveTechniqueInput {
   readonly key: string;
@@ -64,11 +69,13 @@ export function TechniquePanel({
   archived,
   facts,
   draft,
+  onDraftStateChange,
 }: {
   engagementId: string;
   archived: boolean;
   facts: readonly string[];
   draft?: TechniqueDraft | undefined;
+  onDraftStateChange?: ((state: TechniqueDraftState) => void) | undefined;
 }) {
   const techniques = useTechniquesQuery(engagementId);
   return (
@@ -107,6 +114,7 @@ export function TechniquePanel({
           key={draft?.key ?? "blank"}
           engagementId={engagementId}
           initial={draft}
+          onDraftStateChange={onDraftStateChange}
         />
       ) : null}
     </div>
@@ -241,12 +249,14 @@ export function TechniqueCard({
 function SaveTechniqueForm({
   engagementId,
   initial,
+  onDraftStateChange,
 }: {
   engagementId: string;
   initial?: SaveTechniqueInput | undefined;
+  onDraftStateChange?: ((state: TechniqueDraftState) => void) | undefined;
 }) {
   const save = useTechniqueSave(engagementId);
-  const [saved, setSaved] = useState(false);
+  const [savedFields, setSavedFields] = useState<string>();
   const [name, setName] = useState(initial?.name ?? "");
   const [whenUseful, setWhenUseful] = useState(initial?.whenUseful ?? "");
   const [prerequisites, setPrerequisites] = useState(
@@ -265,10 +275,18 @@ function SaveTechniqueForm({
   const [meaning, setMeaning] = useState(initial?.meaning ?? "");
   const [error, setError] = useState<string | undefined>(undefined);
 
+  const fields = JSON.stringify([name, whenUseful, prerequisites, question, procedure, meaning]);
+  const saved = savedFields === fields;
+  const dirty = !saved && (initial !== undefined || error !== undefined ||
+    [name, whenUseful, prerequisites, question, procedure, meaning].some((value) => value.length > 0));
+  useLayoutEffect(() => {
+    onDraftStateChange?.({ dirty, pending: save.pending });
+  }, [dirty, save.pending, onDraftStateChange]);
+
   function handleSave() {
     if (save.pending) return;
     setError(undefined);
-    setSaved(false);
+    setSavedFields(undefined);
     const steps = parseProcedure(procedure);
     if (name.trim().length === 0 || question.trim().length === 0 || steps === undefined || steps.length === 0) {
       setError("Name, question, and at least one procedure step are required.");
@@ -291,7 +309,7 @@ function SaveTechniqueForm({
       return;
     }
     save.submit(input, {
-      onSaved: () => setSaved(true),
+      onSaved: () => setSavedFields(fields),
       onFailed: (failure, code) =>
         setError(
           failure === "owner"
@@ -314,6 +332,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Name</span>
           <input
+            readOnly={save.pending}
             value={name}
             onChange={(event) => setName(event.target.value)}
             autoComplete="off"
@@ -323,6 +342,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>When useful</span>
           <input
+            readOnly={save.pending}
             value={whenUseful}
             onChange={(event) => setWhenUseful(event.target.value)}
             autoComplete="off"
@@ -332,6 +352,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Prerequisites (one per line)</span>
           <textarea
+            readOnly={save.pending}
             value={prerequisites}
             rows={2}
             onChange={(event) => setPrerequisites(event.target.value)}
@@ -343,6 +364,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Distinguishing question</span>
           <input
+            readOnly={save.pending}
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
             autoComplete="off"
@@ -352,6 +374,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Procedure (blank line between steps, $ prefix for commands with {"{{placeholders}}"})</span>
           <textarea
+            readOnly={save.pending}
             value={procedure}
             rows={4}
             onChange={(event) => setProcedure(event.target.value)}
@@ -363,6 +386,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>How to read the result</span>
           <input
+            readOnly={save.pending}
             value={meaning}
             onChange={(event) => setMeaning(event.target.value)}
             autoComplete="off"
