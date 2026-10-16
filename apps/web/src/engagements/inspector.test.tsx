@@ -2,6 +2,7 @@
 import { PersistedActionSchema, type PersistedAction } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { startTransition, useLayoutEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
@@ -1045,6 +1046,55 @@ describe("surface inspector", () => {
     await act(async () => { pending[3]!.resolve(); });
     expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
     expect(writeText.mock.calls[0]?.[0]).toBe(a.noteReference);
+  });
+
+  it("clears completed copy feedback during a selection commit before passive effects", async () => {
+    stubFindings([]);
+    let completeCopy: (() => void) | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => new Promise<void>((resolve) => { completeCopy = resolve; }) },
+    });
+    const a = pathInspectorRecord(pathResult, engagementId);
+    const b = serviceInspectorRecord(webService, engagementId);
+    let selectB: (() => void) | undefined;
+    let observeCommit: ((copied: boolean) => void) | undefined;
+    const committed = new Promise<boolean>((resolve) => { observeCommit = resolve; });
+    function CommitObserver({ selectionKey }: { selectionKey: string }) {
+      useLayoutEffect(() => {
+        if (selectionKey !== b.key) return;
+        queueMicrotask(() => observeCommit?.(screen.queryByRole("button", { name: "Copied" }) !== null));
+        // Leave real scheduler time for a browser paint before passive effects.
+        // RTL rerender's act would flush those effects and hide this interval.
+        const until = performance.now() + 20;
+        while (performance.now() < until) { /* simulate a slow layout commit */ }
+      }, [selectionKey]);
+      return null;
+    }
+    function Fixture() {
+      const [record, setRecord] = useState(a);
+      selectB = () => startTransition(() => setRecord(b));
+      return (
+        <>
+          <SurfaceInspector engagementId={engagementId} loading={false} onClose={() => undefined} record={record} selectionKey={record.key} />
+          <CommitObserver selectionKey={record.key} />
+        </>
+      );
+    }
+    render(<QueryClientProvider client={queryClient}><Fixture /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy note reference" }));
+    await act(async () => { completeCopy?.(); });
+    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
+    // Use the real concurrent scheduler, with no production hook mocks.
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", false);
+    try {
+      selectB?.();
+      expect(await committed).toBe(false);
+    } finally {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      await act(async () => undefined);
+    }
+    expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
   });
 
   it("copies a note reference for pasting into engagement notes", async () => {

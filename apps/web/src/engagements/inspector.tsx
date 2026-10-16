@@ -18,6 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -810,8 +811,8 @@ export function SurfaceInspector({
   const [copied, setCopied] = useState<string | undefined>(undefined);
   const copyRequest = useRef(0);
 
-  // Invalidate old completions on navigation, including A-to-B-to-A visits.
-  useEffect(() => {
+  // Clear feedback before paint and invalidate completions during navigation.
+  useLayoutEffect(() => {
     setCopied(undefined);
     return () => { copyRequest.current += 1; };
   }, [engagementId, selectionKey]);
