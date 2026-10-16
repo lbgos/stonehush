@@ -6,7 +6,7 @@ import {
   matchTechniquePrereqs,
 } from "@stonehush/domain";
 import { Button } from "@stonehush/ui";
-import { useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { copyTextToClipboard } from "../engagements/report-query.js";
 import { checkTechniqueInput, useTechniqueSave } from "./technique-editor.js";
@@ -78,6 +78,10 @@ export function TechniquePanel({
   onDraftStateChange?: ((state: TechniqueDraftState) => void) | undefined;
 }) {
   const techniques = useTechniquesQuery(engagementId);
+  // Archiving can complete independently of a save. Retain its form and
+  // mutation owner, with writes locked, until the operator leaves it.
+  const [formMounted, setFormMounted] = useState(!archived);
+  useEffect(() => { if (!archived) setFormMounted(true); }, [archived]);
   return (
     <div className="mt-3 border-t border-border pt-3">
       <h3 className="m-0 text-[12px] font-semibold">Techniques</h3>
@@ -109,11 +113,12 @@ export function TechniquePanel({
           No saved techniques yet.
         </p>
       ) : null}
-      {!archived ? (
+      {!archived || formMounted ? (
         <SaveTechniqueForm
           key={draft?.key ?? "blank"}
           engagementId={engagementId}
           initial={draft}
+          archived={archived}
           onDraftStateChange={onDraftStateChange}
         />
       ) : null}
@@ -249,10 +254,12 @@ export function TechniqueCard({
 function SaveTechniqueForm({
   engagementId,
   initial,
+  archived,
   onDraftStateChange,
 }: {
   engagementId: string;
   initial?: SaveTechniqueInput | undefined;
+  archived: boolean;
   onDraftStateChange?: ((state: TechniqueDraftState) => void) | undefined;
 }) {
   const save = useTechniqueSave(engagementId);
@@ -284,7 +291,7 @@ function SaveTechniqueForm({
   }, [dirty, save.pending, onDraftStateChange]);
 
   function handleSave() {
-    if (save.pending) return;
+    if (archived || save.pending) return;
     setError(undefined);
     setSavedFields(undefined);
     const steps = parseProcedure(procedure);
@@ -332,7 +339,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Name</span>
           <input
-            readOnly={save.pending}
+            readOnly={archived || save.pending}
             value={name}
             onChange={(event) => setName(event.target.value)}
             autoComplete="off"
@@ -342,7 +349,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>When useful</span>
           <input
-            readOnly={save.pending}
+            readOnly={archived || save.pending}
             value={whenUseful}
             onChange={(event) => setWhenUseful(event.target.value)}
             autoComplete="off"
@@ -352,7 +359,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Prerequisites (one per line)</span>
           <textarea
-            readOnly={save.pending}
+            readOnly={archived || save.pending}
             value={prerequisites}
             rows={2}
             onChange={(event) => setPrerequisites(event.target.value)}
@@ -364,7 +371,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Distinguishing question</span>
           <input
-            readOnly={save.pending}
+            readOnly={archived || save.pending}
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
             autoComplete="off"
@@ -374,7 +381,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>Procedure (blank line between steps, $ prefix for commands with {"{{placeholders}}"})</span>
           <textarea
-            readOnly={save.pending}
+            readOnly={archived || save.pending}
             value={procedure}
             rows={4}
             onChange={(event) => setProcedure(event.target.value)}
@@ -386,7 +393,7 @@ function SaveTechniqueForm({
         <label className="grid gap-0.5 text-[12px]">
           <span>How to read the result</span>
           <input
-            readOnly={save.pending}
+            readOnly={archived || save.pending}
             value={meaning}
             onChange={(event) => setMeaning(event.target.value)}
             autoComplete="off"
@@ -394,7 +401,7 @@ function SaveTechniqueForm({
           />
         </label>
         <div>
-          <Button type="button" disabled={save.pending} onClick={handleSave}>
+          <Button type="button" disabled={archived || save.pending} onClick={handleSave}>
             {save.pending ? "Saving" : "Save technique"}
           </Button>
         </div>

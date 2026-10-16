@@ -450,6 +450,44 @@ describe("advisor panel composer", () => {
     expect(saveTechnique).toHaveBeenCalledTimes(1);
   });
 
+  it.each(["refused", "saved"])("keeps the form and save owner when an engagement is archived before a %s response", async (outcome) => {
+    let finish: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => { finish = resolve; });
+    const onClose = vi.fn();
+    const saveTechnique = vi.fn(async (body: unknown) => {
+      await ready;
+      return outcome === "refused" ? response({ code: "storage_busy" }, 503) : response({
+        ...(body as Record<string, unknown>), contractVersion: 1,
+        id: "60000000-0000-4000-8000-000000000001", engagementId: ENGAGEMENT_ID,
+        createdAt: "2026-10-16T07:00:00.000Z", updatedAt: "2026-10-16T07:00:00.000Z",
+      }, 201);
+    });
+    const { rerenderArchived } = await renderPanel(() => succeededTurn(), { onClose, saveTechnique });
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    fireEvent.click(button("Save technique"));
+    await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(1));
+    rerenderArchived(true);
+    await act(async () => { finish?.(); });
+    await screen.findByText(outcome === "refused" ? "Storage is busy. Try again." : "Technique saved.");
+    expectTechnique();
+    for (const [label] of techniqueFields) expect(screen.getByLabelText<HTMLInputElement>(label).readOnly).toBe(true);
+    expect(button("Save technique").disabled).toBe(true);
+    fireEvent.click(button("Close"));
+    if (outcome === "saved") expect(onClose).toHaveBeenCalledTimes(1);
+    else {
+      const guard = await screen.findByRole("alertdialog", { name: "Unsaved technique" });
+      expect(within(guard).getByRole<HTMLButtonElement>("button", { name: "Discard draft" }).disabled).toBe(false);
+      fireEvent.click(within(guard).getByRole("button", { name: "Stay" }));
+      rerenderArchived(false);
+      expectTechnique();
+      fireEvent.click(button("Save technique"));
+      await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(2));
+      expect(saveTechnique.mock.calls[1]).toEqual(saveTechnique.mock.calls[0]);
+      await screen.findByText("Storage is busy. Try again.");
+    }
+  });
+
   it("keeps saved answers and tried checks stable while typing, then renders new answers", async () => {
     const split = vi.spyOn(paragraphs, "splitAnswerParagraphs");
     const extract = vi.spyOn(triedChecks, "extractSuggestedChecks");
