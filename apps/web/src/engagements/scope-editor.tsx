@@ -7,7 +7,8 @@ import {
   StaleDataState,
   cn,
 } from "@stonehush/ui";
-import { useId, useState, type FormEvent, type ReactNode } from "react";
+import { useBlocker, type ShouldBlockFn } from "@tanstack/react-router";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { engagementMutationMessage, isRevisionConflict } from "./errors.js";
 import { useAppendScopeRevisionMutation } from "./mutations.js";
@@ -29,9 +30,11 @@ const emptyDraft: DraftScopeRuleInput = {
 export function SavedScopeEditor({
   archived,
   engagementId,
+  onNavigationStay,
 }: {
   archived: boolean;
   engagementId: string;
+  onNavigationStay?: (() => void) | undefined;
 }) {
   const detail = useEngagementDetailQuery(engagementId);
   const retry = () => void detail.refetch();
@@ -60,20 +63,17 @@ export function SavedScopeEditor({
           description="The latest refresh failed. Existing scope is still available."
           onRetry={retry}
         >
-          <ScopeEditorBody
-            archived={archived}
-            engagementId={engagementId}
-            expectedRevision={detail.data.engagement.revision}
-            revision={detail.data.activeScopeRevision}
-          />
+          {null}
         </StaleDataState>
       ) : null}
-      {hasData && !detail.isError ? (
+      {hasData ? (
         <ScopeEditorBody
+          key={engagementId}
           archived={archived}
           engagementId={engagementId}
           expectedRevision={detail.data.engagement.revision}
           revision={detail.data.activeScopeRevision}
+          onNavigationStay={onNavigationStay}
         />
       ) : null}
     </section>
@@ -95,13 +95,16 @@ function ScopeEditorBody({
   engagementId,
   expectedRevision,
   revision,
+  onNavigationStay,
 }: {
   archived: boolean;
   engagementId: string;
   expectedRevision: number;
   revision: ScopeRevision | null;
+  onNavigationStay?: (() => void) | undefined;
 }) {
   const formId = useId();
+  const targetRef = useRef<HTMLInputElement>(null);
   const appendScope = useAppendScopeRevisionMutation();
   const [fields, setFields] = useState<DraftScopeRuleInput>(emptyDraft);
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof DraftScopeRuleInput, string>>>(
@@ -119,6 +122,38 @@ function ScopeEditorBody({
     fields.rawTarget.trim().length > 0 || fields.portRanges.trim().length > 0;
   const canSave =
     !archived && !appendScope.isPending && (draftRules.length > 0 || hasPendingInput);
+  const dirty = draftRules.length > 0 || fields.rawTarget.length > 0 ||
+    fields.portRanges.length > 0 || fields.includeSubdomains;
+  const guardActive = appendScope.isPending || (!archived && dirty);
+  const shouldBlockFn = useCallback<ShouldBlockFn>(
+    ({ next }) => guardActive && (
+      next.routeId !== "/engagements/$engagementId" || next.params.engagementId !== engagementId ||
+      (next.search.tab !== undefined && next.search.tab !== "surface")
+    ),
+    [guardActive, engagementId],
+  );
+  const blocker = useBlocker({
+    // Selection and action query changes keep this editor mounted.
+    shouldBlockFn,
+    enableBeforeUnload: guardActive,
+    disabled: !guardActive,
+    withResolver: true,
+  });
+  const blocked = blocker.status === "blocked";
+
+  // A successful save may finish the requested navigation. Failure keeps
+  // the original draft and destination until the operator chooses.
+  useEffect(() => {
+    if (blocked && appendScope.isSuccess && !appendScope.isPending && !dirty) {
+      blocker.proceed?.();
+    }
+  }, [blocked, appendScope.isSuccess, appendScope.isPending, dirty, blocker]);
+
+  const stay = () => {
+    blocker.reset?.();
+    onNavigationStay?.();
+    targetRef.current?.focus({ preventScroll: true });
+  };
 
   const applyFieldResult = (result: ReturnType<typeof createDraftScopeRule>) => {
     if (result.ok) {
@@ -164,6 +199,32 @@ function ScopeEditorBody({
 
   return (
     <div>
+      {blocked ? (
+        <section
+          role="alertdialog"
+          aria-label="Unsaved scope"
+          aria-describedby={`${formId}-navigation`}
+          className="mb-3 border border-border px-3 py-3"
+          data-keybinding-capture=""
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              stay();
+            }
+          }}
+        >
+          <p id={`${formId}-navigation`} className="m-0 text-[12px] text-foreground">
+            {appendScope.isPending ? "Saving. Leaving continues after the save finishes." : "Discard unsaved scope edits?"}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button type="button" autoFocus onClick={stay}>Stay</Button>
+            {appendScope.isPending ? null : (
+              <Button type="button" variant="secondary" onClick={() => blocker.proceed?.()}>Discard</Button>
+            )}
+          </div>
+        </section>
+      ) : null}
       {revision === null ? (
         <section
           className="rounded-[10px] px-1 py-2"
@@ -183,7 +244,7 @@ function ScopeEditorBody({
         <ScopeRuleList
           caption="Rules to add"
           rules={draftRules}
-          {...(archived
+          {...(archived || appendScope.isPending
             ? {}
             : {
                 onRemove: (ruleId: string) => {
@@ -207,12 +268,13 @@ function ScopeEditorBody({
           >
             <input
               id={`${formId}-target`}
+              ref={targetRef}
               name="target"
               value={fields.rawTarget}
               placeholder="198.51.100.10"
               autoComplete="off"
               spellCheck={false}
-              disabled={archived}
+              disabled={archived || appendScope.isPending}
               aria-invalid={fieldErrors.rawTarget !== undefined}
               className={cn(fieldClassName(fieldErrors.rawTarget !== undefined), "font-mono")}
               onChange={(event) =>
@@ -232,7 +294,7 @@ function ScopeEditorBody({
               placeholder="80, 443, 8000-8100"
               autoComplete="off"
               spellCheck={false}
-              disabled={archived}
+              disabled={archived || appendScope.isPending}
               aria-invalid={fieldErrors.portRanges !== undefined}
               className={cn(fieldClassName(fieldErrors.portRanges !== undefined), "font-mono")}
               onChange={(event) =>
@@ -252,7 +314,7 @@ function ScopeEditorBody({
               type="checkbox"
               name="includeSubdomains"
               checked={fields.includeSubdomains}
-              disabled={archived}
+              disabled={archived || appendScope.isPending}
               className="size-4 accent-primary"
               onChange={(event) =>
                 setFields((current) => ({
