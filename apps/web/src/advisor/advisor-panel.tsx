@@ -140,7 +140,9 @@ function AdvisorComposer({
       engagementId,
     ),
   );
-  const [techniquesOpen, setTechniquesOpen] = useState(false);
+  // Mount lazily, then keep the authoring form through collapse so its
+  // draft, failed-save feedback and pending mutation retain one owner.
+  const [techniquesOpen, setTechniquesOpen] = useState<boolean | null>(null);
   const [techniqueDraft, setTechniqueDraft] = useState<TechniqueDraft | undefined>(
     undefined,
   );
@@ -734,19 +736,21 @@ function AdvisorComposer({
               type="button"
               variant="quiet"
               className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7"
-              aria-expanded={techniquesOpen}
+              aria-expanded={techniquesOpen === true}
               onClick={() => setTechniquesOpen((open) => !open)}
             >
               {techniquesOpen ? "Hide" : "Show"}
             </Button>
           </div>
-          {techniquesOpen ? (
-            <TechniquePanel
-              engagementId={engagementId}
-              archived={archived}
-              facts={facts}
-              draft={techniqueDraft}
-            />
+          {techniquesOpen !== null ? (
+            <div hidden={!techniquesOpen}>
+              <TechniquePanel
+                engagementId={engagementId}
+                archived={archived}
+                facts={facts}
+                draft={techniqueDraft}
+              />
+            </div>
           ) : null}
         </div>
       </div>

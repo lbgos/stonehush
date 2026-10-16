@@ -88,6 +88,7 @@ async function renderPanel(
     history?: unknown[];
     historyPages?: unknown[][];
     failPagedFetch?: boolean;
+    saveTechnique?: (body: unknown) => Response | Promise<Response>;
     onRequest?: (url: string, method: string) => void;
   },
 ) {
@@ -100,6 +101,13 @@ async function renderPanel(
     vi.fn(async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       options?.onRequest?.(String(url), method);
+      if (String(url).endsWith("/techniques")) {
+        if (method === "POST") {
+          const body: unknown = JSON.parse(String(init?.body));
+          return options?.saveTechnique?.(body) ?? response({ code: "storage_busy" }, 503);
+        }
+        return response([]);
+      }
       if (method === "POST") {
         const headers = new Headers(init?.headers);
         const call = {
@@ -244,6 +252,86 @@ afterEach(() => {
 });
 
 describe("advisor panel composer", () => {
+  const techniqueFields = [
+    ["Name", "Exact technique draft"],
+    ["When useful", "  Keep surrounding spaces  "],
+    [/Prerequisites/, "http observed\nlogin observed"],
+    ["Distinguishing question", "Does this answer the question?"],
+    [/Procedure \(/, "Read the response.\n$ curl -I http://{{target}}/"],
+    ["How to read the result", "  Keep the result meaning  "],
+  ] as const;
+
+  function fillTechnique() {
+    for (const [label, value] of techniqueFields) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+  }
+
+  function expectTechnique() {
+    for (const [label, value] of techniqueFields) {
+      expect(screen.getByLabelText<HTMLInputElement | HTMLTextAreaElement>(label).value).toBe(value);
+    }
+  }
+
+  it("keeps the exact technique draft and refused-save recovery when hidden and shown", async () => {
+    const saveTechnique = vi.fn(() => response({ code: "storage_busy" }, 503));
+    await renderPanel(() => succeededTurn(), { saveTechnique });
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    fireEvent.click(button("Save technique"));
+    await screen.findByText("Storage is busy. Try again.");
+    expectTechnique();
+
+    fireEvent.click(button("Hide"));
+    expect(screen.queryByRole("button", { name: "Save technique" })).toBeNull();
+    fireEvent.click(button("Show"));
+    expectTechnique();
+    expect(screen.getByText("Storage is busy. Try again.")).toBeTruthy();
+    expect(saveTechnique).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(button("Save technique"));
+    await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(2));
+    expect(saveTechnique.mock.calls[1]).toEqual(saveTechnique.mock.calls[0]);
+    await screen.findByText("Storage is busy. Try again.");
+    expectTechnique();
+  });
+
+  it("keeps one pending technique save and its completion through Hide and Show", async () => {
+    let finish: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => { finish = resolve; });
+    const saved = {
+      contractVersion: 1,
+      id: "60000000-0000-4000-8000-000000000001",
+      engagementId: ENGAGEMENT_ID,
+      name: "Exact technique draft",
+      whenUseful: "  Keep surrounding spaces  ",
+      prerequisites: ["http observed", "login observed"],
+      question: "Does this answer the question?",
+      procedure: [{ instruction: "Read the response.", command: "curl -I http://{{target}}/" }],
+      meaning: "  Keep the result meaning  ",
+      createdAt: "2026-10-16T07:00:00.000Z",
+      updatedAt: "2026-10-16T07:00:00.000Z",
+    };
+    const saveTechnique = vi.fn(async () => { await ready; return response(saved, 201); });
+    await renderPanel(() => succeededTurn(), { saveTechnique });
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    const submit = button("Save technique");
+    fireEvent.click(submit);
+    fireEvent.click(submit);
+    await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(1));
+    fireEvent.click(button("Hide"));
+    fireEvent.click(button("Show"));
+    expectTechnique();
+    expect(button("Saving").disabled).toBe(true);
+    fireEvent.click(button("Saving"));
+    expect(saveTechnique).toHaveBeenCalledTimes(1);
+    await act(async () => { finish?.(); });
+    await screen.findByText("Technique saved.");
+    expectTechnique();
+    expect(saveTechnique).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps saved answers and tried checks stable while typing, then renders new answers", async () => {
     const split = vi.spyOn(paragraphs, "splitAnswerParagraphs");
     const extract = vi.spyOn(triedChecks, "extractSuggestedChecks");
