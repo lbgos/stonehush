@@ -2,6 +2,7 @@
 import { PersistedActionSchema, type PersistedAction } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { startTransition, useLayoutEffect, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createAppQueryClient } from "../query-client.js";
@@ -1006,6 +1007,94 @@ describe("surface inspector", () => {
     expect(browser.getAttribute("target")).toBe("_blank");
     fireEvent.click(screen.getByRole("button", { name: "Open Notes" }));
     expect(onOpenNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["resolve", "reject"] as const)("ignores old clipboard %s across A-B-A and overlapping copies", async (outcome) => {
+    stubFindings([]);
+    const pending: { resolve: () => void; reject: () => void }[] = [];
+    const writeText = vi.fn((_value: string) => new Promise<void>((resolve, reject) => {
+      pending.push({ resolve, reject: () => reject(new Error("clipboard unavailable")) });
+    }));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    // A rejected modern clipboard can still succeed through the legacy path.
+    Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn(() => true) });
+    const a = pathInspectorRecord(pathResult, engagementId);
+    const b = serviceInspectorRecord(webService, engagementId);
+    const view = (record: typeof a, engagement = engagementId) => (
+      <QueryClientProvider client={queryClient}>
+        <SurfaceInspector engagementId={engagement} loading={false} onClose={vi.fn()} record={record} selectionKey={record.key} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view(a));
+    fireEvent.click(await screen.findByRole("button", { name: "Copy note reference" }));
+    rerender(view(b));
+    await act(async () => { pending[0]![outcome](); });
+    expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
+    rerender(view(a));
+    fireEvent.click(screen.getByRole("button", { name: "Copy note reference" }));
+    rerender(view(b));
+    rerender(view(a));
+    fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+    await act(async () => { pending[2]!.resolve(); });
+    const currentFeedback = screen.getByRole("button", { name: "Copied" });
+    await act(async () => { pending[1]![outcome](); });
+    expect(screen.getByRole("button", { name: "Copied" })).toBe(currentFeedback);
+    expect(screen.getByRole("button", { name: "Copy note reference" })).toBeTruthy();
+    // Engagement identity is separate even if a row key happens to match.
+    fireEvent.click(screen.getByRole("button", { name: "Copy note reference" }));
+    rerender(view(a, "10000000-0000-4000-8000-000000000002"));
+    await act(async () => { pending[3]!.resolve(); });
+    expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
+    expect(writeText.mock.calls[0]?.[0]).toBe(a.noteReference);
+  });
+
+  it("clears completed copy feedback during a selection commit before passive effects", async () => {
+    stubFindings([]);
+    let completeCopy: (() => void) | undefined;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => new Promise<void>((resolve) => { completeCopy = resolve; }) },
+    });
+    const a = pathInspectorRecord(pathResult, engagementId);
+    const b = serviceInspectorRecord(webService, engagementId);
+    let selectB: (() => void) | undefined;
+    let observeCommit: ((copied: boolean) => void) | undefined;
+    const committed = new Promise<boolean>((resolve) => { observeCommit = resolve; });
+    function CommitObserver({ selectionKey }: { selectionKey: string }) {
+      useLayoutEffect(() => {
+        if (selectionKey !== b.key) return;
+        queueMicrotask(() => observeCommit?.(screen.queryByRole("button", { name: "Copied" }) !== null));
+        // Leave real scheduler time for a browser paint before passive effects.
+        // RTL rerender's act would flush those effects and hide this interval.
+        const until = performance.now() + 20;
+        while (performance.now() < until) { /* simulate a slow layout commit */ }
+      }, [selectionKey]);
+      return null;
+    }
+    function Fixture() {
+      const [record, setRecord] = useState(a);
+      selectB = () => startTransition(() => setRecord(b));
+      return (
+        <>
+          <SurfaceInspector engagementId={engagementId} loading={false} onClose={() => undefined} record={record} selectionKey={record.key} />
+          <CommitObserver selectionKey={record.key} />
+        </>
+      );
+    }
+    render(<QueryClientProvider client={queryClient}><Fixture /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: "Copy note reference" }));
+    await act(async () => { completeCopy?.(); });
+    expect(screen.getByRole("button", { name: "Copied" })).toBeTruthy();
+    // Use the real concurrent scheduler, with no production hook mocks.
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", false);
+    try {
+      selectB?.();
+      expect(await committed).toBe(false);
+    } finally {
+      vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+      await act(async () => undefined);
+    }
+    expect(screen.queryByRole("button", { name: "Copied" })).toBeNull();
   });
 
   it("copies a note reference for pasting into engagement notes", async () => {

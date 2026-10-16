@@ -18,6 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type FormEvent,
@@ -808,9 +809,15 @@ export function SurfaceInspector({
 }: SurfaceInspectorProps) {
   const asideRef = useRef<HTMLElement>(null);
   const [copied, setCopied] = useState<string | undefined>(undefined);
+  const copyRequest = useRef(0);
+
+  // Clear feedback before paint and invalidate completions during navigation.
+  useLayoutEffect(() => {
+    setCopied(undefined);
+    return () => { copyRequest.current += 1; };
+  }, [engagementId, selectionKey]);
 
   useEffect(() => {
-    setCopied(undefined);
     // A retained inspector can mount after a Resume return has focused the
     // band. Preserve that explicit return target, including delayed reads.
     if (!document.activeElement?.hasAttribute("data-resume-band")) asideRef.current?.focus({ preventScroll: true });
@@ -825,8 +832,10 @@ export function SurfaceInspector({
   };
 
   const copyValue = (label: string, value: string) => {
+    const request = ++copyRequest.current;
+    setCopied(undefined);
     void copyTextToClipboard(value).then((ok) => {
-      if (ok) setCopied(label);
+      if (ok && copyRequest.current === request) setCopied(label);
     });
   };
 
