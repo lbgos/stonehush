@@ -190,6 +190,7 @@ export function upsertEngagementInCache(queryClient: QueryClient, engagement: En
         return created !== 0 ? created : left.id.localeCompare(right.id);
       });
     }
+    if (current[index]!.revision > engagement.revision) return current;
     const next = current.slice();
     next[index] = engagement;
     return next;

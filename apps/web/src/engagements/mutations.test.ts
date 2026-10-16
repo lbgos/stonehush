@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import type { Engagement } from "@stonehush/contracts";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
@@ -19,8 +20,11 @@ import {
   sendEngagementMutation,
   upsertEngagementInCache,
   useCreateEngagementMutation,
+  useArchiveEngagementMutation,
+  useReopenEngagementMutation,
+  useUpdateDeadlineMutation,
 } from "./mutations.js";
-import { ENGAGEMENTS_QUERY_KEY } from "./query.js";
+import { ENGAGEMENTS_QUERY_KEY, engagementDetailQueryKey, useEngagementsQuery } from "./query.js";
 
 const engagement = {
   contractVersion: 1 as const,
@@ -225,6 +229,148 @@ describe("engagement mutations", () => {
       { ...engagement, revision: 2, name: "Target lab" },
       later,
     ]);
+    client.clear();
+  });
+
+  it("retains the complete newer record when an older lifecycle revision arrives", () => {
+    const client = createAppQueryClient();
+    const newer: Engagement = {
+      ...engagement,
+      revision: 4,
+      deadlineAt: "2026-10-20T12:00:00.000Z",
+      updatedAt: "2026-10-16T05:00:00.000Z",
+    };
+    const other = { ...engagement, id: "10000000-0000-4000-8000-000000000002" };
+    const listed = [newer, other];
+    const detail = { engagement: newer, activeScopeRevision: null };
+    client.setQueryData(ENGAGEMENTS_QUERY_KEY, listed);
+    client.setQueryData(engagementDetailQueryKey(engagement.id), detail);
+
+    upsertEngagementInCache(client, {
+      ...engagement,
+      revision: 3,
+      status: "archived",
+      // Clock order is not revision authority.
+      updatedAt: "2026-10-16T06:00:00.000Z",
+    });
+
+    expect(client.getQueryData(ENGAGEMENTS_QUERY_KEY)).toEqual(listed);
+    expect(client.getQueryData(engagementDetailQueryKey(engagement.id))).toEqual(detail);
+    client.clear();
+  });
+
+  it("keeps existing replacement semantics for equal revisions and accepts a newer revision", () => {
+    const client = createAppQueryClient();
+    upsertEngagementInCache(client, engagement);
+    const equal = { ...engagement, deadlineAt: "2026-10-20T12:00:00.000Z" };
+    upsertEngagementInCache(client, equal);
+    expect(client.getQueryData(ENGAGEMENTS_QUERY_KEY)).toEqual([equal]);
+    const newer: Engagement = { ...engagement, revision: 2, status: "archived" };
+    upsertEngagementInCache(client, newer);
+    expect(client.getQueryData(ENGAGEMENTS_QUERY_KEY)).toEqual([newer]);
+    client.clear();
+  });
+
+  it("inserts missing records by creation time then ID without comparing unrelated revisions", () => {
+    const client = createAppQueryClient();
+    const other = { ...engagement, id: "10000000-0000-4000-8000-000000000002", revision: 8 };
+    client.setQueryData(ENGAGEMENTS_QUERY_KEY, [other]);
+    upsertEngagementInCache(client, engagement);
+    expect(client.getQueryData(ENGAGEMENTS_QUERY_KEY)).toEqual([engagement, other]);
+    client.clear();
+  });
+
+  it.each(["archive", "reopen", "deadline"] as const)(
+    "retains the complete newer list record after a delayed %s mutation succeeds",
+    async (operation) => {
+      const client = createAppQueryClient();
+      const newer: Engagement = {
+        ...engagement,
+        revision: 5,
+        status: operation === "reopen" ? "archived" : "active",
+        deadlineAt: "2026-10-20T12:00:00.000Z",
+        updatedAt: "2026-10-16T05:00:00.000Z",
+      };
+      let deliver!: (value: Response) => void;
+      const delayed = new Promise<Response>((resolve) => { deliver = resolve; });
+      vi.stubGlobal("fetch", vi.fn(() => delayed));
+      const wrapper = ({ children }: { children: ReactNode }) =>
+        createElement(QueryClientProvider, { client }, children);
+      const { result, unmount } = renderHook(() => ({
+        archive: useArchiveEngagementMutation(),
+        reopen: useReopenEngagementMutation(),
+        deadline: useUpdateDeadlineMutation(),
+      }), { wrapper });
+      result.current[operation].mutate({
+        engagementId: engagement.id,
+        expectedRevision: 2,
+        deadlineAt: null,
+      });
+      await waitFor(() => expect(result.current[operation].isPending).toBe(true));
+      client.setQueryData(ENGAGEMENTS_QUERY_KEY, [newer]);
+      deliver(response({
+        ...engagement,
+        revision: 3,
+        status: operation === "archive" ? "archived" : "active",
+      }));
+      await waitFor(() => expect(result.current[operation].isSuccess).toBe(true));
+      expect(client.getQueryData(ENGAGEMENTS_QUERY_KEY)).toEqual([newer]);
+      unmount();
+      client.clear();
+    },
+  );
+
+  it("keeps a legitimate reopen after another archive conflict refreshes a pending archive", async () => {
+    const client = createAppQueryClient();
+    const archived: Engagement = { ...engagement, revision: 2, status: "archived" };
+    const reopened: Engagement = {
+      ...archived, revision: 3, status: "active", updatedAt: "2026-10-16T05:00:00.000Z",
+    };
+    let stored = engagement as Engagement;
+    let deliver!: (value: Response) => void;
+    const delayed = new Promise<Response>((resolve) => { deliver = resolve; });
+    let archives = 0;
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      if (url.endsWith("/archive")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ expectedRevision: 1 });
+        if (++archives === 1) { stored = archived; return delayed; }
+        return Promise.resolve(response({
+          code: "revision_conflict", resourceType: "engagement",
+          resourceId: engagement.id, currentRevision: 2,
+        }, 409));
+      }
+      if (url.endsWith("/reopen")) {
+        expect(JSON.parse(String(init?.body))).toEqual({ expectedRevision: 2 });
+        stored = reopened;
+        return Promise.resolve(response(reopened));
+      }
+      expect(url).toBe("/api/v1/engagements");
+      return Promise.resolve(response([stored]));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    const { result, unmount } = renderHook(() => ({
+      list: useEngagementsQuery(),
+      headerArchive: useArchiveEngagementMutation(),
+      sidebarArchive: useArchiveEngagementMutation(),
+      reopen: useReopenEngagementMutation(),
+    }), { wrapper });
+    await waitFor(() => expect(result.current.list.data).toEqual([engagement]));
+    const input = { engagementId: engagement.id, expectedRevision: 1 };
+    result.current.headerArchive.mutate(input);
+    await waitFor(() => expect(archives).toBe(1));
+    result.current.sidebarArchive.mutate(input);
+    await waitFor(() => expect(result.current.list.data).toEqual([archived]));
+    expect(result.current.headerArchive.isPending).toBe(true);
+    result.current.reopen.mutate({ ...input, expectedRevision: 2 });
+    await waitFor(() => expect(result.current.reopen.isSuccess).toBe(true));
+    expect(client.getQueryData(ENGAGEMENTS_QUERY_KEY)).toEqual([reopened]);
+    deliver(response(archived));
+    await waitFor(() => expect(result.current.headerArchive.isSuccess).toBe(true));
+    expect(client.getQueryData(ENGAGEMENTS_QUERY_KEY)).toEqual([reopened]);
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith("/archive"))).toHaveLength(2);
+    unmount();
     client.clear();
   });
 
