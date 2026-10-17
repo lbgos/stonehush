@@ -6,9 +6,11 @@ import {
 } from "@stonehush/contracts";
 import { Button } from "@stonehush/ui";
 import { Link } from "@tanstack/react-router";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAdvisorStatusQuery } from "../advisor-status-query.js";
+import { useNotesDraftGuard } from "../engagements/notes-guard.js";
+import type { AdvisorReplacementGuard } from "../engagements/workspace-context.js";
 import { createIdempotencyKey } from "../engagements/idempotency.js";
 import { useFindingsQuery } from "../engagements/findings-query.js";
 import { maskCopiedText } from "../engagements/lead-technique-draft.js";
@@ -42,7 +44,7 @@ import {
   type HintDepth,
 } from "./hint-depth.js";
 import { splitAnswerParagraphs } from "./pin-citation.js";
-import { TechniquePanel, type TechniqueDraft } from "./technique-panel.js";
+import { TechniquePanel, type TechniqueDraft, type TechniqueDraftState } from "./technique-panel.js";
 import type { SaveTechniqueInput } from "./technique-query.js";
 
 const REFETCH_AFTER_CONFLICT_MS = 3_000;
@@ -103,6 +105,7 @@ export interface AdvisorPanelProps {
   readonly onExcerptsChange: (ids: string[]) => void;
   readonly onFindingIdsChange: (ids: string[]) => void;
   readonly onClose: () => void;
+  readonly registerReplacementGuard?: ((guard: AdvisorReplacementGuard) => () => void) | undefined;
 }
 
 interface Attempt {
@@ -128,6 +131,7 @@ function AdvisorComposer({
   onExcerptsChange,
   onFindingIdsChange,
   onClose,
+  registerReplacementGuard,
 }: AdvisorPanelProps) {
   const [question, setQuestion] = useState("");
   const [copyStatus, setCopyStatus] = useState<string>();
@@ -146,6 +150,32 @@ function AdvisorComposer({
   const [techniqueDraft, setTechniqueDraft] = useState<TechniqueDraft | undefined>(
     undefined,
   );
+  const [techniqueState, setTechniqueState] = useState<TechniqueDraftState>({ dirty: false, pending: false });
+  const [replacement, setReplacement] = useState<{ run: () => void }>();
+  const resumeFocus = useRef<HTMLElement | null>(null);
+  const guarded = techniqueState.dirty || techniqueState.pending;
+  const blocker = useNotesDraftGuard(guarded);
+  const navigationBlocked = blocker.status === "blocked";
+  const prompt = replacement !== undefined || navigationBlocked;
+  const requestReplacement = useCallback((run: () => void) => {
+    if (!guarded) { run(); return; }
+    resumeFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setReplacement({ run });
+  }, [guarded]);
+  useLayoutEffect(() => registerReplacementGuard?.(requestReplacement), [registerReplacementGuard, requestReplacement]);
+  const stay = () => {
+    blocker.reset?.();
+    setReplacement(undefined);
+    const target = resumeFocus.current;
+    resumeFocus.current = null;
+    (target?.isConnected === true ? target : panelRef.current)?.focus({ preventScroll: true });
+  };
+  const discard = () => {
+    if (techniqueState.pending) return;
+    if (navigationBlocked) { blocker.proceed?.(); onClose(); }
+    else replacement?.run();
+    setReplacement(undefined);
+  };
   const [lastAttempt, setLastAttempt] = useState<Attempt | null>(null);
   const [lastError, setLastError] = useState<AdvisorTurnRequestError | null>(null);
   const [pollCycle, setPollCycle] = useState(0);
@@ -351,9 +381,11 @@ function AdvisorComposer({
   }
 
   const handleSaveTechnique = useCallback((draft: SaveTechniqueInput) => {
-    setTechniqueDraft({ ...draft, key: `${Date.now()}` });
-    setTechniquesOpen(true);
-  }, []);
+    requestReplacement(() => {
+      setTechniqueDraft({ ...draft, key: createIdempotencyKey() });
+      setTechniquesOpen(true);
+    });
+  }, [requestReplacement]);
 
   // Context preview: exactly what Ask would send, shown before send.
   const preview = buildContextPreview({
@@ -406,16 +438,34 @@ function AdvisorComposer({
       aria-label="Advisor"
       tabIndex={-1}
       onKeyDown={(event) => {
-        if (event.key === "Escape") onClose();
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (prompt) stay();
+          else requestReplacement(onClose);
+        }
       }}
       className="mt-5 rounded-[10px] border border-border px-3 py-3 text-white outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="m-0 text-[13px] font-semibold">Advisor</h2>
-        <Button type="button" variant="quiet" className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7" onClick={onClose}>
+        <Button type="button" variant="quiet" className="min-h-11 px-2 text-[12px] md:pointer-fine:min-h-7" onClick={() => requestReplacement(onClose)}>
           Close
         </Button>
       </div>
+      {prompt ? (
+        <section role="alertdialog" aria-label="Unsaved technique" className="mt-3 border border-border p-3">
+          <p className="m-0 text-[13px]">{techniqueState.pending
+            ? "A technique save is in progress. Wait for it to finish before leaving."
+            : techniqueState.dirty ? "Discard this unsaved technique draft?" : "The technique is saved. Leave this draft?"}</p>
+          <div className="mt-2 flex gap-2">
+            <Button type="button" autoFocus className="min-h-11" onClick={stay}>Stay</Button>
+            <Button type="button" variant="secondary" className="min-h-11" disabled={techniqueState.pending} onClick={discard}>
+              {techniqueState.dirty ? "Discard draft" : "Leave"}
+            </Button>
+          </div>
+        </section>
+      ) : null}
       {archived ? (
         <p className="mt-1 mb-0 text-[12px] text-muted-foreground" role="status">
           Archived engagements are read-only. Previous explanations stay visible below.
@@ -749,6 +799,7 @@ function AdvisorComposer({
                 archived={archived}
                 facts={facts}
                 draft={techniqueDraft}
+                onDraftStateChange={setTechniqueState}
               />
             </div>
           ) : null}

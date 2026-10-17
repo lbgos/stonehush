@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 
 export interface AdvisorDraft {
   readonly nonce: number;
@@ -7,7 +7,10 @@ export interface AdvisorDraft {
   readonly findingIds: readonly string[];
 }
 
+export type AdvisorReplacementGuard = (replace: () => void) => void;
+
 interface EngagementWorkspaceContextValue {
+  registerAdvisorGuard: (guard: AdvisorReplacementGuard) => () => void;
   advisorDraft: AdvisorDraft;
   announce: (message: string) => void;
   clearNotice: () => void;
@@ -50,13 +53,20 @@ export function EngagementWorkspaceProvider({
   const requestFocusRuns = useCallback(() => {
     setFocusRunsToken((current) => current + 1);
   }, []);
+  const advisorGuard = useRef<AdvisorReplacementGuard | undefined>(undefined);
+  const registerAdvisorGuard = useCallback((guard: AdvisorReplacementGuard) => {
+    advisorGuard.current = guard;
+    return () => { if (advisorGuard.current === guard) advisorGuard.current = undefined; };
+  }, []);
   const openAdvisor = useCallback((excerpts: readonly string[], findingIds: readonly string[]) => {
-    setAdvisorDraft((current) => ({
+    const replace = () => setAdvisorDraft((current) => ({
       nonce: current.nonce + 1,
       open: true,
       excerpts: [...excerpts],
       findingIds: [...findingIds],
     }));
+    if (advisorGuard.current !== undefined) advisorGuard.current(replace);
+    else replace();
   }, []);
   const closeAdvisor = useCallback(() => {
     setAdvisorDraft((current) => (current.open ? { ...current, open: false } : current));
@@ -69,6 +79,7 @@ export function EngagementWorkspaceProvider({
   }, []);
   const value = useMemo(
     () => ({
+      registerAdvisorGuard,
       advisorDraft,
       announce,
       clearNotice,
@@ -84,6 +95,7 @@ export function EngagementWorkspaceProvider({
       setEngagementFilter,
     }),
     [
+      registerAdvisorGuard,
       advisorDraft,
       announce,
       clearNotice,

@@ -15,6 +15,7 @@ import { useState } from "react";
 import * as paragraphs from "./pin-citation.js";
 import * as triedChecks from "./tried-checks.js";
 import { AdvisorPanel } from "./advisor-panel.js";
+import { EngagementWorkspaceProvider, useEngagementWorkspace } from "../engagements/workspace-context.js";
 import { createAppQueryClient } from "../query-client.js";
 
 const ENGAGEMENT_ID = "10000000-0000-4000-8000-000000000001";
@@ -80,6 +81,7 @@ interface PostedCall {
 async function renderPanel(
   post: (call: PostedCall) => unknown,
   options?: {
+    onClose?: () => void;
     archived?: boolean;
     excerpts?: string[];
     findingIds?: string[];
@@ -168,7 +170,8 @@ async function renderPanel(
   // composer state. A plain mutation plus root rerender does not reach
   // the route component because the router reuses the matched element.
   let applyArchived: ((value: boolean) => void) | undefined;
-  function PanelRoute() {
+  function PanelContent() {
+    const workspace = useEngagementWorkspace();
     const [archived, setArchived] = useState(options?.archived ?? false);
     const [excerpts, setExcerpts] = useState(options?.excerpts ?? ["artifact-1"]);
     const [findingIds, setFindingIds] = useState(options?.findingIds ?? []);
@@ -176,22 +179,30 @@ async function renderPanel(
     applyArchived = setArchived;
     return (
       <QueryClientProvider client={queryClient}>
+        <button onClick={() => workspace.openAdvisor(["artifact-1"], [])}>Replace same context</button>
+        <button onClick={() => workspace.openAdvisor(["artifact-new"], [])}>Replace different context</button>
         <AdvisorPanel
+          key={workspace.advisorDraft.nonce}
+          registerReplacementGuard={workspace.registerAdvisorGuard}
           engagementId={ENGAGEMENT_ID}
           archived={archived}
-          excerpts={excerpts}
+          excerpts={workspace.advisorDraft.nonce > 0 ? workspace.advisorDraft.excerpts : excerpts}
           findingIds={findingIds}
           onExcerptsChange={setExcerpts}
           onFindingIdsChange={setFindingIds}
-          onClose={() => {}}
+          onClose={options?.onClose ?? (() => {})}
         />
       </QueryClientProvider>
     );
+  }
+  function PanelRoute() {
+    return <EngagementWorkspaceProvider openCreate={() => {}}><PanelContent /></EngagementWorkspaceProvider>;
   }
   const rootRoute = createRootRoute({ component: PanelRoute });
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: ["/"] }),
     routeTree: rootRoute.addChildren([
+      createRoute({ getParentRoute: () => rootRoute, path: "/", component: () => null }),
       createRoute({
         getParentRoute: () => rootRoute,
         path: "settings",
@@ -330,6 +341,151 @@ describe("advisor panel composer", () => {
     await screen.findByText("Technique saved.");
     expectTechnique();
     expect(saveTechnique).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["Close", "Escape"])("protects a refused technique save on %s", async (action) => {
+    const onClose = vi.fn();
+    await renderPanel(() => succeededTurn(), { onClose });
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    fireEvent.click(button("Save technique"));
+    await screen.findByText("Storage is busy. Try again.");
+    const name = screen.getByLabelText("Name");
+    name.focus();
+    if (action === "Close") fireEvent.click(button("Close"));
+    else fireEvent.keyDown(name, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    const guard = await screen.findByRole("alertdialog", { name: "Unsaved technique" });
+    expectTechnique();
+    fireEvent.keyDown(guard, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(document.activeElement).toBe(name);
+    expect(screen.getByText("Storage is busy. Try again.")).toBeTruthy();
+    fireEvent.click(button("Close"));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard draft" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("protects a technique draft from paragraph replacement", async () => {
+    await renderPanel(() => succeededTurn(), { history: [succeededTurn()] });
+    await screen.findByText("The banner shows HTTP.");
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    fireEvent.click(button("Save as technique"));
+    expectTechnique();
+    const guard = await screen.findByRole("alertdialog", { name: "Unsaved technique" });
+    fireEvent.click(within(guard).getByRole("button", { name: "Stay" }));
+    expectTechnique();
+    fireEvent.click(button("Save as technique"));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard draft" }));
+    expect(screen.getByLabelText<HTMLInputElement>("Name").value).not.toBe("Exact technique draft");
+  });
+
+  it("holds route replacement until an explicit discard", async () => {
+    const { router } = await renderPanel(() => succeededTurn());
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    void router.navigate({ to: "/settings" });
+    const guard = await screen.findByRole("alertdialog", { name: "Unsaved technique" });
+    expect(router.state.location.pathname).toBe("/");
+    fireEvent.click(within(guard).getByRole("button", { name: "Stay" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expectTechnique();
+    void router.navigate({ to: "/settings" });
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Discard draft" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/settings"));
+  });
+
+  it.each(["same", "different"])("keeps a pending refusal with its original draft during %s context replacement", async (kind) => {
+    let finish: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => { finish = resolve; });
+    const saveTechnique = vi.fn(async () => { await ready; return response({ code: "storage_busy" }, 503); });
+    await renderPanel(() => succeededTurn(), { saveTechnique });
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    fireEvent.click(button("Save technique"));
+    await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(1));
+    fireEvent.click(button(`Replace ${kind} context`));
+    const guard = await screen.findByRole("alertdialog", { name: "Unsaved technique" });
+    expect(within(guard).getByRole<HTMLButtonElement>("button", { name: "Discard draft" }).disabled).toBe(true);
+    for (const [label] of techniqueFields) expect(screen.getByLabelText<HTMLInputElement>(label).readOnly).toBe(true);
+    fireEvent.click(within(guard).getByRole("button", { name: "Discard draft" }));
+    expectTechnique();
+    await act(async () => { finish?.(); });
+    await screen.findByText("Storage is busy. Try again.");
+    expectTechnique();
+    fireEvent.click(within(guard).getByRole("button", { name: "Stay" }));
+    fireEvent.click(button("Save technique"));
+    await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(2));
+    expect(saveTechnique.mock.calls[1]).toEqual(saveTechnique.mock.calls[0]);
+    await screen.findByText("Storage is busy. Try again.");
+    fireEvent.click(button(`Replace ${kind} context`));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard draft" }));
+    fireEvent.click(button("Show"));
+    expect(screen.getByLabelText<HTMLInputElement>("Name").value).toBe("");
+    expect(screen.queryByText("Storage is busy. Try again.")).toBeNull();
+    expect(screen.getByText(kind === "same" ? "artifact-1" : "artifact-new")).toBeTruthy();
+  });
+
+  it("protects edits made after a successful save and allows leaving the saved draft", async () => {
+    const onClose = vi.fn();
+    const saveTechnique = vi.fn((body: unknown) => response({
+      ...(body as Record<string, unknown>), contractVersion: 1,
+      id: "60000000-0000-4000-8000-000000000001", engagementId: ENGAGEMENT_ID,
+      createdAt: "2026-10-16T07:00:00.000Z", updatedAt: "2026-10-16T07:00:00.000Z",
+    }, 201));
+    await renderPanel(() => succeededTurn(), { onClose, saveTechnique });
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    fireEvent.click(button("Save technique"));
+    await screen.findByText("Technique saved.");
+    fireEvent.click(button("Close"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Newer draft" } });
+    expect(screen.queryByText("Technique saved.")).toBeNull();
+    fireEvent.click(button("Close"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alertdialog", { name: "Unsaved technique" })).toBeTruthy();
+    expect(screen.getByLabelText<HTMLInputElement>("Name").value).toBe("Newer draft");
+    expect(saveTechnique).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["refused", "saved"])("keeps the form and save owner when an engagement is archived before a %s response", async (outcome) => {
+    let finish: (() => void) | undefined;
+    const ready = new Promise<void>((resolve) => { finish = resolve; });
+    const onClose = vi.fn();
+    const saveTechnique = vi.fn(async (body: unknown) => {
+      await ready;
+      return outcome === "refused" ? response({ code: "storage_busy" }, 503) : response({
+        ...(body as Record<string, unknown>), contractVersion: 1,
+        id: "60000000-0000-4000-8000-000000000001", engagementId: ENGAGEMENT_ID,
+        createdAt: "2026-10-16T07:00:00.000Z", updatedAt: "2026-10-16T07:00:00.000Z",
+      }, 201);
+    });
+    const { rerenderArchived } = await renderPanel(() => succeededTurn(), { onClose, saveTechnique });
+    fireEvent.click(button("Show"));
+    fillTechnique();
+    fireEvent.click(button("Save technique"));
+    await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(1));
+    rerenderArchived(true);
+    await act(async () => { finish?.(); });
+    await screen.findByText(outcome === "refused" ? "Storage is busy. Try again." : "Technique saved.");
+    expectTechnique();
+    for (const [label] of techniqueFields) expect(screen.getByLabelText<HTMLInputElement>(label).readOnly).toBe(true);
+    expect(button("Save technique").disabled).toBe(true);
+    fireEvent.click(button("Close"));
+    if (outcome === "saved") expect(onClose).toHaveBeenCalledTimes(1);
+    else {
+      const guard = await screen.findByRole("alertdialog", { name: "Unsaved technique" });
+      expect(within(guard).getByRole<HTMLButtonElement>("button", { name: "Discard draft" }).disabled).toBe(false);
+      fireEvent.click(within(guard).getByRole("button", { name: "Stay" }));
+      rerenderArchived(false);
+      expectTechnique();
+      fireEvent.click(button("Save technique"));
+      await waitFor(() => expect(saveTechnique).toHaveBeenCalledTimes(2));
+      expect(saveTechnique.mock.calls[1]).toEqual(saveTechnique.mock.calls[0]);
+      await screen.findByText("Storage is busy. Try again.");
+    }
   });
 
   it("keeps saved answers and tried checks stable while typing, then renders new answers", async () => {
@@ -665,19 +821,7 @@ describe("advisor panel states", () => {
     trigger.textContent = "trigger";
     document.body.append(trigger);
     trigger.focus();
-    const { unmount } = render(
-      <QueryClientProvider client={createAppQueryClient()}>
-        <AdvisorPanel
-          engagementId={ENGAGEMENT_ID}
-          archived={false}
-          excerpts={["artifact-1"]}
-          findingIds={[]}
-          onExcerptsChange={() => {}}
-          onFindingIdsChange={() => {}}
-          onClose={onClose}
-        />
-      </QueryClientProvider>,
-    );
+    const { unmount } = await renderPanel(() => succeededTurn(), { onClose });
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
     unmount();
