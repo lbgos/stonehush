@@ -1,7 +1,8 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
@@ -33,17 +34,28 @@ function completion(child) {
 
 // git archive supplies only the exact commit. Dirty files, dependency links,
 // private plans, credentials and local data cannot enter the build context.
+const buildDirectory = await mkdtemp(path.join(tmpdir(), "stonehush-image-build-"));
+const iidfile = path.join(buildDirectory, "image-id");
+let imageId;
 const archive = spawn("git", ["archive", "--format=tar", revision], { cwd, stdio: ["ignore", "pipe", "inherit"], shell: false });
-const build = spawn("docker", ["build", "--platform=linux/amd64", "--build-arg", `SOURCE_REVISION=${revision}`, "--build-arg", `SOURCE_TREE=${tree}`, "--tag", tag, "-"], { cwd, stdio: ["pipe", "inherit", "inherit"], shell: false });
+const build = spawn("docker", ["build", "--platform=linux/amd64", "--iidfile", iidfile, "--build-arg", `SOURCE_REVISION=${revision}`, "--build-arg", `SOURCE_TREE=${tree}`, "--tag", tag, "-"], { cwd, stdio: ["pipe", "inherit", "inherit"], shell: false });
 try {
   await Promise.all([completion(archive), completion(build), pipeline(archive.stdout, build.stdin)]);
+  imageId = (await readFile(iidfile, "utf8")).trim();
 } catch (error) {
   archive.kill("SIGTERM");
   build.kill("SIGTERM");
   throw error;
+} finally {
+  await rm(buildDirectory, { recursive: true, force: true });
 }
-const imageId = execFileSync("docker", ["image", "inspect", "--format={{.Id}}", tag], { encoding: "utf8" }).trim();
-const save = spawn("docker", ["image", "save", tag], { stdio: ["ignore", "pipe", "inherit"], shell: false });
+if (!/^sha256:[a-f0-9]{64}$/.test(imageId)) throw new Error("Invalid build image identity.");
+const image = JSON.parse(execFileSync("docker", ["image", "inspect", "--format={{json .}}", imageId], { encoding: "utf8" }));
+if (image.Id !== imageId || image.Config?.Labels?.["org.opencontainers.image.revision"] !== revision || image.Config?.Labels?.["dev.stonehush.source-tree"] !== tree) {
+  throw new Error("Built image source identity does not match the archive source.");
+}
+// A tag can move concurrently. Export the immutable result of this build.
+const save = spawn("docker", ["image", "save", imageId], { stdio: ["ignore", "pipe", "inherit"], shell: false });
 try {
   await Promise.all([completion(save), pipeline(save.stdout, createWriteStream(output, { flags: "wx", mode: 0o600 }))]);
 } catch (error) {

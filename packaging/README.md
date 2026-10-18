@@ -14,6 +14,7 @@ On the operator's Linux host, load the verified archive and start one control pl
 
 ```sh
 docker image load --input /absolute/control-plane.tar
+docker image tag <imageId-from-verified-control-plane.tar.json> stonehush-control-plane:rc
 export STONEHUSH_IMAGE=stonehush-control-plane:rc
 docker compose -f compose.yaml up -d
 ```

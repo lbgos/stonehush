@@ -28,6 +28,7 @@ import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 
 import { buildApp } from "./app.js";
+import { registerProductionWeb } from "./production-web.js";
 import {
   bootstrapDevelopmentStorage,
   checkDevelopmentStorage,
@@ -46,6 +47,7 @@ interface RuntimeDependencies {
   bootstrapStorage?: typeof bootstrapDevelopmentStorage;
   createApp?: typeof buildApp;
   openDatabase?: typeof openEngagementDatabase;
+  productionWeb?: { directory: string; port: number };
 }
 
 export async function buildStorageBackedApp(
@@ -186,6 +188,16 @@ export async function buildStorageBackedApp(
     });
     if (evidenceStore !== undefined && backupLock !== undefined) {
       registerStoreClose(app, evidenceStore, backupLock);
+    }
+    // Fastify is thenable. Register before returning it from this async
+    // factory, because Promise assimilation otherwise boots the app first.
+    if (dependencies.productionWeb !== undefined) {
+      try {
+        await registerProductionWeb(app, dependencies.productionWeb.directory, dependencies.productionWeb.port);
+      } catch (error) {
+        await app.close();
+        throw error;
+      }
     }
     registerDatabaseClose(app, database);
     return app;
