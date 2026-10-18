@@ -39,22 +39,26 @@ export async function screenshots(url, output, profile) {
     }
     const evidence = [];
     await send("Page.enable");
+    await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
     for (const [width, height] of [[1440, 900], [1000, 900], [390, 844]]) {
       await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: false });
       await send("Page.navigate", { url });
       let state;
       for (let attempt = 0; attempt < 100; attempt++) {
-        const result = await send("Runtime.evaluate", { expression: "JSON.stringify({ready:document.readyState,text:document.body?.innerText,background:getComputedStyle(document.body).backgroundColor})", returnByValue: true });
+        const result = await send("Runtime.evaluate", { expression: "JSON.stringify({ready:document.readyState,text:document.body?.innerText,background:getComputedStyle(document.body).backgroundColor,theme:document.documentElement.dataset.theme,family:document.documentElement.dataset.themeFamily})", returnByValue: true });
         state = JSON.parse(result.result.value);
-        if (state.ready === "complete" && state.text?.includes("Compose acceptance")) break;
+        if (state.ready === "complete" && state.text?.includes("Compose acceptance") && state.background === "rgb(0, 0, 0)" && state.theme === "dark" && state.family === "smoked") break;
         await delay(100);
       }
       assert.ok(state.text?.includes("Compose acceptance"), "The packaged app did not render its synthetic engagement.");
+      assert.equal(state.theme, "dark");
+      assert.equal(state.family, "smoked");
+      assert.equal(state.background, "rgb(0, 0, 0)");
       await send("Runtime.evaluate", { expression: "document.fonts.ready", awaitPromise: true });
       const filename = `packaged-${width}x${height}.png`;
       const result = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
       await writeFile(path.join(output, filename), Buffer.from(result.data, "base64"), { flag: "wx", mode: 0o600 });
-      evidence.push({ filename, width, height, background: state.background, deviceScaleFactor: 1, emulatedMobileHardware: false });
+      evidence.push({ filename, width, height, theme: state.theme, family: state.family, background: state.background, deviceScaleFactor: 1, emulatedMobileHardware: false });
     }
     return { screenshots: evidence, ownerAppearanceReview: "pending", source: "exact image served on loopback", browser: "GitHub runner installed Chrome" };
   } finally {
