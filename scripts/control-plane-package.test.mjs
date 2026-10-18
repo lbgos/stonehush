@@ -58,13 +58,18 @@ test("assembly preserves installed dependency versions and produces local links 
   }
 });
 
-test("image export uses the build ID and checks its source labels even when the tag moves", async () => {
+test("image export binds source metadata and image bytes despite HEAD and tag movement", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "stonehush-image-identity-"));
   const id = `sha256:${"c".repeat(64)}`;
   try {
     await writeFile(path.join(root, "git"), `#!/usr/bin/node
 const args = process.argv.slice(2);
-process.stdout.write(args[0] === 'archive' ? 'synthetic context' : (args[1] === 'HEAD' ? 'a'.repeat(40) : 'b'.repeat(40)) + '\\n');
+if (args[0] === 'archive' && args[2] === 'a'.repeat(40)) process.stdout.write('synthetic context');
+else if (args[0] === 'rev-parse' && args[1] === 'HEAD') process.stdout.write('a'.repeat(40) + '\\n');
+// HEAD moves after the commit lookup; only the captured commit identifies its tree.
+else if (args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') process.stdout.write('d'.repeat(40) + '\\n');
+else if (args[0] === 'rev-parse' && args[1] === 'a'.repeat(40) + '^{tree}') process.stdout.write('b'.repeat(40) + '\\n');
+else process.exit(12);
 `, { mode: 0o700 });
     await writeFile(path.join(root, "docker"), `#!/usr/bin/node
 const fs = require('node:fs');
@@ -89,7 +94,10 @@ if (args[0] === 'build') {
     const env = { ...process.env, PATH: `${root}:/usr/bin:/bin` };
     const result = spawnSync(process.execPath, [helper, "synthetic:moved", output], { env, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(JSON.parse(await readFile(`${output}.json`, "utf8")).imageId, id);
+    const metadata = JSON.parse(await readFile(`${output}.json`, "utf8"));
+    assert.equal(metadata.imageId, id);
+    assert.equal(metadata.revision, "a".repeat(40));
+    assert.equal(metadata.tree, "b".repeat(40));
     assert.equal(await readFile(output, "utf8"), "synthetic image archive");
     const mismatch = spawnSync(process.execPath, [helper, "synthetic:moved", path.join(root, "mismatch.tar")], { env: { ...env, BAD_LABEL: "1" }, encoding: "utf8" });
     assert.notEqual(mismatch.status, 0);

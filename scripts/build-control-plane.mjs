@@ -24,7 +24,7 @@ function git(...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
 }
 const revision = git("rev-parse", "HEAD");
-const tree = git("rev-parse", "HEAD^{tree}");
+const tree = git("rev-parse", `${revision}^{tree}`);
 function completion(child) {
   return new Promise((resolve, reject) => {
     child.once("error", reject);
