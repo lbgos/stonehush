@@ -1,6 +1,65 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nativeStderrDiagnostics } from "./acceptance-native-diagnostics.mjs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { nativeEntryPreflight, nativeStderrDiagnostics } from "./acceptance-native-diagnostics.mjs";
+
+test("inline native preflight distinguishes exact entry bytes, missing input and denied traversal without exposing paths or content", async () => {
+  const temporary = await mkdtemp(path.join(tmpdir(), "stonehush-entry-test-"));
+  const scripts = path.join(temporary, "scripts");
+  const entry = path.join(scripts, "acceptance-native-runner.mjs");
+  const bytes = "private synthetic content";
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const source = `console.log(JSON.stringify(await (${nativeEntryPreflight.toString()})(process.argv[1], process.argv[2])));`;
+  const probe = (expected = digest) => {
+    const child = spawnSync(process.execPath, ["--input-type=module", "--eval", source, temporary, expected], {
+      cwd: temporary, encoding: "utf8", timeout: 5000,
+      ...(process.getuid() === 0 ? { uid: 10002, gid: 10002 } : {}),
+    });
+    assert.equal(child.status, 0);
+    assert.equal(child.stderr, "");
+    assert.equal(child.stdout.includes(temporary), false);
+    assert.equal(child.stdout.includes(bytes), false);
+    assert.equal(child.stdout.includes(digest), false);
+    return JSON.parse(child.stdout);
+  };
+  try {
+    await chmod(temporary, 0o755);
+    await mkdir(scripts, { mode: 0o755 });
+    assert.equal(probe().entry, "ENOENT");
+    await writeFile(entry, bytes, { mode: 0o644 });
+    const present = probe();
+    assert.equal(present.cwdMatches, true);
+    assert.equal(present.entry, "file");
+    assert.equal(present.entryRead, "ok");
+    assert.equal(present.digestMatches, true);
+    assert.equal(probe("mismatch").digestMatches, false);
+    await chmod(scripts, 0o700);
+    // A nonroot test owns its fixture, so remove all search bits for that case.
+    if (process.getuid() !== 0) await chmod(scripts, 0o600);
+    const denied = probe();
+    assert.equal(denied.scripts, "EACCES");
+    assert.equal(denied.entryRead, "EACCES");
+    assert.equal(denied.digestMatches, false);
+    await chmod(scripts, 0o755);
+    await chmod(entry, 0o000);
+    const unreadable = probe();
+    assert.equal(unreadable.entry, "file");
+    assert.equal(unreadable.entryRead, "EACCES");
+    assert.equal(unreadable.digestMatches, false);
+    await rm(entry);
+    await symlink("/synthetic-private-target", entry);
+    const linked = probe();
+    assert.equal(linked.entry, "symlink");
+    assert.equal(linked.digestMatches, false);
+  } finally {
+    await chmod(scripts, 0o755);
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
 
 test("native pre-entry diagnostics classify chunked wrapper failures without retaining private text", () => {
   for (const [line, source, code] of [

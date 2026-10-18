@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { screenshots } from "./acceptance-screenshots.mjs";
-import { nativeStderrDiagnostics } from "./acceptance-native-diagnostics.mjs";
+import { nativeEntryPreflight, nativeStderrDiagnostics } from "./acceptance-native-diagnostics.mjs";
 
 const [archive, output] = process.argv.slice(2);
 assert.ok(path.isAbsolute(archive ?? "") && path.isAbsolute(output ?? ""));
@@ -180,6 +180,10 @@ try {
   const fake = path.join(temporary, "synthetic-nmap");
   const started = path.join(runnerState, "synthetic-started");
   await writeFile(fake, `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nwriteFileSync(args[args.indexOf('-oX')+1], '<nmaprun><runstats><finished exit="success"/><hosts up="0" down="0" total="0"/></runstats></nmaprun>');\nprocess.stdout.write('synthetic acceptance output\\n');\nprocess.stderr.write('synthetic stderr\\n');\nif(args.includes('192.0.2.2')){writeFileSync(${JSON.stringify(started)},'started');setTimeout(()=>{},120000);}\n`, { mode: 0o755 });
+  // No credentials enter this probe, and its facts cannot satisfy native stages.
+  const entryDigest = createHash("sha256").update((await run("git", ["show", `${metadata.revision}:scripts/acceptance-native-runner.mjs`])).stdout).digest("hex");
+  const preflight = `console.log(JSON.stringify(await (${nativeEntryPreflight.toString()})(process.argv[1], process.argv[2])));`;
+  nativeDiagnostics.preflight = JSON.parse((await run("sudo", ["systemd-run", "--scope", "--quiet", "-p", "MemoryMax=1G", "-p", "CPUQuota=200%", ...unprivileged, process.execPath, "--input-type=module", "--eval", preflight, root, entryDigest])).stdout);
   runner = spawn("sudo", ["systemd-run", "--scope", "--quiet", "-p", "MemoryMax=1G", "-p", "CPUQuota=200%", ...unprivileged, process.execPath, path.join(root, "scripts/acceptance-native-runner.mjs")], { stdio: ["pipe", "pipe", "pipe"], shell: false });
   runner.on("error", () => { runnerSpawnFailed = true; nativeDiagnostics.failure = "spawn"; });
   runner.stdin.on("error", () => { runnerStdinFailed = true; nativeDiagnostics.failure ??= "stdin-write"; });

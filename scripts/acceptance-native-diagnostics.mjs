@@ -1,3 +1,51 @@
+// Self-contained so inline Node can inspect an entry it cannot load as a file.
+export async function nativeEntryPreflight(checkout, expectedDigest) {
+  const { access, lstat, open, readFile } = await import("node:fs/promises");
+  const { constants } = await import("node:fs");
+  const { createHash } = await import("node:crypto");
+  const { default: path } = await import("node:path");
+  const code = (error) => ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "ELOOP"].includes(error.code) ? error.code : "other";
+  async function searchable(directory) {
+    try { await access(directory, constants.X_OK); return "ok"; } catch (error) { return code(error); }
+  }
+  let ancestors = "ok";
+  let ancestorSymlink = false;
+  for (let directory = path.dirname(checkout); ; directory = path.dirname(directory)) {
+    try { ancestorSymlink ||= (await lstat(directory)).isSymbolicLink(); } catch (error) { ancestors = code(error); }
+    const result = await searchable(directory);
+    if (result !== "ok") ancestors = result;
+    if (directory === path.dirname(directory)) break;
+  }
+  const status = await readFile("/proc/self/status", "utf8");
+  const result = {
+    runtimeMatches: process.version === "v24.18.0",
+    identityMatches: process.getuid() === 10002 && process.getgid() === 10002,
+    supplementaryGroupsEmpty: /^Groups:[ \t]*$/m.test(status),
+    capabilitiesEmpty: ["CapEff", "CapBnd"].every((field) => new RegExp(`^${field}:\\s+0+$`, "m").test(status)),
+    noNewPrivileges: /^NoNewPrivs:\s+1$/m.test(status),
+    cwdMatches: process.cwd() === checkout,
+    ancestors, ancestorSymlink,
+    checkout: await searchable(checkout),
+    scripts: await searchable(path.join(checkout, "scripts")),
+    entry: "other", entryRead: "other", digestMatches: false,
+  };
+  const entry = path.join(checkout, "scripts/acceptance-native-runner.mjs");
+  try {
+    const info = await lstat(entry);
+    result.entry = info.isFile() ? "file" : info.isSymbolicLink() ? "symlink" : "other";
+    if (result.entry === "file" && info.size <= 65536) {
+      const handle = await open(entry, constants.O_RDONLY | constants.O_NOFOLLOW);
+      try {
+        const bytes = Buffer.alloc(65537);
+        const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+        result.entryRead = bytesRead <= 65536 ? "ok" : "other";
+        result.digestMatches = bytesRead <= 65536 && createHash("sha256").update(bytes.subarray(0, bytesRead)).digest("hex") === expectedDigest;
+      } finally { await handle.close(); }
+    }
+  } catch (error) { result.entryRead = code(error); if (result.entry === "other") result.entry = code(error); }
+  return result;
+}
+
 // Keep pre-entry failures useful without retaining wrapper errors or paths.
 export function nativeStderrDiagnostics() {
   const result = { sources: [], codes: [] };
