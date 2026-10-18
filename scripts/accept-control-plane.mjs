@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { screenshots } from "./acceptance-screenshots.mjs";
+import { nativeStderrDiagnostics } from "./acceptance-native-diagnostics.mjs";
 
 const [archive, output] = process.argv.slice(2);
 assert.ok(path.isAbsolute(archive ?? "") && path.isAbsolute(output ?? ""));
@@ -30,7 +31,8 @@ let runnerSpawnFailed = false;
 let runnerStdinFailed = false;
 let runnerClosed;
 let runnerPid;
-const nativeDiagnostics = { stages: [], failure: null, outcome: null };
+const nativeStderr = nativeStderrDiagnostics();
+const nativeDiagnostics = { launcherEntered: false, stages: [], stderr: nativeStderr.result, failure: null, outcome: null };
 evidence.nativeRunner = nativeDiagnostics;
 let secret = "";
 let container;
@@ -182,6 +184,7 @@ try {
   runner.on("error", () => { runnerSpawnFailed = true; nativeDiagnostics.failure = "spawn"; });
   runner.stdin.on("error", () => { runnerStdinFailed = true; nativeDiagnostics.failure ??= "stdin-write"; });
   runnerClosed = new Promise((resolve) => runner.once("close", (code, signal) => {
+    nativeStderr.finish();
     runnerExit = { code, signal: signal === null || ["SIGTERM", "SIGKILL", "SIGABRT", "SIGSEGV"].includes(signal) ? signal : "other" };
     nativeDiagnostics.outcome = runnerExit;
     resolve();
@@ -203,7 +206,7 @@ try {
     lines = complete.pop();
     for (const line of complete) {
       const pid = /^native pid ([1-9]\d{0,9})$/.exec(line)?.[1];
-      if (pid) runnerPid = pid;
+      if (pid) { runnerPid = pid; nativeDiagnostics.launcherEntered = true; }
       const stage = /^native stage (uid|modules|stdin|preflight)$/.exec(line)?.[1];
       if (stage && !nativeDiagnostics.stages.includes(stage)) nativeDiagnostics.stages.push(stage);
       if (line === "handshake accepted" && !nativeDiagnostics.stages.includes("handshake")) nativeDiagnostics.stages.push("handshake");
@@ -211,11 +214,14 @@ try {
       if (failure) nativeDiagnostics.failure = `${failure[1]}:${failure[2]}`;
     }
   });
-  runner.stderr.on("data", collect);
+  runner.stderr.on("data", (chunk) => { if (collect(chunk)) nativeStderr.append(chunk); });
   runner.stdin.end(JSON.stringify({ apiBaseUrl: origin, runnerId: enrollment.runner.id, secret, dataDir: runnerState, executable: fake, installationFingerprint: fingerprint, sessionId: randomUUID(), heartbeatIntervalMs: 1000 }));
   await until(async () => {
     if (nativeDiagnostics.failure) throw new Error(`Native runner startup failed: ${nativeDiagnostics.failure}`);
-    if (runnerSpawnFailed || runnerStdinFailed || runnerExit !== undefined) throw new Error("Native runner exited before handshake.");
+    if (runnerSpawnFailed || runnerStdinFailed || runnerExit !== undefined) {
+      nativeDiagnostics.failure ??= nativeDiagnostics.launcherEntered ? "launcher-exit" : "pre-entry-exit";
+      throw new Error(`Native runner exited before handshake: ${nativeDiagnostics.failure}`);
+    }
     return nativeDiagnostics.stages.includes("handshake");
   }, "native runner handshake");
   assert.equal((await run("ps", ["-eo", "args="])).stdout.includes(secret), false);
