@@ -51,7 +51,8 @@ function run(executable, argv, { allowed = [0], cwd = process.cwd() } = {}) {
 }
 const docker = (...args) => run("docker", args);
 const compose = (...args) => docker("compose", "-f", "compose.yaml", ...args);
-const asUser = (argv, options) => run("sudo", ["-u", user, "env", `HOME=${home}`, `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus`, ...argv], { cwd: home, ...options });
+// Enter the private home only after sudo has switched to its owner.
+const asUser = (argv, options) => run("/usr/bin/sudo", ["-u", user, "/usr/bin/env", `--chdir=${home}`, `HOME=${home}`, `XDG_RUNTIME_DIR=/run/user/${uid}`, `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${uid}/bus`, ...argv], { cwd: temporary, ...options });
 const systemctl = (...args) => asUser(["/usr/bin/systemctl", "--user", ...args]);
 const command = (base, ...args) => asUser([path.join(base, "node"), path.join(base, "scripts/native-runner-service.mjs"), ...args]);
 async function api(target, body, expected = body === undefined ? 200 : 201) {
