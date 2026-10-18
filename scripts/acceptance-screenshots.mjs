@@ -45,7 +45,7 @@ export async function screenshots(url, output, profile) {
       await send("Page.navigate", { url });
       let state;
       for (let attempt = 0; attempt < 100; attempt++) {
-        const result = await send("Runtime.evaluate", { expression: "JSON.stringify({ready:document.readyState,text:document.body?.innerText,background:getComputedStyle(document.body).backgroundColor,theme:document.documentElement.dataset.theme,family:document.documentElement.dataset.themeFamily})", returnByValue: true });
+        const result = await send("Runtime.evaluate", { expression: "JSON.stringify({ready:document.readyState,text:document.body?.innerText,background:getComputedStyle(document.documentElement).backgroundColor,theme:document.documentElement.dataset.theme,family:document.documentElement.dataset.themeFamily})", returnByValue: true });
         state = JSON.parse(result.result.value);
         if (state.ready === "complete" && state.text?.includes("Compose acceptance") && state.background === "rgb(0, 0, 0)" && state.theme === "dark" && state.family === "smoked") break;
         await delay(100);
