@@ -50,6 +50,17 @@ test("conflicting config, runtime and service unit are never clobbered", async (
   assert.equal(await readFile(path.join(paths.runtime, "node"), "utf8"), "altered runtime\n");
 }));
 
+test("runner names with edge whitespace fail before creating installation or enrollment state", async () => fixture(async ({ artifact, paths, config }) => {
+  for (const runnerName of [" Synthetic runner", "Synthetic runner ", " "]) {
+    await assert.rejects(install(artifact, paths, { ...config, runnerName }), /Runner name/);
+    for (const filename of [paths.runtime, paths.private, paths.state, paths.unit]) {
+      await assert.rejects(stat(filename), { code: "ENOENT" });
+    }
+  }
+  await install(artifact, paths, config);
+  assert.equal(JSON.parse(await privateFile(path.join(paths.private, "config.json"))).runnerName, config.runnerName);
+}));
+
 test("existing unknown unit and non-loopback configuration fail before runtime installation", async () => fixture(async ({ artifact, paths, config }) => {
   await assert.rejects(install(artifact, paths, { ...config, apiBaseUrl: "http://192.0.2.1:18789" }), /loopback/);
   await assert.rejects(stat(paths.runtime), { code: "ENOENT" });

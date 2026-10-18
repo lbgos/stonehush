@@ -115,7 +115,7 @@ function validateConfiguration(config) {
   const url = new URL(config.apiBaseUrl);
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.username || url.password || url.pathname !== "/" || url.search || url.hash || url.origin !== config.apiBaseUrl) throw new ServiceError("API must be an IPv4 loopback HTTP origin.");
   if (typeof config.nmapExecutable !== "string" || !path.isAbsolute(config.nmapExecutable) || /[\x00-\x1f]/.test(config.nmapExecutable)) throw new ServiceError("Absolute Nmap executable required.");
-  if (typeof config.runnerName !== "string" || !/^[A-Za-z0-9 ._-]{1,120}$/.test(config.runnerName) || !/^sha256:[a-f0-9]{64}$/.test(config.fingerprint)) throw new ServiceError("Runner name or fingerprint invalid.");
+  if (typeof config.runnerName !== "string" || !/^[A-Za-z0-9 ._-]{1,120}$/.test(config.runnerName) || config.runnerName !== config.runnerName.trim() || !/^sha256:[a-f0-9]{64}$/.test(config.fingerprint)) throw new ServiceError("Runner name or fingerprint invalid.");
   return config;
 }
 
