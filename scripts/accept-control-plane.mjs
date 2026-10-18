@@ -177,7 +177,7 @@ try {
   const collect = (chunk) => { runnerLog += chunk; if (runnerLog.length > 1024 * 1024) runner.kill("SIGTERM"); };
   runner.stdout.on("data", collect);
   runner.stderr.on("data", collect);
-  runner.stdin.end(JSON.stringify({ apiBaseUrl: origin, runnerId: enrollment.runner.id, secret, dataDir: runnerState, executable: fake, installationFingerprint: fingerprint, heartbeatIntervalMs: 1000 }));
+  runner.stdin.end(JSON.stringify({ apiBaseUrl: origin, runnerId: enrollment.runner.id, secret, dataDir: runnerState, executable: fake, installationFingerprint: fingerprint, sessionId: randomUUID(), heartbeatIntervalMs: 1000 }));
   await until(async () => runnerLog.includes("handshake accepted"), "native runner handshake");
   assert.equal((await run("ps", ["-eo", "args="])).stdout.includes(secret), false);
   async function queue(target) {
