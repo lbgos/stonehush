@@ -25,6 +25,13 @@ const checks = evidence.checks;
 const env = { ...process.env, STONEHUSH_IMAGE: metadata.imageId, STONEHUSH_PORT: String(port), COMPOSE_PROJECT_NAME: project };
 let runner;
 let runnerLog = "";
+let runnerExit;
+let runnerSpawnFailed = false;
+let runnerStdinFailed = false;
+let runnerClosed;
+let runnerPid;
+const nativeDiagnostics = { stages: [], failure: null, outcome: null };
+evidence.nativeRunner = nativeDiagnostics;
 let secret = "";
 let container;
 let volume;
@@ -92,11 +99,10 @@ async function ready() {
 }
 async function stopRunner() {
   if (!runner) return;
-  const stopped = new Promise((resolve) => runner.once("close", resolve));
-  const pid = runnerLog.match(/native pid (\d+)/)?.[1];
-  if (pid) await run("sudo", ["kill", "-TERM", pid]);
+  if (runnerExit !== undefined) { runner = undefined; return; }
+  if (runnerPid) await run("sudo", ["kill", "-TERM", runnerPid]);
   else runner.kill("SIGTERM");
-  await Promise.race([stopped, delay(10000).then(() => { throw new Error("Native runner did not stop."); })]);
+  await Promise.race([runnerClosed, delay(10000).then(() => { throw new Error("Native runner did not stop."); })]);
   runner = undefined;
 }
 try {
@@ -173,12 +179,45 @@ try {
   const started = path.join(runnerState, "synthetic-started");
   await writeFile(fake, `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nwriteFileSync(args[args.indexOf('-oX')+1], '<nmaprun><runstats><finished exit="success"/><hosts up="0" down="0" total="0"/></runstats></nmaprun>');\nprocess.stdout.write('synthetic acceptance output\\n');\nprocess.stderr.write('synthetic stderr\\n');\nif(args.includes('192.0.2.2')){writeFileSync(${JSON.stringify(started)},'started');setTimeout(()=>{},120000);}\n`, { mode: 0o755 });
   runner = spawn("sudo", ["systemd-run", "--scope", "--quiet", "-p", "MemoryMax=1G", "-p", "CPUQuota=200%", ...unprivileged, process.execPath, path.join(root, "scripts/acceptance-native-runner.mjs")], { stdio: ["pipe", "pipe", "pipe"], shell: false });
-  runner.on("error", () => {});
-  const collect = (chunk) => { runnerLog += chunk; if (runnerLog.length > 1024 * 1024) runner.kill("SIGTERM"); };
-  runner.stdout.on("data", collect);
+  runner.on("error", () => { runnerSpawnFailed = true; nativeDiagnostics.failure = "spawn"; });
+  runner.stdin.on("error", () => { runnerStdinFailed = true; nativeDiagnostics.failure ??= "stdin-write"; });
+  runnerClosed = new Promise((resolve) => runner.once("close", (code, signal) => {
+    runnerExit = { code, signal: signal === null || ["SIGTERM", "SIGKILL", "SIGABRT", "SIGSEGV"].includes(signal) ? signal : "other" };
+    nativeDiagnostics.outcome = runnerExit;
+    resolve();
+  }));
+  const collect = (chunk) => {
+    if (runnerLog.length + chunk.length > 1024 * 1024) {
+      nativeDiagnostics.failure = "output-limit";
+      runner.kill("SIGTERM");
+      return false;
+    }
+    runnerLog += chunk;
+    return true;
+  };
+  let lines = "";
+  runner.stdout.on("data", (chunk) => {
+    if (!collect(chunk)) return;
+    lines += chunk;
+    const complete = lines.split("\n");
+    lines = complete.pop();
+    for (const line of complete) {
+      const pid = /^native pid ([1-9]\d{0,9})$/.exec(line)?.[1];
+      if (pid) runnerPid = pid;
+      const stage = /^native stage (uid|modules|stdin|preflight)$/.exec(line)?.[1];
+      if (stage && !nativeDiagnostics.stages.includes(stage)) nativeDiagnostics.stages.push(stage);
+      if (line === "handshake accepted" && !nativeDiagnostics.stages.includes("handshake")) nativeDiagnostics.stages.push("handshake");
+      const failure = /^native failure stage=(uid|modules|stdin|handshake) code=(\d{3}|EACCES|ENOENT|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND|ERR_DLOPEN_FAILED|TimeoutError|other)$/.exec(line);
+      if (failure) nativeDiagnostics.failure = `${failure[1]}:${failure[2]}`;
+    }
+  });
   runner.stderr.on("data", collect);
   runner.stdin.end(JSON.stringify({ apiBaseUrl: origin, runnerId: enrollment.runner.id, secret, dataDir: runnerState, executable: fake, installationFingerprint: fingerprint, sessionId: randomUUID(), heartbeatIntervalMs: 1000 }));
-  await until(async () => runnerLog.includes("handshake accepted"), "native runner handshake");
+  await until(async () => {
+    if (nativeDiagnostics.failure) throw new Error(`Native runner startup failed: ${nativeDiagnostics.failure}`);
+    if (runnerSpawnFailed || runnerStdinFailed || runnerExit !== undefined) throw new Error("Native runner exited before handshake.");
+    return nativeDiagnostics.stages.includes("handshake");
+  }, "native runner handshake");
   assert.equal((await run("ps", ["-eo", "args="])).stdout.includes(secret), false);
   async function queue(target) {
     const current = (await api(base)).engagement;

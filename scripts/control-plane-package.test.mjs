@@ -62,7 +62,7 @@ test("image export binds source metadata and image bytes despite HEAD and tag mo
   const root = await mkdtemp(path.join(tmpdir(), "stonehush-image-identity-"));
   const id = `sha256:${"c".repeat(64)}`;
   try {
-    await writeFile(path.join(root, "git"), `#!/usr/bin/node
+    await writeFile(path.join(root, "git"), `#!${process.execPath}
 const args = process.argv.slice(2);
 if (args[0] === 'archive' && args[2] === 'a'.repeat(40)) process.stdout.write('synthetic context');
 else if (args[0] === 'rev-parse' && args[1] === 'HEAD') process.stdout.write('a'.repeat(40) + '\\n');
@@ -71,7 +71,7 @@ else if (args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') process.stdout.wr
 else if (args[0] === 'rev-parse' && args[1] === 'a'.repeat(40) + '^{tree}') process.stdout.write('b'.repeat(40) + '\\n');
 else process.exit(12);
 `, { mode: 0o700 });
-    await writeFile(path.join(root, "docker"), `#!/usr/bin/node
+    await writeFile(path.join(root, "docker"), `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -91,7 +91,8 @@ if (args[0] === 'build') {
 `, { mode: 0o700 });
     const helper = fileURLToPath(new URL("./build-control-plane.mjs", import.meta.url));
     const output = path.join(root, "image.tar");
-    const env = { ...process.env, PATH: `${root}:/usr/bin:/bin` };
+    // Missing shim interpreters must fail rather than invoke host Git/Docker.
+    const env = { ...process.env, PATH: root };
     const result = spawnSync(process.execPath, [helper, "synthetic:moved", output], { env, encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
     const metadata = JSON.parse(await readFile(`${output}.json`, "utf8"));
