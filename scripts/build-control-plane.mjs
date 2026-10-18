@@ -38,7 +38,7 @@ const buildDirectory = await mkdtemp(path.join(tmpdir(), "stonehush-image-build-
 const iidfile = path.join(buildDirectory, "image-id");
 let imageId;
 const archive = spawn("git", ["archive", "--format=tar", revision], { cwd, stdio: ["ignore", "pipe", "inherit"], shell: false });
-const build = spawn("docker", ["build", "--platform=linux/amd64", "--iidfile", iidfile, "--build-arg", `SOURCE_REVISION=${revision}`, "--build-arg", `SOURCE_TREE=${tree}`, "--tag", tag, "-"], { cwd, stdio: ["pipe", "inherit", "inherit"], shell: false });
+const build = spawn("docker", ["build", "--load", "--platform=linux/amd64", "--iidfile", iidfile, "--build-arg", `SOURCE_REVISION=${revision}`, "--build-arg", `SOURCE_TREE=${tree}`, "--tag", tag, "-"], { cwd, stdio: ["pipe", "inherit", "inherit"], shell: false });
 try {
   await Promise.all([completion(archive), completion(build), pipeline(archive.stdout, build.stdin)]);
   imageId = (await readFile(iidfile, "utf8")).trim();

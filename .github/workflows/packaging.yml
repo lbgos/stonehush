@@ -1,0 +1,70 @@
+name: Packaging acceptance
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaging-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Exact-head image acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NODE_OPTIONS: --max-old-space-size=3072
+      BUILDX_BUILDER: stonehush-acceptance
+    steps:
+      - name: Check out the PR source, not its merge ref
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up the pinned runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24.18.0
+
+      - name: Prepare the disposable builder
+        run: |
+          test "$(df -B1 --output=avail . | tail -1)" -gt 12000000000
+          test "$(node --version)" = v24.18.0
+          corepack enable
+          corepack prepare pnpm@10.24.0 --activate
+          docker buildx create --name stonehush-acceptance --driver docker-container --driver-opt memory=4g,cpu-period=100000,cpu-quota=200000 --use
+          mkdir -m 700 "$RUNNER_TEMP/stonehush-results"
+
+      - name: Build and export the exact committed image
+        timeout-minutes: 20
+        run: timeout 1200 node scripts/build-control-plane.mjs stonehush-acceptance:local "$RUNNER_TEMP/control-plane.tar"
+
+      - name: Build the matching native runner
+        timeout-minutes: 20
+        run: |
+          sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 timeout 1200 pnpm install --frozen-lockfile
+          sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 timeout 1200 pnpm --filter @stonehush/runner... run build
+
+      - name: Exercise the loaded image, native runner and recovery
+        timeout-minutes: 12
+        env:
+          EXPECTED_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: timeout 660 node scripts/accept-control-plane.mjs "$RUNNER_TEMP/control-plane.tar" "$RUNNER_TEMP/stonehush-results"
+
+      - name: Retain only synthetic acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: control-plane-acceptance-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/stonehush-results/
+          retention-days: 7
+          if-no-files-found: error
+          include-hidden-files: false
+
+      - name: Remove the owned disposable builder
+        if: always()
+        run: docker buildx rm stonehush-acceptance

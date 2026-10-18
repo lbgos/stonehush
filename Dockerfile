@@ -1,6 +1,7 @@
 FROM node:24.18.0-bookworm@sha256:4e9cb555d708e0829c9d93e5eeae9dfab0617b832ca436a690680e0fca735ef5 AS build
 RUN corepack enable && corepack prepare pnpm@10.24.0 --activate
 WORKDIR /source
+ENV NODE_OPTIONS=--max-old-space-size=3072
 COPY . .
 RUN test "$(node --version)" = v24.18.0 && test "$(pnpm --version)" = 10.24.0 \
     && pnpm install --frozen-lockfile

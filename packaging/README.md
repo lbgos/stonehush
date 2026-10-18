@@ -46,3 +46,5 @@ docker run --rm --network none --read-only --user 10001:10001 --cap-drop ALL --s
 ```
 
 Restore refuses incomplete/corrupt backups, newer schemas and nonempty destinations. The first supported baseline is the current 27-migration journal. Same-version backup/restore is the initial support claim; historical development-database upgrades are not certified. Future published v0.1 migrations remain append-only and require release-pair verification. Recovery restores the pre-upgrade snapshot with its matching old builds, without down-migrations.
+
+The pull-request packaging workflow builds the exact PR head on a disposable GitHub-hosted Ubuntu runner. It reloads the exported archive, exercises Compose, pairs the matching native runner with a synthetic Nmap executable, and checks packaged recovery and refusal paths. Its retained JSON records source and artifact identities. Three fixed-viewport screenshots come from that image and require owner comparison with accepted UI evidence. This job does not publish an image, certify an installed external tool or OS matrix, or test historical upgrades. Ordinary repository CI may test GitHub's merge ref separately.
