@@ -39,9 +39,9 @@ let container;
 let volume;
 const temporary = await mkdtemp(path.join(tmpdir(), "stonehush-acceptance-"));
 await chmod(temporary, 0o755);
-function run(executable, argv, { input, allowed = [0], commandEnv = env } = {}) {
+function run(executable, argv, { input, allowed = [0], commandEnv = env, cwd = root } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, argv, { env: commandEnv, stdio: ["pipe", "pipe", "pipe"], shell: false });
+    const child = spawn(executable, argv, { env: commandEnv, cwd, stdio: ["pipe", "pipe", "pipe"], shell: false });
     let stdout = "";
     let stderr = "";
     let oversized = false;
@@ -165,6 +165,8 @@ try {
     await assert.rejects(fetch(`http://${address}:${port}/health`, { signal: AbortSignal.timeout(2000) }));
   }
   checks.push("same-origin root, deep link, JS, real API, JSON misses, traversal, Host, Origin, peer and loopback-only listener");
+  const nativeRoot = path.join(temporary, "native-runtime");
+  await run(process.execPath, ["scripts/assemble-control-plane.mjs", nativeRoot, "native-acceptance"]);
   const engagement = await api("/api/v1/engagements", { name: "Compose acceptance", kind: "lab", autoContinueWarnings: false });
   const base = `/api/v1/engagements/${engagement.id}`;
   const fingerprint = `sha256:${"a".repeat(64)}`;
@@ -183,8 +185,14 @@ try {
   // No credentials enter this probe, and its facts cannot satisfy native stages.
   const entryDigest = createHash("sha256").update((await run("git", ["show", `${metadata.revision}:scripts/acceptance-native-runner.mjs`])).stdout).digest("hex");
   const preflight = `console.log(JSON.stringify(await (${nativeEntryPreflight.toString()})(process.argv[1], process.argv[2])));`;
-  nativeDiagnostics.preflight = JSON.parse((await run("sudo", ["systemd-run", "--scope", "--quiet", "-p", "MemoryMax=1G", "-p", "CPUQuota=200%", ...unprivileged, process.execPath, "--input-type=module", "--eval", preflight, root, entryDigest])).stdout);
-  runner = spawn("sudo", ["systemd-run", "--scope", "--quiet", "-p", "MemoryMax=1G", "-p", "CPUQuota=200%", ...unprivileged, process.execPath, path.join(root, "scripts/acceptance-native-runner.mjs")], { stdio: ["pipe", "pipe", "pipe"], shell: false });
+  nativeDiagnostics.preflight = JSON.parse((await run("sudo", ["systemd-run", "--scope", "--quiet", "-p", "MemoryMax=1G", "-p", "CPUQuota=200%", ...unprivileged, process.execPath, "--input-type=module", "--eval", preflight, nativeRoot, entryDigest], { cwd: nativeRoot })).stdout);
+  assert.deepEqual(nativeDiagnostics.preflight, {
+    runtimeMatches: true, identityMatches: true, supplementaryGroupsEmpty: true,
+    capabilitiesEmpty: true, noNewPrivileges: true, cwdMatches: true,
+    ancestors: "ok", ancestorSymlink: false, checkout: "ok", scripts: "ok",
+    entry: "file", entryRead: "ok", digestMatches: true,
+  });
+  runner = spawn("sudo", ["systemd-run", "--scope", "--quiet", "-p", "MemoryMax=1G", "-p", "CPUQuota=200%", ...unprivileged, process.execPath, path.join(nativeRoot, "scripts/acceptance-native-runner.mjs")], { cwd: nativeRoot, stdio: ["pipe", "pipe", "pipe"], shell: false });
   runner.on("error", () => { runnerSpawnFailed = true; nativeDiagnostics.failure = "spawn"; });
   runner.stdin.on("error", () => { runnerStdinFailed = true; nativeDiagnostics.failure ??= "stdin-write"; });
   runnerClosed = new Promise((resolve) => runner.once("close", (code, signal) => {
