@@ -1,0 +1,30 @@
+services:
+  control-plane:
+    image: ${STONEHUSH_IMAGE:?Set STONEHUSH_IMAGE to the locally loaded image tag or digest}
+    # Linux host networking preserves the native loopback peer and bind checks.
+    # Bridge publishing would turn that peer into a gateway address.
+    network_mode: host
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    init: true
+    environment:
+      STONEHUSH_API_PORT: ${STONEHUSH_PORT:-8787}
+    volumes:
+      - control-plane-data:/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    stop_grace_period: 30s
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:'+process.env.STONEHUSH_API_PORT+'/api/v1/system/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+volumes:
+  control-plane-data:

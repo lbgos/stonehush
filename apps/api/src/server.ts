@@ -1,6 +1,7 @@
 import { apiPortFromEnvironment, dataDirectoryFromEnvironment } from "./config.js";
 import { buildStorageBackedApp } from "./runtime.js";
 import type { FastifyInstance } from "fastify";
+import { registerProductionWeb } from "./production-web.js";
 
 const HOST = "127.0.0.1";
 
@@ -26,6 +27,9 @@ async function main(): Promise<void> {
     const port = apiPortFromEnvironment(process.env);
     const dataDirectory = dataDirectoryFromEnvironment(process.env);
     app = await buildStorageBackedApp(dataDirectory);
+    if (process.env.STONEHUSH_WEB_DIR !== undefined) {
+      await registerProductionWeb(app, process.env.STONEHUSH_WEB_DIR, port);
+    }
     process.once("SIGINT", () => void shutdown());
     process.once("SIGTERM", () => void shutdown());
     await app.listen({ host: HOST, port });

@@ -15,6 +15,21 @@ export const DATABASE_FILENAME = "stonehush.sqlite3";
 // a hand-maintained constant drifting out of sync.
 export const DATABASE_SCHEMA_VERSION: number = readMigrationEntryCount();
 
+function assertSupportedMigration(sqlite: Database.Database, migrationsFolder: string): void {
+  const table = sqlite.prepare("select name from sqlite_master where type = 'table' and name = '__drizzle_migrations'").get();
+  if (table === undefined) return;
+  const latest = sqlite.prepare("select created_at from __drizzle_migrations order by created_at desc limit 1").get() as
+    { created_at: unknown } | undefined;
+  if (latest === undefined) return;
+  const journal = JSON.parse(readFileSync(path.join(migrationsFolder, "meta/_journal.json"), "utf8")) as {
+    entries: { when: number }[];
+  };
+  const supported = journal.entries.at(-1)?.when;
+  if (typeof latest.created_at !== "number" || typeof supported !== "number" || latest.created_at > supported) {
+    throw new Error("Database schema is newer than this build supports.");
+  }
+}
+
 function readMigrationEntryCount(): number {
   const journalPath = fileURLToPath(new URL("../drizzle/meta/_journal.json", import.meta.url));
   const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
@@ -75,6 +90,9 @@ export function openEngagementDatabase({
   const databasePath = path.join(dataDirectory, DATABASE_FILENAME);
   const sqlite = new Database(databasePath);
   try {
+    // Refuse an unsupported future schema before applying migrations or
+    // changing persisted connection settings. Recovery uses the matching build.
+    assertSupportedMigration(sqlite, migrationsFolder);
     chmodSync(databasePath, 0o600);
     configureAndAssertPragmas(sqlite);
     const db = drizzle(sqlite, { schema });
