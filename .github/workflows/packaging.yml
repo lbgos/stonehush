@@ -49,11 +49,21 @@ jobs:
           sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 timeout 1200 pnpm install --frozen-lockfile
           sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 timeout 1200 pnpm --filter @stonehush/runner... run build
 
+      - name: Build the exact committed native service archive
+        timeout-minutes: 20
+        run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 timeout 1200 node scripts/build-native-runner.mjs "$RUNNER_TEMP/native-runner.tar.gz"
+
       - name: Exercise the loaded image, native runner and recovery
         timeout-minutes: 12
         env:
           EXPECTED_REVISION: ${{ github.event.pull_request.head.sha }}
         run: timeout 660 node scripts/accept-control-plane.mjs "$RUNNER_TEMP/control-plane.tar" "$RUNNER_TEMP/stonehush-results"
+
+      - name: Exercise the packaged native user service on this disposable host
+        timeout-minutes: 8
+        env:
+          EXPECTED_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: timeout 420 node scripts/accept-native-service.mjs "$RUNNER_TEMP/control-plane.tar" "$RUNNER_TEMP/native-runner.tar.gz" "$RUNNER_TEMP/stonehush-results"
 
       - name: Retain only synthetic acceptance evidence
         if: always()

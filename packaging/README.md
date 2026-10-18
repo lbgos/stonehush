@@ -1,6 +1,6 @@
 # Compose control plane
 
-This packages the production API, web app and `stonehush` evidence CLI for Linux x86-64. The native runner service installer is a separate increment. Use the matching reviewed runner build with its own unprivileged user and credential directory. Never mount control-plane data into the runner.
+This packages the production API, web app and `stonehush` evidence CLI for Linux x86-64. Pair it with the [matching native runner service](native-runner.md), using its own unprivileged user and credential directory. Never mount control-plane data into the runner.
 
 Build on a disposable Docker builder with enough space for the Node build image, dependencies, compiled output and image archive. From a committed checkout:
 

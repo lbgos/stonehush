@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 const [destination, mode] = process.argv.slice(2);
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 if (!destination || !path.isAbsolute(destination)) throw new Error("An absolute new package directory is required.");
-if (mode !== undefined && mode !== "native-acceptance") throw new Error("Unknown assembly mode.");
+if (mode !== undefined && !["native-acceptance", "native-service"].includes(mode)) throw new Error("Unknown assembly mode.");
 await mkdir(destination); // A preexisting destination is never overwritten.
-const entry = mode === "native-acceptance" ? "apps/runner" : "api";
+const entry = mode?.startsWith("native-") ? "apps/runner" : "api";
 const packages = new Map();
 const workspaceFiles = {
   "@stonehush/api": ["dist", "package.json"],
@@ -77,10 +77,13 @@ async function copyPackage(directory, target) {
   return target;
 }
 
-if (mode === "native-acceptance") {
+if (mode?.startsWith("native-")) {
   await copyPackage(path.join(source, "apps/runner"), path.join(destination, entry));
   await mkdir(path.join(destination, "scripts"));
-  await cp(path.join(source, "scripts/acceptance-native-runner.mjs"), path.join(destination, "scripts/acceptance-native-runner.mjs"), { dereference: false });
+  for (const name of mode === "native-service" ? ["native-runner-service.mjs", "runner-enrollment.mjs"] : ["acceptance-native-runner.mjs"]) {
+    await cp(path.join(source, "scripts", name), path.join(destination, "scripts", name), { dereference: false });
+  }
+  if (mode === "native-service") await cp(process.execPath, path.join(destination, "node"));
   // Only this new, credential-free fixture is made readable to the runner UID.
   // Never change checkout ancestors or retain links back into the checkout.
   const root = await realpath(destination);
