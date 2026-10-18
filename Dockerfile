@@ -5,10 +5,8 @@ COPY . .
 RUN test "$(node --version)" = v24.18.0 && test "$(pnpm --version)" = 10.24.0 \
     && pnpm install --frozen-lockfile
 RUN pnpm --filter @stonehush/api... run build \
-    && pnpm --filter @stonehush/web... run build \
-    && pnpm --filter @stonehush/api deploy --legacy --prod /package/api
-RUN mkdir /package/web && cp -R apps/web/dist/. /package/web/ \
-    && cp LICENSE /package/LICENSE
+    && pnpm --filter @stonehush/web... run build
+RUN node scripts/assemble-control-plane.mjs /package
 ARG SOURCE_REVISION
 ARG SOURCE_TREE
 RUN node scripts/verify-control-plane.mjs /package "$SOURCE_REVISION" "$SOURCE_TREE"

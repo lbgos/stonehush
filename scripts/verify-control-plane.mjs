@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-// Runs against pnpm's standalone production deployment, before the runtime
+// Runs against the standalone production package, before the runtime
 // image is assembled. No dependency install or source checkout is used here.
 const [directory, revision, tree] = process.argv.slice(2);
 if (!directory || !/^[a-f0-9]{40}$/.test(revision ?? "") || !/^[a-f0-9]{40}$/.test(tree ?? "")) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,37 @@ test("package verification refuses source identity omissions and external depend
     const escape = spawnSync(process.execPath, [verifier, artifact, "a".repeat(40), "b".repeat(40)], { encoding: "utf8" });
     assert.notEqual(escape.status, 0);
     assert.match(escape.stderr, /Package link escapes artifact/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("assembly preserves installed dependency versions and produces local links without installation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-locked-assembly-"));
+  try {
+    for (const name of ["scripts", "apps/api/dist", "apps/web/dist", "node_modules/fixture-package"]) await mkdir(path.join(root, name), { recursive: true });
+    await copyFile(fileURLToPath(new URL("./assemble-control-plane.mjs", import.meta.url)), path.join(root, "scripts/assemble-control-plane.mjs"));
+    await writeFile(path.join(root, "apps/api/package.json"), JSON.stringify({ name: "@stonehush/api", dependencies: { "fixture-package": "^1.0.0" } }));
+    await writeFile(path.join(root, "apps/api/dist/server.js"), "// synthetic compiled API\n");
+    await writeFile(path.join(root, "apps/web/dist/index.html"), "<!doctype html>");
+    await writeFile(path.join(root, "LICENSE"), "synthetic test license");
+    await writeFile(path.join(root, "node_modules/fixture-package/package.json"), JSON.stringify({ name: "fixture-package", version: "1.2.3", main: "index.js", optionalDependencies: { "missing-optional": "1.0.0" } }));
+    await writeFile(path.join(root, "node_modules/fixture-package/index.js"), "module.exports = 123;\n");
+    const output = path.join(root, "package");
+    const run = () => spawnSync(process.execPath, [path.join(root, "scripts/assemble-control-plane.mjs"), output], { encoding: "utf8" });
+    const result = run();
+    assert.equal(result.status, 0, result.stderr);
+    const dependency = path.join(output, "api/node_modules/fixture-package");
+    assert.ok((await realpath(dependency)).startsWith(`${output}/`));
+    assert.equal(JSON.parse(await readFile(path.join(dependency, "package.json"), "utf8")).version, "1.2.3");
+    assert.equal(await readFile(path.join(dependency, "index.js"), "utf8"), "module.exports = 123;\n");
+    const clobber = run();
+    assert.notEqual(clobber.status, 0);
+    assert.equal(await readFile(path.join(dependency, "index.js"), "utf8"), "module.exports = 123;\n");
+    await writeFile(path.join(root, "apps/api/package.json"), JSON.stringify({ name: "@stonehush/api", dependencies: { "missing-required": "1.0.0" } }));
+    const missing = spawnSync(process.execPath, [path.join(root, "scripts/assemble-control-plane.mjs"), path.join(root, "missing")], { encoding: "utf8" });
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /Missing installed runtime dependency/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
