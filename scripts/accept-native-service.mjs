@@ -97,8 +97,15 @@ try {
   assert.equal(inspect.Image, image.imageId);
   const volumePath = inspect.Mounts.find((mount) => mount.Destination === "/data").Source;
   assert.equal((await asUser(["test", "-r", volumePath], { allowed: [0, 1] })).code, 1);
+  // Only this job's disposable checkout is restricted. The runner starts
+  // exclusively from its copied distribution and cannot traverse the source.
+  await chmod(process.cwd(), 0o700);
   assert.equal((await asUser(["test", "-r", process.cwd()], { allowed: [0, 1] })).code, 1, "Service user must have no source-checkout access.");
   assert.equal((await asUser(["test", "-w", "/var/run/docker.sock"], { allowed: [0, 1] })).code, 1);
+  await systemctl("daemon-reload");
+  assert.equal((await asUser(["/usr/bin/systemctl", "--user", "start", unit], { allowed: [1] })).code, 1);
+  await systemctl("stop", unit);
+  for (const filename of ["credential.json", "enrollment-attempt.json"]) assert.equal((await asUser(["test", "-e", path.join(identityDir, filename)], { allowed: [0, 1] })).code, 1);
   await command(runtime, "enroll", "--owner-confirmed");
   // Only the CI owner reads this synthetic secret, solely to assert exclusion.
   const credentialPath = path.join(identityDir, "credential.json");
@@ -168,8 +175,23 @@ try {
   assert.equal(`${journal.stdout}${journal.stderr}${logs.stdout}${logs.stderr}`.includes(secret), false);
   assert.equal((await run("ps", ["-eo", "args="])).stdout.includes(secret), false);
   assert.equal((await asUser([path.join(runtime, "node"), path.join(runtime, "scripts/native-runner-service.mjs"), "remove"], { allowed: [1] })).code, 1);
+  // Stop while a synthetic child is running, then verify the dedicated
+  // account has no surviving service/tool processes or false success.
+  await asUser(["rm", started]);
+  const interruptedId = await queue("192.0.2.2");
+  await until(async () => (await asUser(["test", "-f", started], { allowed: [0, 1] })).code === 0, "stop fixture start");
+  const toolPids = (await run("pgrep", ["-u", uid, "-f", fake])).stdout.trim().split("\n");
+  assert.ok(toolPids.every((value) => /^[1-9]\d*$/.test(value)));
   await systemctl("stop", unit);
   assert.equal((await systemctl("show", unit, "--property=ActiveState", "--value")).stdout.trim(), "inactive");
+  for (const toolPid of toolPids) {
+    try { assert.match(await readFile(`/proc/${toolPid}/stat`, "utf8"), /\) Z /); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+  const interrupted = await terminal(interruptedId);
+  assert.equal(interrupted.terminalKind, "failed");
+  const interruptedOutput = await api(`${base}/runs/${interrupted.id}/output`);
+  assert.equal(interruptedOutput.stdout.completeness, "partial");
+  assert.equal(interruptedOutput.stdout.content, "synthetic service output\n");
   await command(runtime, "remove");
   assert.equal((await run("sudo", ["cat", credentialPath])).stdout, credentialBytes);
   assert.equal((await asUser(["test", "-e", runtime], { allowed: [0, 1] })).code, 1);
@@ -180,8 +202,14 @@ try {
   assert.equal((await systemctl("is-active", unit)).stdout.trim(), "active");
   assert.equal((await terminal(await queue("192.0.2.4"))).terminalKind, "succeeded");
   await systemctl("stop", unit);
+  await api(`/api/v1/runners/${credential.runnerId}/revoke`, { expectedRevision: credential.runnerRevision }, 200);
+  await systemctl("start", "--no-block", unit);
+  await delay(1500);
+  assert.equal((await systemctl("show", unit, "--property=ActiveState", "--value")).stdout.trim(), "activating", "Rejected handshake must not report ready.");
+  assert.equal((await run("sudo", ["cat", credentialPath])).stdout, credentialBytes);
+  await systemctl("stop", unit);
   await command(runtime, "remove");
-  evidence.checks.push("runner/control-plane restart and reinstall preserve identity and evidence without re-enrollment", "active removal refused, explicit stop/removal preserve credentials and state; logs/argv exclude credentials");
+  evidence.checks.push("runner/control-plane restart and reinstall preserve identity and evidence without re-enrollment", "active removal refused, stop cleans a live tool and preserves truthful interrupted evidence, removal preserves credentials/state", "missing credential and revoked-credential handshake never report ready or silently enroll; logs/argv exclude credentials");
   evidence.status = "passed";
   evidence.limits = ["Actual Ubuntu 24.04 GitHub disposable-host service proof only; Ubuntu 22.04 and Kali matrix remains unpassed", "Synthetic operator-managed executable, not external-tool certification", "No owner-host installation, public release, historical migration, signing or SBOM proof"];
 } catch (error) {

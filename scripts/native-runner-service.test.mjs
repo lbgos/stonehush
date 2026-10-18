@@ -14,6 +14,7 @@ async function fixture(callback) {
     await mkdir(home, { mode: 0o700 });
     for (const directory of ["apps/runner/dist", "scripts"]) await mkdir(path.join(artifact, directory), { recursive: true });
     for (const name of ["node", "apps/runner/dist/runner.js", "scripts/native-runner-service.mjs", "scripts/runner-enrollment.mjs"]) await writeFile(path.join(artifact, name), "synthetic runtime\n");
+    await symlink("runner.js", path.join(artifact, "apps/runner/dist/internal-link.js"));
     const manifest = { kind: "native-runner", revision: "a".repeat(40), tree: "b".repeat(40), node: "v24.18.0", pnpm: "10.24.0", inventory: await inventory(artifact) };
     await writeFile(path.join(artifact, "artifact.json"), JSON.stringify(manifest));
     const config = { apiBaseUrl: "http://127.0.0.1:18789", nmapExecutable: "/usr/bin/nmap", runnerName: "Synthetic runner" };

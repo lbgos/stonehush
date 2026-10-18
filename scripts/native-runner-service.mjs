@@ -159,7 +159,7 @@ export async function install(source, paths, config) {
   try { await lstat(paths.unit); throw new ServiceError("Existing service unit refused."); } catch (error) { if (error.code !== "ENOENT") throw error; }
   const stage = `${paths.runtime}.install-${randomUUID()}`;
   try {
-    await cp(source, stage, { recursive: true, dereference: false, errorOnExist: true, force: false });
+    await cp(source, stage, { recursive: true, dereference: false, verbatimSymlinks: true, errorOnExist: true, force: false });
     await chmod(stage, 0o700);
     await verifyArtifact(stage);
     const configFile = path.join(paths.private, "config.json");

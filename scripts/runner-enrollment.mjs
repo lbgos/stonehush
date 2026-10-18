@@ -100,4 +100,3 @@ export async function revokeEnrolledRunner({ apiBaseUrl, runnerId, runnerRevisio
   }
   return revoked;
 }
-
