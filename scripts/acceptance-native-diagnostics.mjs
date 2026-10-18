@@ -10,11 +10,22 @@ export async function nativeEntryPreflight(checkout, expectedDigest) {
   }
   let ancestors = "ok";
   let ancestorSymlink = false;
-  for (let directory = path.dirname(checkout); ; directory = path.dirname(directory)) {
-    try { ancestorSymlink ||= (await lstat(directory)).isSymbolicLink(); } catch (error) { ancestors = code(error); }
-    const result = await searchable(directory);
-    if (result !== "ok") ancestors = result;
+  const scripts = path.join(checkout, "scripts");
+  const directories = [];
+  for (let directory = scripts; ; directory = path.dirname(directory)) {
+    directories.unshift(directory);
     if (directory === path.dirname(directory)) break;
+  }
+  // Walk from the filesystem root and stop before following any directory link.
+  for (const directory of directories) {
+    const higherAncestor = directory !== checkout && directory !== scripts;
+    try {
+      if ((await lstat(directory)).isSymbolicLink()) { ancestorSymlink = true; break; }
+    } catch (error) { if (higherAncestor) ancestors = code(error); break; }
+    if (higherAncestor) {
+      const result = await searchable(directory);
+      if (result !== "ok") { ancestors = result; break; }
+    }
   }
   const status = await readFile("/proc/self/status", "utf8");
   const result = {
@@ -25,10 +36,11 @@ export async function nativeEntryPreflight(checkout, expectedDigest) {
     noNewPrivileges: /^NoNewPrivs:\s+1$/m.test(status),
     cwdMatches: process.cwd() === checkout,
     ancestors, ancestorSymlink,
-    checkout: await searchable(checkout),
-    scripts: await searchable(path.join(checkout, "scripts")),
+    checkout: ancestorSymlink ? "skipped" : await searchable(checkout),
+    scripts: ancestorSymlink ? "skipped" : await searchable(scripts),
     entry: "other", entryRead: "other", digestMatches: false,
   };
+  if (ancestorSymlink) { result.entryRead = "skipped"; return result; }
   const entry = path.join(checkout, "scripts/acceptance-native-runner.mjs");
   try {
     const info = await lstat(entry);

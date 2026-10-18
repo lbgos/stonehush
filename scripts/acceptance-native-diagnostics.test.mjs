@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { nativeEntryPreflight, nativeStderrDiagnostics } from "./acceptance-native-diagnostics.mjs";
@@ -14,8 +14,8 @@ test("inline native preflight distinguishes exact entry bytes, missing input and
   const bytes = "private synthetic content";
   const digest = createHash("sha256").update(bytes).digest("hex");
   const source = `console.log(JSON.stringify(await (${nativeEntryPreflight.toString()})(process.argv[1], process.argv[2])));`;
-  const probe = (expected = digest) => {
-    const child = spawnSync(process.execPath, ["--input-type=module", "--eval", source, temporary, expected], {
+  const probe = (expected = digest, checkout = temporary) => {
+    const child = spawnSync(process.execPath, ["--input-type=module", "--eval", source, checkout, expected], {
       cwd: temporary, encoding: "utf8", timeout: 5000,
       ...(process.getuid() === 0 ? { uid: 10002, gid: 10002 } : {}),
     });
@@ -55,8 +55,25 @@ test("inline native preflight distinguishes exact entry bytes, missing input and
     const linked = probe();
     assert.equal(linked.entry, "symlink");
     assert.equal(linked.digestMatches, false);
+    await rm(scripts, { recursive: true });
+    const actualScripts = path.join(temporary, "actual-scripts");
+    await mkdir(actualScripts, { mode: 0o755 });
+    await writeFile(path.join(actualScripts, "acceptance-native-runner.mjs"), bytes, { mode: 0o644 });
+    await symlink(actualScripts, scripts);
+    const linkedDirectory = probe();
+    assert.equal(linkedDirectory.ancestorSymlink, true);
+    assert.equal(linkedDirectory.entryRead, "skipped");
+    assert.equal(linkedDirectory.digestMatches, false);
+    const checkoutLink = path.join(temporary, "checkout-link");
+    await symlink(temporary, checkoutLink);
+    const linkedCheckout = probe(digest, checkoutLink);
+    assert.equal(linkedCheckout.ancestorSymlink, true);
+    assert.equal(linkedCheckout.entryRead, "skipped");
+    assert.equal(linkedCheckout.digestMatches, false);
   } finally {
-    await chmod(scripts, 0o755);
+    // Remove the directory link itself, without following it during cleanup.
+    if ((await lstat(scripts).catch(() => undefined))?.isDirectory()) await chmod(scripts, 0o755);
+    await rm(scripts, { recursive: true, force: true });
     await rm(temporary, { recursive: true, force: true });
   }
 });
