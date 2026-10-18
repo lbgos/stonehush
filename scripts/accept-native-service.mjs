@@ -111,8 +111,9 @@ try {
   const credentialPath = path.join(identityDir, "credential.json");
   const credentialBytes = (await run("sudo", ["cat", credentialPath])).stdout;
   const credential = JSON.parse(credentialBytes);
+  const credentialDigest = createHash("sha256").update(credentialBytes).digest("hex");
   secret = credential.runnerSecret;
-  assert.match(secret, /^[A-Za-z0-9_-]{43}$/);
+  assert.ok(/^[A-Za-z0-9_-]{43}$/.test(secret));
   for (const directory of [home, runtime, identityDir, stateDir, path.join(stateDir, "work")]) {
     assert.equal((await run("sudo", ["stat", "-c", "%u %a", directory])).stdout.trim(), `${uid} 700`);
   }
@@ -161,7 +162,7 @@ try {
   await systemctl("restart", unit);
   assert.equal((await systemctl("is-active", unit)).stdout.trim(), "active");
   assert.notEqual((await systemctl("show", unit, "--property=MainPID", "--value")).stdout.trim(), pid);
-  assert.equal((await run("sudo", ["cat", credentialPath])).stdout, credentialBytes);
+  assert.equal(createHash("sha256").update((await run("sudo", ["cat", credentialPath])).stdout).digest("hex"), credentialDigest);
   await compose("restart");
   await until(async () => { try { return (await fetch(`${origin}/health`)).ok; } catch { return false; } }, "control-plane restart");
   const afterRestart = await terminal(await queue("192.0.2.3"));
@@ -169,7 +170,7 @@ try {
   assert.deepEqual(await api(`${base}/runs/${succeeded.id}/output`), original);
   const rejectedEnrollment = await asUser([path.join(runtime, "node"), path.join(runtime, "scripts/native-runner-service.mjs"), "enroll", "--owner-confirmed"], { allowed: [1] });
   assert.equal(`${rejectedEnrollment.stdout}${rejectedEnrollment.stderr}`.includes(secret), false);
-  assert.equal((await run("sudo", ["cat", credentialPath])).stdout, credentialBytes);
+  assert.equal(createHash("sha256").update((await run("sudo", ["cat", credentialPath])).stdout).digest("hex"), credentialDigest);
   const journal = await asUser(["journalctl", "--user", "-u", unit, "--no-pager"]);
   const logs = await docker("logs", container);
   assert.equal(`${journal.stdout}${journal.stderr}${logs.stdout}${logs.stderr}`.includes(secret), false);
@@ -193,7 +194,7 @@ try {
   assert.equal(interruptedOutput.stdout.completeness, "partial");
   assert.equal(interruptedOutput.stdout.content, "synthetic service output\n");
   await command(runtime, "remove");
-  assert.equal((await run("sudo", ["cat", credentialPath])).stdout, credentialBytes);
+  assert.equal(createHash("sha256").update((await run("sudo", ["cat", credentialPath])).stdout).digest("hex"), credentialDigest);
   assert.equal((await asUser(["test", "-e", runtime], { allowed: [0, 1] })).code, 1);
   // Reinstall preserves the association and resumes without enrollment.
   await command(artifact, "install", origin, fake, "Service acceptance runner");
@@ -206,7 +207,7 @@ try {
   await systemctl("start", "--no-block", unit);
   await delay(1500);
   assert.equal((await systemctl("show", unit, "--property=ActiveState", "--value")).stdout.trim(), "activating", "Rejected handshake must not report ready.");
-  assert.equal((await run("sudo", ["cat", credentialPath])).stdout, credentialBytes);
+  assert.equal(createHash("sha256").update((await run("sudo", ["cat", credentialPath])).stdout).digest("hex"), credentialDigest);
   await systemctl("stop", unit);
   await command(runtime, "remove");
   evidence.checks.push("runner/control-plane restart and reinstall preserve identity and evidence without re-enrollment", "active removal refused, stop cleans a live tool and preserves truthful interrupted evidence, removal preserves credentials/state", "missing credential and revoked-credential handshake never report ready or silently enroll; logs/argv exclude credentials");
