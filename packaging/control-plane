@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+umask 077
+exec node /opt/stonehush/api/dist/server.js "$@"
