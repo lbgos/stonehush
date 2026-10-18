@@ -236,7 +236,7 @@ try {
   await fixture("newer-live");
   await compose(["stop"]);
   const refused = await docker(["run", "--rm", "--network", "none", "--read-only", "--user", "10001:10001", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "1g", "--cpus", "2", "--pids-limit", "256", "--mount", `type=volume,src=${volume},dst=/data`, "-e", "STONEHUSH_DATA_DIR=/data/newer-live", metadata.imageId], { allowed: [1] });
-  assert.ok(`${refused.stdout}${refused.stderr}`.includes("newer"));
+  assert.ok(`${refused.stdout}${refused.stderr}`.includes("Stonehush API failed to start"));
   checks.push("packaged doctor, nonempty backup/restore, exact records/bytes/references, integrity/foreign keys/private modes and corrupt/incomplete/newer/nonempty refusal without destination clobber");
   evidence.status = "passed";
   evidence.limits = ["Synthetic nmap adapter, no external targets or installed-tool/platform certification", "Current 27-migration baseline and same-version recovery only", "Three viewport captures require owner comparison with accepted UI", "Native service installer remains separate"];

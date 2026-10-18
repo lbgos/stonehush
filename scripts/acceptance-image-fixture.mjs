@@ -82,4 +82,7 @@ if (mode === "package") {
   database.exec("insert into __drizzle_migrations (hash, created_at) select 'synthetic-future', max(created_at) + 1 from __drizzle_migrations");
   database.close();
   await chmod("/data/newer-live/stonehush.sqlite3", 0o600);
+  const before = await readFile("/data/newer-live/stonehush.sqlite3");
+  assert.throws(() => require("@stonehush/db").openEngagementDatabase({ dataDirectory: "/data/newer-live" }), /Database schema is newer/);
+  assert.deepEqual(await readFile("/data/newer-live/stonehush.sqlite3"), before);
 } else throw new Error("Unknown image acceptance mode.");
