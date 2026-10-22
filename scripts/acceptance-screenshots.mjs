@@ -29,17 +29,52 @@ export async function waitForScreenshotState(send, pause = delay) {
   throw new Error("Chrome CDP readiness timed out after 100 attempts: render, document completion or theme requirements unmet.");
 }
 
+export async function waitForChromePort(chrome, profile, pause = delay) {
+  let spawnFailure;
+  let stderr = "";
+  const categories = new Set();
+  const onError = (error) => { spawnFailure = ["ENOENT", "EACCES", "EPERM"].includes(error.code) ? error.code : "other"; };
+  const onData = (chunk) => {
+    // Only fixed categories survive. Bound even a single oversized output chunk.
+    stderr = (stderr + chunk.subarray(-4096).toString()).slice(-4096);
+    if (/No usable sandbox|SUID sandbox|Running as root without --no-sandbox|Failed to move to new namespace|InitializeSandbox.*failed/i.test(stderr)) categories.add("sandbox");
+    if (/error while loading shared libraries/i.test(stderr)) categories.add("missing-library");
+    if (/ProcessSingleton|SingletonLock|Failed to create.*(?:user data|profile)/i.test(stderr)) categories.add("profile");
+    if (/FATAL|Trace\/breakpoint trap|Segmentation fault/i.test(stderr)) categories.add("fatal");
+  };
+  chrome.on("error", onError);
+  chrome.stderr?.on("data", onData);
+  const diagnostic = () => `exit=${Number.isInteger(chrome.exitCode) ? chrome.exitCode : "none"}, signal=${["SIGABRT", "SIGBUS", "SIGILL", "SIGKILL", "SIGSEGV", "SIGTERM", "SIGTRAP"].includes(chrome.signalCode) ? chrome.signalCode : "none"}, stderr=${[...categories].sort().join(",") || (stderr ? "other" : "none")}`;
+  try {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (spawnFailure) throw new Error(`Chrome CDP startup failed: spawn=${spawnFailure}.`);
+      if (chrome.exitCode !== null || chrome.signalCode !== null) throw new Error(`Chrome CDP startup failed: ${diagnostic()}.`);
+      let value;
+      try { value = await readFile(path.join(profile, "DevToolsActivePort"), "utf8"); } catch (error) {
+        if (error.code !== "ENOENT") throw new Error("Chrome CDP startup failed: port file unreadable.");
+      }
+      if (value !== undefined) {
+        const port = Number(value.split("\n")[0]);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Chrome CDP startup failed: invalid port file.");
+        return port;
+      }
+      await pause(100);
+    }
+    throw new Error(`Chrome CDP startup timed out after 100 attempts: ${diagnostic()}.`);
+  } finally {
+    chrome.off("error", onError);
+    chrome.stderr?.off("data", onData);
+    chrome.stderr?.resume();
+  }
+}
+
 // Use the disposable runner's installed Chrome through CDP. No browser package
 // or download is needed. Screenshots require owner inspection before acceptance.
 export async function screenshots(url, output, profile) {
-  const chrome = spawn("google-chrome", ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: "ignore", shell: false });
+  const chrome = spawn("google-chrome", ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: ["ignore", "ignore", "pipe"], shell: false });
   let socket;
   try {
-    let port;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try { port = Number((await readFile(path.join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]); break; } catch { await delay(100); }
-    }
-    assert.ok(port, "Installed Chrome did not expose CDP.");
+    const port = await waitForChromePort(chrome, profile);
     const tabs = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
     socket = new WebSocket(tabs.find((tab) => tab.type === "page").webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { socket.addEventListener("open", resolve, { once: true }); socket.addEventListener("error", reject, { once: true }); });
@@ -82,8 +117,11 @@ export async function screenshots(url, output, profile) {
     return { screenshots: evidence, ownerAppearanceReview: "pending", source: "exact image served on loopback", browser: "GitHub runner installed Chrome" };
   } finally {
     socket?.close();
-    chrome.kill("SIGTERM");
-    await Promise.race([new Promise((resolve) => chrome.once("exit", resolve)), delay(5000)]);
-    if (chrome.exitCode === null) chrome.kill("SIGKILL");
+    if (chrome.pid && chrome.exitCode === null && chrome.signalCode === null) {
+      const exited = new Promise((resolve) => chrome.once("exit", resolve));
+      chrome.kill("SIGTERM");
+      await Promise.race([exited, delay(5000)]);
+      if (chrome.exitCode === null && chrome.signalCode === null) chrome.kill("SIGKILL");
+    }
   }
 }
