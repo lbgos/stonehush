@@ -597,6 +597,7 @@ export async function runOnce(
           runRoot: config.runRoot,
           executable: request.executable,
           argv: request.argv,
+          configuration: "ffuf",
           secrets: [config.secret],
           shouldCancel: () => cancellationRequested || isAuthorityLost(),
         });
@@ -750,6 +751,7 @@ export async function runOnce(
           runRoot: config.runRoot,
           executable: request.executable,
           argv: request.argv,
+          configuration: "ffuf",
           secrets: [config.secret],
           shouldCancel: () => cancellationRequested || isAuthorityLost(),
         });

@@ -147,6 +147,9 @@ describe("fake-action argv invariants", () => {
 
 describe("controlled environment", () => {
   it("rejects ambient dangerous names", () => {
+    for (const key of ["HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "HTTPS_PROXY", "ALL_PROXY", "LD_LIBRARY_PATH", "RUNNER_SECRET"]) {
+      expect(() => controlledEnv("/tmp/fake-run", { [key]: "untrusted" })).toThrow(/environment_variable_denied/);
+    }
     expect(() => controlledEnv("/tmp/fake-run", { LD_PRELOAD: "/tmp/fake.so" } as Record<string, string>)).toThrow(
       /denied/,
     );
@@ -1389,4 +1392,3 @@ describe("readNmapXmlSecurely", () => {
     }
   });
 });
-

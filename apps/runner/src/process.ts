@@ -132,6 +132,7 @@ function spawnSupervised(params: {
   runRoot: string;
   executable: string;
   argv: readonly string[];
+  configuration?: "ffuf";
   secrets?: readonly string[];
   shouldCancel?: () => boolean;
 }): SupervisedProcess {
@@ -151,6 +152,23 @@ function spawnSupervised(params: {
         validateArgv(argv);
         const { runDir } = await createRunDirectory(runRoot, runId, fence);
         const env = controlledEnv(runDir, undefined);
+        if (params.configuration === "ffuf") {
+          // ffuf initializes scrapers beneath XDG_CONFIG_HOME. Give it an
+          // empty private directory with the same lifetime as this run's workspace.
+          // Never inherit the service account's home or configuration.
+          const configDir = path.resolve(runDir, "ffuf-config");
+          await mkdir(configDir, { mode: 0o700 }).catch(() => {
+            throw new Error("working_directory_escape");
+          });
+          for (const directory of [runDir, configDir]) {
+            const st = await lstat(directory);
+            if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== process.getuid?.()
+              || (st.mode & 0o077) !== 0 || await realpath(directory) !== path.resolve(directory)) {
+              throw new Error("working_directory_escape");
+            }
+          }
+          env.XDG_CONFIG_HOME = configDir;
+        }
         for (const k of Object.keys(env)) {
           if (["LD_PRELOAD", "LD_LIBRARY_PATH"].includes(k)) throw new Error(`environment_variable_denied: ${k}`);
         }
@@ -291,6 +309,7 @@ export function runSupervisedCommand(request: {
   runRoot: string;
   executable: string;
   argv: readonly string[];
+  configuration?: "ffuf";
   secrets?: readonly string[];
   shouldCancel?: () => boolean;
 }): SupervisedProcess {
