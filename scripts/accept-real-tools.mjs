@@ -67,7 +67,7 @@ function run(executable, argv, { allowed = [0], cwd = process.cwd(), timeout = 3
       clearTimeout(timer);
       // No command output or credential/configuration bytes enter receipts.
       if (receipt.commands.length >= 2500) { reject(new Error("Command receipt bound exceeded.")); return; }
-      receipt.commands.push({ executable, operation: argv[0], code, exceeded });
+      receipt.commands.push({ executable, argv, code, exceeded });
       if (exceeded || !allowed.includes(code)) reject(new Error(`Command failed: ${path.basename(executable)} ${argv[0]}, exit=${code}, bound=${exceeded}`));
       else resolve({ code, stdout, stderr });
     });
@@ -134,7 +134,7 @@ try {
     assert.equal(ownership, `${tool}: ${executable}`);
     assert.equal((await run("/usr/bin/dpkg", ["--verify", tool])).stdout, "");
     const version = await run(executable, [tool === "nmap" ? "--version" : "-V"]);
-    receipt.tools[tool] = { executable, digest: `sha256:${await archiveHash(executable)}`, package: (await run("/usr/bin/dpkg-query", ["-W", "-f=${Package} ${Version} ${Architecture}\n", tool])).stdout.trim(), ownership, version: `${version.stdout}${version.stderr}`.trim().slice(0, 4096) };
+    receipt.tools[tool] = { packagePolicy: (await run("/usr/bin/apt-cache", ["policy", tool])).stdout.trim().slice(0, 8192), executable, digest: `sha256:${await archiveHash(executable)}`, package: (await run("/usr/bin/dpkg-query", ["-W", "-f=${Package} ${Version} ${Architecture}\n", tool])).stdout.trim(), ownership, version: `${version.stdout}${version.stderr}`.trim().slice(0, 4096) };
   }
   assert.equal(await archiveHash(imageArchive), image.sha256);
   assert.equal(await archiveHash(runnerArchive), native.sha256);
@@ -165,6 +165,10 @@ try {
   const container = (await compose("ps", "-q", "control-plane")).stdout.trim();
   const inspect = JSON.parse((await docker("inspect", container)).stdout)[0];
   assert.equal(inspect.Image, image.imageId);
+  const imageManifest = JSON.parse((await docker("exec", container, "cat", "/opt/stonehush/artifact.json")).stdout);
+  assert.equal(imageManifest.revision, image.revision);
+  assert.equal(imageManifest.tree, image.tree);
+  receipt.imageInventory = { files: imageManifest.inventory.length, digest: sha256(JSON.stringify(imageManifest.inventory)) };
   assert.equal(inspect.Config.User, "10001:10001");
   assert.equal(inspect.HostConfig.ReadonlyRootfs, true);
   const volume = inspect.Mounts.find((mount) => mount.Destination === "/data").Source;
@@ -310,6 +314,8 @@ try {
   assert.equal(raw.results[0].url, result.url);
   assert.equal(raw.results[0].status, 200);
   assert.equal(raw.results[0].length, result.length);
+  assert.equal(raw.results[0].words, result.words);
+  assert.equal(raw.results[0].lines, result.lines);
   const finding = await api(`${base}/findings`, { title: "Planted acceptance path", severity: "info", body: `Synthetic path ${result.url}`, evidenceArtifactIds: [service.artifactId, probe.artifactId, result.artifactId] });
   const report = await api(`${base}/report?format=json`);
   assert.equal(report.findings.length, 1);
@@ -333,6 +339,9 @@ try {
   await until(() => slowClosed > 0, "cancelled request connection cleanup", 10000);
   assert.ok(Date.now() - cancelledAt < 25000, "Cancellation exceeded bound.");
   const partialOutput = await api(`${base}/runs/${cancelled.id}/output`);
+  assert.equal(partialOutput.run.id, cancelled.id);
+  assert.equal(partialOutput.run.actionId, cancelId);
+  assert.equal(partialOutput.run.terminalKind, "cancelled");
   for (const stream of [partialOutput.stdout, partialOutput.stderr]) { assert.equal(stream.present, true); assert.equal(stream.completeness, "partial"); }
   const afterCancel = await api(`${base}/report?format=json`);
   const partial = afterCancel.evidenceArtifacts.rows.filter((item) => item.runId === cancelled.id);
