@@ -29,7 +29,6 @@ jobs:
     env:
       NODE_OPTIONS: --max-old-space-size=3072
       BUILDX_BUILDER: stonehush-acceptance
-      STONEHUSH_BUILD_HOST_RECEIPT: ${{ runner.temp }}/stonehush-results/build-host.json
       EXPECTED_UBUNTU_RELEASE: ${{ matrix.release }}
     steps:
       - name: Check out the PR source, not its merge ref
@@ -71,6 +70,8 @@ jobs:
 
       - name: Build and export the exact committed image
         timeout-minutes: 20
+        env:
+          STONEHUSH_BUILD_HOST_RECEIPT: ${{ runner.temp }}/stonehush-results/build-host.json
         run: timeout 1200 node scripts/build-control-plane.mjs stonehush-acceptance:local "$RUNNER_TEMP/control-plane.tar"
 
       - name: Build the matching native runner
@@ -81,6 +82,8 @@ jobs:
 
       - name: Build the exact committed native service archive
         timeout-minutes: 20
+        env:
+          STONEHUSH_BUILD_HOST_RECEIPT: ${{ runner.temp }}/stonehush-results/build-host.json
         run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 "STONEHUSH_BUILD_HOST_RECEIPT=$STONEHUSH_BUILD_HOST_RECEIPT" timeout 1200 node scripts/build-native-runner.mjs "$RUNNER_TEMP/native-runner.tar.gz"
 
       - name: Bind artifact digests to the recorded build host
