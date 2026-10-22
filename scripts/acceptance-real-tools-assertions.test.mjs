@@ -33,3 +33,12 @@ test("Continue proof requires one acknowledgment and unchanged exact snapshot", 
   assert.throws(() => assertContinued(before, { action: { ...after.action, warningInteractions: 2 } }));
   assert.throws(() => assertContinued(before, { action: { ...after.action, snapshots: [{ ...snapshot, scopeRevisionId: "changed" }] } }));
 });
+
+test("real-tool entrypoint refuses local execution before account or service work", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const entry = new URL("./accept-real-tools.mjs", import.meta.url);
+  const result = spawnSync(process.execPath, [entry.pathname], { env: { PATH: "/usr/bin:/bin", GITHUB_ACTIONS: "false", RUNNER_ENVIRONMENT: "github-hosted" }, encoding: "utf8", timeout: 5000 });
+  assert.notEqual(result.status, 0);
+  assert.equal(result.error, undefined);
+  assert.match(result.stderr, /AssertionError/);
+});
