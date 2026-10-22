@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { assertContinued, assertDownload, assertToolProcess, sha256 } from "./acceptance-real-tools-assertions.mjs";
+import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, sha256 } from "./acceptance-real-tools-assertions.mjs";
 
 // This entrypoint deliberately refuses shared/local hosts. Tool installation,
 // account creation and user-manager operations belong only to disposable CI.
@@ -46,6 +46,7 @@ let fixture;
 let fixtureOrigin;
 let slowRequests = 0;
 let slowClosed = 0;
+const slowRequest = { startedAt: 0, closedAt: 0, deadlineExpired: false, normalResponse: false };
 const routeCounts = {};
 const timers = new Set();
 
@@ -194,12 +195,18 @@ try {
     routeCounts[route] = (routeCounts[route] ?? 0) + 1;
     if (Object.values(routeCounts).reduce((a, b) => a + b, 0) > 100) { receipt.fixtureRequestLimitExceeded = true; response.destroy(); return; }
     const slow = route === "/slow-acceptance";
-    if (slow) { slowRequests++; response.once("close", () => { slowClosed++; }); }
+    if (slow) {
+      slowRequests++;
+      slowRequest.startedAt = Date.now();
+      response.once("close", () => { slowClosed++; slowRequest.closedAt = Date.now(); });
+    }
     const timer = setTimeout(() => {
       timers.delete(timer);
+      if (slow) { slowRequest.deadlineExpired = true; response.destroy(); return; }
       response.writeHead(route === "/" || route === `/${planted}` || slow ? 200 : 404, { "content-type": "text/html", server: "stonehush-fixture" });
+      if (slow) slowRequest.normalResponse = true;
       response.end(route === "/" ? `<title>${title}</title>` : route === `/${planted}` ? body : "missing\n");
-    }, slow ? 29000 : route === `/${planted}` ? 1500 : 0);
+    }, slow ? 45000 : route === `/${planted}` ? 1500 : 0);
     timers.add(timer);
     response.once("close", () => { clearTimeout(timer); timers.delete(timer); });
   });
@@ -316,11 +323,13 @@ try {
   assert.equal(raw.results[0].length, result.length);
   assert.equal(raw.results[0].words, result.words);
   assert.equal(raw.results[0].lines, result.lines);
-  const finding = await api(`${base}/findings`, { title: "Planted acceptance path", severity: "info", body: `Synthetic path ${result.url}`, evidenceArtifactIds: [service.artifactId, probe.artifactId, result.artifactId] });
+  const expectedReferences = [service.artifactId, probe.artifactId, result.artifactId];
+  const finding = await api(`${base}/findings`, { title: "Planted acceptance path", severity: "info", body: `Synthetic path ${result.url}`, evidenceArtifactIds: expectedReferences });
   const report = await api(`${base}/report?format=json`);
   assert.equal(report.findings.length, 1);
   assert.equal(report.findings[0].id, finding.id);
-  assert.deepEqual(report.findings[0].evidenceArtifactIds, finding.evidenceArtifactIds);
+  assert.equal(finding.engagementId, engagement.id);
+  assertFindingReferences(expectedReferences, finding.evidenceArtifactIds, report.findings[0].evidenceArtifactIds);
   for (const id of finding.evidenceArtifactIds) assert.ok(report.evidenceArtifacts.rows.some((item) => item.artifactId === id));
   await writeFile(path.join(output, "real-tools-report.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   receipt.finding = finding;
@@ -333,11 +342,13 @@ try {
   assert.equal(active.state, "running");
   const action = await api(`${base}/actions/${cancelId}`);
   const cancelledAt = Date.now();
+  assert.ok(cancelledAt - slowRequest.startedAt < 5000, "Cancellation fixture must still be fresh.");
   await api(`${base}/actions/${cancelId}/cancel`, { expectedRevision: action.revision }, 200);
   const cancelled = await terminal(cancelId, "cancelled");
   await gone(slowProcess.pid);
   await until(() => slowClosed > 0, "cancelled request connection cleanup", 10000);
-  assert.ok(Date.now() - cancelledAt < 25000, "Cancellation exceeded bound.");
+  assert.equal(slowRequests, 1);
+  assertCancelledRequest(slowRequest, cancelledAt, Date.now());
   const partialOutput = await api(`${base}/runs/${cancelled.id}/output`);
   assert.equal(partialOutput.run.id, cancelled.id);
   assert.equal(partialOutput.run.actionId, cancelId);
@@ -349,7 +360,7 @@ try {
   for (const artifact of partial) { assert.equal(artifact.completeness, "partial"); await download(artifact, cancelled); }
   // ffuf may publish no raw JSON, empty bytes or incomplete JSON on TERM.
   // Only published bytes and their hashes are asserted, never fabricated JSON.
-  receipt.cancellation = { actionId: cancelId, runId: cancelled.id, elapsedMs: Date.now() - cancelledAt, observedPid: slowProcess.pid, slowRequests, slowClosed, rawArtifacts: partial.filter((item) => item.kind === "tool_raw").length };
+  receipt.cancellation = { actionId: cancelId, runId: cancelled.id, elapsedMs: Date.now() - cancelledAt, observedPid: slowProcess.pid, slowRequests, slowClosed, request: slowRequest, rawArtifacts: partial.filter((item) => item.kind === "tool_raw").length };
   assert.equal((await api(`${base}/ffuf-results`)).length, 1);
   assert.deepEqual((await api(base)).activeScopeRevision, savedScope);
   assert.equal(receipt.fixtureRequestLimitExceeded, undefined);

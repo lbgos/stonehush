@@ -33,3 +33,20 @@ export function assertContinued(before, after) {
   assert.equal(after.action.warningAcknowledgment.snapshotBinding, before.action.snapshots[0].binding);
   assert.deepEqual(after.action.snapshots, before.action.snapshots);
 }
+
+export function assertFindingReferences(expected, created, reported) {
+  assert.equal(expected.length, 3);
+  assert.equal(new Set(expected).size, 3);
+  assert.deepEqual([...created].sort(), [...expected].sort());
+  assert.deepEqual([...reported].sort(), [...expected].sort());
+}
+
+export function assertCancelledRequest({ startedAt, closedAt, deadlineExpired, normalResponse }, cancelledAt, finishedAt) {
+  assert.equal(deadlineExpired, false);
+  assert.equal(normalResponse, false);
+  assert.ok(cancelledAt >= startedAt && cancelledAt - startedAt < 5000, "Slow request must be fresh when cancelled.");
+  assert.ok(closedAt >= cancelledAt && closedAt <= finishedAt, "Connection must close after cancellation.");
+  // The process argv has a 30-second request timeout and 45-second max time.
+  // Finishing within 25 seconds of request start excludes both natural exits.
+  assert.ok(finishedAt - startedAt < 25000, "Cleanup must precede ffuf's own deadlines.");
+}

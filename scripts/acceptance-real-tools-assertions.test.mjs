@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertContinued, assertDownload, assertToolProcess, sha256 } from "./acceptance-real-tools-assertions.mjs";
+import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, sha256 } from "./acceptance-real-tools-assertions.mjs";
 
 test("published bytes require exact run association, length and digest", () => {
   const bytes = Buffer.from("synthetic partial bytes {");
@@ -41,4 +41,23 @@ test("real-tool entrypoint refuses local execution before account or service wor
   assert.notEqual(result.status, 0);
   assert.equal(result.error, undefined);
   assert.match(result.stderr, /AssertionError/);
+});
+
+
+test("finding and report must retain all three requested artifact references", () => {
+  const expected = ["nmap", "probe", "ffuf"];
+  assertFindingReferences(expected, [...expected].reverse(), expected);
+  for (const links of [[], ["nmap"], ["nmap", "probe", "other"], ["nmap", "probe", "ffuf", "ffuf"]]) {
+    assert.throws(() => assertFindingReferences(expected, links, links));
+    assert.throws(() => assertFindingReferences(expected, expected, links));
+  }
+});
+
+test("cancellation cannot pass on a normal response, stale request or tool timeout", () => {
+  const request = { startedAt: 1000, closedAt: 12000, deadlineExpired: false, normalResponse: false };
+  assertCancelledRequest(request, 2000, 12500);
+  for (const change of [{ normalResponse: true }, { deadlineExpired: true }, { startedAt: -21000 }, { closedAt: 1500 }]) {
+    assert.throws(() => assertCancelledRequest({ ...request, ...change }, 2000, 12500));
+  }
+  assert.throws(() => assertCancelledRequest(request, 2000, 31000));
 });
