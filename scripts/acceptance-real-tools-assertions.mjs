@@ -1,0 +1,35 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+
+export const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+
+export function assertDownload(artifact, bytes, runId) {
+  assert.equal(artifact.runId, runId);
+  assert.equal(bytes.length, artifact.sizeBytes);
+  assert.equal(sha256(bytes), artifact.digest);
+}
+
+export function assertToolProcess(tool, executable, argv, { port, origin, wordlist }) {
+  assert.equal(executable, `/usr/bin/${tool}`);
+  assert.equal(argv[0], executable);
+  if (tool === "nmap") {
+    assert.deepEqual(argv.slice(1, 11), ["-sT", "-sV", "-T4", "-Pn", "--version-intensity", "7", "--max-retries", "2", "-p", String(port)]);
+    assert.equal(argv[11], "-oX");
+    assert.ok(argv[12].startsWith("/") && argv[12].endsWith(".xml"));
+    assert.deepEqual(argv.slice(13), ["127.0.0.1"]);
+  } else {
+    assert.equal(tool, "ffuf");
+    assert.deepEqual(argv.slice(1, 6), ["-u", `${origin}/FUZZ`, "-w", wordlist, "-o"]);
+    assert.ok(argv[6].startsWith("/") && argv[6].endsWith(".json"));
+    assert.deepEqual(argv.slice(7), ["-of", "json", "-t", "1", "-timeout", "30", "-maxtime", "45", "-mc", "200", "-s"]);
+  }
+}
+
+export function assertContinued(before, after) {
+  assert.equal(before.action.state, "paused_for_warning");
+  assert.equal(after.action.state, "queued");
+  assert.equal(after.action.warningInteractions, 1);
+  assert.equal(after.action.warningAcknowledgment.source, "operator_continue");
+  assert.equal(after.action.warningAcknowledgment.snapshotBinding, before.action.snapshots[0].binding);
+  assert.deepEqual(after.action.snapshots, before.action.snapshots);
+}

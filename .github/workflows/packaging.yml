@@ -65,6 +65,21 @@ jobs:
           EXPECTED_REVISION: ${{ github.event.pull_request.head.sha }}
         run: timeout 420 node scripts/accept-native-service.mjs "$RUNNER_TEMP/control-plane.tar" "$RUNNER_TEMP/native-runner.tar.gz" "$RUNNER_TEMP/stonehush-results"
 
+      - name: Install distribution tool prerequisites on this disposable VM
+        timeout-minutes: 4
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo timeout 120 apt-get update
+          sudo timeout 120 apt-get install --no-install-recommends -y nmap ffuf
+          test -x /usr/bin/nmap
+          test -x /usr/bin/ffuf
+
+      - name: Exercise the packaged workflow with real distribution tools
+        timeout-minutes: 8
+        env:
+          EXPECTED_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" GITHUB_ACTIONS=true "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" "GITHUB_RUN_ID=$GITHUB_RUN_ID" "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT" "EXPECTED_REVISION=$EXPECTED_REVISION" NODE_OPTIONS=--max-old-space-size=3072 timeout 420 node scripts/accept-real-tools.mjs "$RUNNER_TEMP/control-plane.tar" "$RUNNER_TEMP/native-runner.tar.gz" "$RUNNER_TEMP/stonehush-results"
+
       - name: Retain only synthetic acceptance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
