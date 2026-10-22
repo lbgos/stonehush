@@ -4,21 +4,22 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { collectInventory, createSpdx, hashFile, imagePacket, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
+import { collectInventory, createSpdx, hashFile, imagePacket, inspectToolPackages, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
 
 const id = (key) => `SPDXRef-${sha256(key)}`;
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
-async function fixture(t) {
+async function fixture(t, kind = "native-runner") {
+  const entry = kind === "native-runner" ? "apps/runner" : "api";
   const root = await mkdtemp(path.join(tmpdir(), "stonehush-inventory-test-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const artifact = path.join(root, "artifact");
   const archive = path.join(root, "native-runner.tar.gz");
   const output = path.join(root, "packet");
-  for (const name of ["supply-chain/notices", "apps/runner", "apps/runner/node_modules/.runtime/1"]) await mkdir(path.join(artifact, name), { recursive: true });
+  for (const name of ["supply-chain/notices", entry, `${entry}/node_modules/.runtime/1`]) await mkdir(path.join(artifact, name), { recursive: true });
   await writeFile(path.join(artifact, "node"), "synthetic Node binary");
   const definitions = [
-    { location: "apps/runner", manifest: { name: "fixture", version: "1.0.0", license: "MIT", dependencies: { fixture: "2.0.0" } } },
-    { location: "apps/runner/node_modules/.runtime/1", manifest: { name: "fixture", version: "2.0.0", license: "MIT" } },
+    { location: entry, manifest: { name: "fixture", version: "1.0.0", license: "MIT", dependencies: { fixture: "2.0.0" } } },
+    { location: `${entry}/node_modules/.runtime/1`, manifest: { name: "fixture", version: "2.0.0", license: "MIT" } },
   ];
   const notice = "Synthetic copyright. Synthetic license terms.\n";
   const noticeHash = sha256(notice);
@@ -29,10 +30,10 @@ async function fixture(t) {
     await writeFile(path.join(artifact, location, "package.json"), json(manifest));
     components.push({ id: id(`packaged-runtime:${location}`), kind: "npm", name: manifest.name, version: manifest.version, location, scope: "packaged-runtime", declaredLicense: manifest.license, manifestSha256: sha256(json(manifest)), notices, unresolved: [] });
   }
-  await symlink(".runtime/1", path.join(artifact, "apps/runner/node_modules/fixture"));
+  await symlink(".runtime/1", path.join(artifact, entry, "node_modules/fixture"));
   const runtime = definitions.map(({ location }) => ({ source: location, packaged: location }));
   await writeFile(path.join(artifact, "package-graph.json"), json(runtime));
-  const input = { format: "stonehush-inventory-input-v1", kind: "native-runner", runtime, components, frontendManifests: {}, relationships: [{ from: components[0].id, type: "DEPENDS_ON", to: components[1].id }], node: "v24.18.0", pnpm: "10.24.0", lockfileSha256: "f".repeat(64), nativeFiles: [{ path: "node", sha256: sha256("synthetic Node binary") }], assets: [], buildOnly: [], coverageGaps: ["Synthetic fixture"], externalPrerequisites: ["Nmap", "ffuf", "wordlists"] };
+  const input = { format: "stonehush-inventory-input-v1", kind, runtime, components, frontendManifests: {}, relationships: [{ from: components[0].id, type: "DEPENDS_ON", to: components[1].id }], node: "v24.18.0", pnpm: "10.24.0", lockfileSha256: "f".repeat(64), nativeFiles: [{ path: "node", sha256: sha256("synthetic Node binary") }], assets: [], buildOnly: [], coverageGaps: ["Synthetic fixture"], externalPrerequisites: ["Nmap", "ffuf", "wordlists"] };
   const system = { kind: "native-runner", node: "v24.18.0", baseImage: null, debian: null, components: [{ id: id("runtime-node"), kind: "runtime", scope: "bundled-runtime", name: "Node.js", version: "v24.18.0", binarySha256: sha256("synthetic Node binary"), declaredLicense: null, notices, unresolved: ["missing-declared-license", "Node upstream LICENSE includes bundled third-party terms; review required"] }], coverageGaps: ["Synthetic system fixture"] };
   const metadata = { lockfileSha256: "f".repeat(64), revision: "a".repeat(40), tree: "b".repeat(40), sha256: sha256("synthetic archive") };
   await writeFile(path.join(artifact, "artifact.json"), json({ kind: "native-runner", revision: metadata.revision, tree: metadata.tree }));
@@ -93,7 +94,7 @@ test("omitted runtime components, edges, source and archive mismatches fail", as
   const f = await fixture(t);
   const original = structuredClone(f.input);
   f.input.components.pop(); await f.save();
-  await assert.rejects(f.packet(), /Runtime component omission/);
+  await assert.rejects(f.packet(), /[Rr]untime.*omission/);
   Object.assign(f.input, structuredClone(original)); f.input.relationships = []; await f.save();
   await assert.rejects(f.packet());
   Object.assign(f.input, original); await f.save();
@@ -159,7 +160,7 @@ test("unsafe metadata, escaping links, hardlinks, special files and oversized re
 });
 
 test("frontend closure and emitted assets are compared independently to manifest evidence", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, "control-plane");
   f.input.kind = "control-plane";
   f.system.kind = "control-plane";
   f.system.baseImage = "node:24.18.0-bookworm-slim@sha256:d45d78e7929b46875bbd4e29bea672d5bc48186c6c3588306521c815e78352d6";
@@ -168,7 +169,7 @@ test("frontend closure and emitted assets are compared independently to manifest
   await writeFile(path.join(f.artifact, "web/index.html"), "synthetic web");
   f.input.assets = [{ path: "web/index.html", sha256: sha256("synthetic web") }];
   f.input.components.push({ id: id("frontend-conservative-production-closure:apps/web"), kind: "npm", name: "web", version: "1", scope: "frontend-conservative-production-closure", location: "apps/web", declaredLicense: "MIT", notices: f.input.components[0].notices, unresolved: [] });
-  f.input.frontendManifests["apps/web"] = { manifest: { name: "web", version: "1", dependencies: { omitted: "1" } }, resolved: {} };
+  f.input.frontendManifests["apps/web"] = { manifest: { name: "web", version: "1", license: "MIT", dependencies: { omitted: "1" } }, resolved: {} };
   await f.save(); await assert.rejects(verifyInputs(f.artifact), /Frontend dependency omission/);
   delete f.input.frontendManifests["apps/web"].manifest.dependencies;
   await f.save(); await verifyInputs(f.artifact);
@@ -222,10 +223,11 @@ test("collector reads installed graph and font/icon notices without invoking met
 });
 
 test("image packet independently verifies copied final Node and Debian bytes", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, "control-plane");
   f.input.kind = "control-plane";
   f.system.kind = "control-plane";
   f.system.bundledToolManifests = {};
+  f.system.relationships = [];
   f.metadata.imageId = `sha256:${"c".repeat(64)}`;
   f.system.baseImage = "node:24.18.0-bookworm-slim@sha256:d45d78e7929b46875bbd4e29bea672d5bc48186c6c3588306521c815e78352d6";
   f.system.debian = [["fixture-deb", "1"]];
@@ -238,7 +240,23 @@ test("image packet independently verifies copied final Node and Debian bytes", a
   f.input.assets = [{ path: "web/index.html", sha256: sha256("synthetic") }];
   const component = { ...f.input.components[0], id: id("frontend-conservative-production-closure:apps/web"), location: "apps/web", scope: "frontend-conservative-production-closure" };
   f.input.components.push(component);
-  f.input.frontendManifests["apps/web"] = { manifest: { name: component.name, version: component.version }, resolved: {} };
+  f.input.frontendManifests["apps/web"] = { manifest: { name: component.name, version: component.version, license: component.declaredLicense }, resolved: {} };
+  const tools = path.join(f.root, "actual-image");
+  const modules = path.join(tools, "usr/local/lib/node_modules");
+  const yarn = path.join(tools, "opt/yarn-v1.22.22");
+  const definitions = [
+    ["usr/local/lib/node_modules/npm", { name: "npm", version: "11", license: "Artistic-2.0", dependencies: { nested: "1" } }],
+    ["usr/local/lib/node_modules/npm/node_modules/nested", { name: "nested", version: "1", license: "MIT" }],
+    ["opt/yarn-v1.22.22", { name: "yarn", version: "1.22.22", license: "BSD-2-Clause" }],
+  ];
+  for (const [location, manifest] of definitions) {
+    await mkdir(path.join(tools, location), { recursive: true });
+    await writeFile(path.join(tools, location, "package.json"), json(manifest));
+  }
+  const observed = await inspectToolPackages([{ directory: path.join(modules, "npm"), boundary: modules, canonical: "usr/local/lib/node_modules" }, { directory: yarn, boundary: yarn, canonical: "opt/yarn-v1.22.22" }]);
+  f.system.bundledToolManifests = observed.manifests;
+  f.system.relationships = observed.relationships;
+  for (const [location, record] of Object.entries(observed.manifests)) f.system.components.push({ id: id(`final-image-bundled-tool:${location}`), kind: "npm", scope: "final-image-bundled-tool", location, name: record.manifest.name, version: record.manifest.version, manifestSha256: record.manifestSha256, declaredLicense: record.manifest.license, notices: f.input.components[0].notices, unresolved: [] });
   await f.save();
   const executable = path.join(f.root, "docker");
   await writeFile(executable, `#!${process.execPath}
@@ -252,6 +270,8 @@ else if (args[0] === 'cp') {
   const source = args[1].split(':').slice(1).join(':');
   if (source === '/opt/stonehush/.') fs.cpSync(${JSON.stringify(f.artifact)},args[2],{recursive:true,verbatimSymlinks:true});
   else if (source === '/usr/local/bin/node') fs.copyFileSync(${JSON.stringify(path.join(f.artifact, "node"))},args[2]);
+  else if (source === '/usr/local/lib/node_modules/.') fs.cpSync(${JSON.stringify(path.join(f.root, 'actual-image/usr/local/lib/node_modules'))},args[2],{recursive:true});
+  else if (source === '/opt/.') fs.cpSync(${JSON.stringify(path.join(f.root, 'actual-image/opt'))},args[2],{recursive:true});
   else if (source === '/var/lib/dpkg/status') fs.copyFileSync(${JSON.stringify(path.join(f.root, "debian-status"))},args[2]);
   else process.exit(12);
 } else process.exit(11);
@@ -261,7 +281,33 @@ else if (args[0] === 'cp') {
   try {
     await imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output);
     await imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output, true);
+    const original = structuredClone(f.system);
+    for (const location of ["opt/yarn-v1.22.22", "usr/local/lib/node_modules/npm/node_modules/nested"]) {
+      f.system.components = original.components.filter((item) => item.location !== location);
+      f.system.bundledToolManifests = structuredClone(original.bundledToolManifests);
+      delete f.system.bundledToolManifests[location];
+      await f.save();
+      await assert.rejects(imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output, true), /Final bundled tool component/);
+    }
+    Object.assign(f.system, structuredClone(original));
+    f.system.relationships = [];
+    await f.save();
+    await assert.rejects(imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output, true), /Final bundled tool dependency omission/);
+    Object.assign(f.system, original); await f.save();
     await writeFile(path.join(f.root, "debian-status"), `${status}Package: omitted\nStatus: install ok installed\nVersion: 2\nArchitecture: amd64\n\n`);
     await assert.rejects(imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output, true), /Final image Debian status mismatch/);
   } finally { process.env.PATH = previousPath; }
+});
+
+test("recognized declarations cannot replace different or missing manifest terms", async (t) => {
+  const f = await fixture(t);
+  f.input.components[1].declaredLicense = "ISC";
+  await f.save(); await assert.rejects(f.packet(), /Declared license differs/);
+  f.input.components[1].declaredLicense = "MIT";
+  const filename = path.join(f.artifact, f.input.components[1].location, "package.json");
+  const manifest = JSON.parse(await readFile(filename));
+  delete manifest.license;
+  await writeFile(filename, json(manifest));
+  f.input.components[1].manifestSha256 = sha256(json(manifest));
+  await f.save(); await assert.rejects(f.packet(), /Declared license differs/);
 });

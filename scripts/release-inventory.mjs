@@ -62,6 +62,7 @@ async function put(root, name, bytes) {
   safeName(name);
   await rejectLinkedAncestors(root);
   await mkdir(path.dirname(path.join(root, name)), { recursive: true });
+  await rejectLinkedAncestors(path.dirname(path.join(root, name)));
   await writeFile(path.join(root, name), bytes, { flag: "wx", mode: 0o644 });
 }
 async function rejectLinkedAncestors(directory) {
@@ -202,6 +203,7 @@ function issues(component) {
   if (component.declaredLicense && declaredExpression(component.declaredLicense) === "NOASSERTION") result.push("custom-or-ambiguous-declaration");
   if (/SEE LICENSE|LicenseRef|UNLICENSED/i.test(component.declaredLicense ?? "")) result.push("custom-or-unlicensed-declaration");
   if (!component.notices.length) result.push("missing-upstream-notice-text");
+  if ((component.missingOptional ?? []).some((entry) => typeof entry === "object" && !entry.optional)) result.push("unresolved-bundled-tool-runtime-dependency");
   if (component.kind === "asset") result.push("asset-rights-not-cleared");
   if (component.kind === "deb") result.push("debian-copyright-needs-license-review");
   return result;
@@ -308,6 +310,56 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
   await put(output, "components.json", json(inputs));
 }
 
+async function discoverToolRoots(prefix) {
+  const modules = path.join(prefix || "/", "usr/local/lib/node_modules");
+  const roots = [];
+  for (const name of await readdir(modules)) {
+    if (name.startsWith(".")) continue;
+    if (name.startsWith("@")) {
+      for (const child of await readdir(path.join(modules, name))) roots.push({ directory: path.join(modules, name, child), boundary: modules, canonical: "usr/local/lib/node_modules" });
+    } else roots.push({ directory: path.join(modules, name), boundary: modules, canonical: "usr/local/lib/node_modules" });
+  }
+  const opt = path.join(prefix || "/", "opt");
+  for (const name of await readdir(opt)) if (/^yarn-v[0-9.]+$/.test(name)) {
+    const directory = path.join(opt, name);
+    roots.push({ directory, boundary: directory, canonical: `opt/${name}` });
+  }
+  return roots;
+}
+export async function inspectToolPackages(roots) {
+  const manifests = {};
+  const relationships = [];
+  async function visit(directory, boundary, canonical) {
+    directory = directory === boundary ? boundary : await resolveInside(boundary, directory);
+    const relative = path.relative(boundary, directory);
+    const location = relative ? `${canonical}/${relative}` : canonical;
+    safeName(location);
+    if (manifests[location]) return;
+    const { manifest, manifestSha256 } = await manifestAt(directory);
+    const record = { manifest, manifestSha256, resolved: {}, missingOptional: [] };
+    manifests[location] = record;
+    for (const name of dependencies(manifest)) {
+      const resolved = await resolveDependency(directory, name, boundary);
+      if (!resolved) { record.missingOptional.push({ name, optional: optional(manifest, name) }); continue; }
+      const target = `${canonical}/${path.relative(boundary, resolved)}`;
+      record.resolved[name] = target;
+      await visit(resolved, boundary, canonical);
+      relationships.push({ from: id(`final-image-bundled-tool:${location}`), type: "DEPENDS_ON", to: id(`final-image-bundled-tool:${target}`) });
+    }
+    let entries;
+    const modules = path.join(directory, "node_modules");
+    try { entries = await readdir(modules); } catch (error) { if (error.code !== "ENOENT") throw error; return; }
+    for (const name of entries) {
+      if (name.startsWith(".")) continue;
+      if (name.startsWith("@")) {
+        for (const child of await readdir(path.join(modules, name))) await visit(path.join(modules, name, child), boundary, canonical);
+      } else await visit(path.join(modules, name), boundary, canonical);
+    }
+  }
+  for (const root of roots) await visit(root.directory, root.boundary, root.canonical);
+  return { manifests, relationships: sorted(relationships) };
+}
+
 // Executed in the final image, using its dpkg database and copyright files.
 // It never calls dependency scripts or installs additional tooling.
 export function debianPackages(status) {
@@ -342,41 +394,18 @@ export async function collectSystem(artifactDirectory, kind, executable = proces
     components.push(component);
     relationships.push({ from: node.id, type: "CONTAINS", to: component.id });
   }
-  async function toolPackages(directory, root) {
-    directory = directory === root ? root : await resolveInside(root, directory);
-    if (components.some((entry) => entry.location === directory.slice(1))) return;
-    const { manifest, manifestSha256 } = await manifestAt(directory);
-    const location = directory.slice(1);
-    const component = { id: id(`final-image-bundled-tool:${location}`), kind: "npm", scope: "final-image-bundled-tool", location, name: manifest.name, version: manifest.version, manifestSha256, declaredLicense: licenseDeclaration(manifest.license), notices: await packageNotices(directory, root, collect), missingOptional: [] };
-    component.unresolved = issues(component);
-    components.push(component);
-    bundledToolManifests[location] = { manifest, resolved: {} };
-    for (const name of dependencies(manifest)) {
-      const resolved = await resolveDependency(directory, name, root);
-      if (!resolved) { component.missingOptional.push({ name, optional: optional(manifest, name) }); continue; }
-      bundledToolManifests[location].resolved[name] = resolved.slice(1);
-      await toolPackages(resolved, root);
-      relationships.push({ from: component.id, type: "DEPENDS_ON", to: id(`final-image-bundled-tool:${resolved.slice(1)}`) });
-    }
-    // Published bundles can include packages outside their declared closure.
-    // Enumerate actual node_modules roots so those bytes remain accounted for.
-    const modules = path.join(directory, "node_modules");
-    let entries;
-    try { entries = await readdir(modules); } catch (error) { if (error.code !== "ENOENT") throw error; return; }
-    for (const name of entries) {
-      if (name.startsWith(".")) continue;
-      if (name.startsWith("@")) {
-        for (const child of await readdir(path.join(modules, name))) await toolPackages(path.join(modules, name, child), root);
-      } else await toolPackages(path.join(modules, name), root);
-    }
-  }
   let debian = null;
   let debianStatusSha256 = null;
   if (kind === "control-plane") {
-    for (const name of await readdir("/usr/local/lib/node_modules")) {
-      if (!name.startsWith(".")) await toolPackages(path.join("/usr/local/lib/node_modules", name), "/usr/local/lib/node_modules");
+    const roots = await discoverToolRoots("");
+    const tools = await inspectToolPackages(roots);
+    Object.assign(bundledToolManifests, tools.manifests);
+    relationships.push(...tools.relationships);
+    for (const [location, record] of Object.entries(tools.manifests)) {
+      const component = { id: id(`final-image-bundled-tool:${location}`), kind: "npm", scope: "final-image-bundled-tool", location, name: record.manifest.name, version: record.manifest.version, manifestSha256: record.manifestSha256, declaredLicense: licenseDeclaration(record.manifest.license), notices: await packageNotices(`/${location}`, "/", collect), missingOptional: record.missingOptional };
+      component.unresolved = issues(component);
+      components.push(component);
     }
-    for (const name of await readdir("/opt")) if (/^yarn-v[0-9.]+$/.test(name)) await toolPackages(path.join("/opt", name), path.join("/opt", name));
     debian = execFileSync("/usr/bin/dpkg-query", ["-W", "-f=${binary:Package}\t${Version}\t${db:Status-Status}\n"], { encoding: "utf8", maxBuffer: MAX_METADATA, timeout: 30000 }).trim().split("\n").filter((line) => line.endsWith("\tinstalled")).map((line) => line.split("\t").slice(0, 2));
     const status = await readBounded("/var/lib/dpkg/status");
     debianStatusSha256 = sha256(status);
@@ -476,6 +505,12 @@ export async function verifyInputs(artifact) {
   const graph = await readJson(path.join(artifact, "package-graph.json"));
   assert.deepEqual(input.runtime, graph, "Packaged graph differs from inventory input.");
   const runtime = input.components.filter((component) => component.scope === "packaged-runtime");
+  const entry = input.kind === "native-runner" ? "apps/runner" : "api";
+  assert.ok(runtime.some((component) => component.location === entry), "Runtime entry component omission.");
+  let slots = [];
+  const slotRoot = `${entry}/node_modules/.runtime`;
+  try { slots = await readdir(path.join(artifact, slotRoot)); } catch (error) { if (error.code !== "ENOENT") throw error; }
+  assert.deepEqual(runtime.map((component) => component.location).sort(), [entry, ...slots.map((name) => `${slotRoot}/${safeName(name)}`)].sort(), "Packaged runtime slot omission.");
   assert.deepEqual(runtime.map((component) => component.location).sort(), graph.map((record) => record.packaged).sort(), "Runtime component omission.");
   const expectedEdges = [];
   const frontend = input.components.filter((component) => component.scope === "frontend-conservative-production-closure");
@@ -489,6 +524,7 @@ export async function verifyInputs(artifact) {
     const component = frontend.find((entry) => entry.location === location);
     assert.ok(component, "Frontend component omission.");
     assert.equal(component.name, record.manifest.name); assert.equal(component.version, record.manifest.version);
+    assert.equal(component.declaredLicense, licenseDeclaration(record.manifest.license), "Declared license differs from manifest evidence.");
     for (const name of dependencies(record.manifest)) {
       const target = record.resolved[name];
       if (!target && optional(record.manifest, name)) continue;
@@ -505,6 +541,7 @@ export async function verifyInputs(artifact) {
     const directory = path.join(artifact, component.location);
     const { manifest, manifestSha256 } = await manifestAt(directory);
     assert.equal(component.name, manifest.name); assert.equal(component.version, manifest.version); assert.equal(component.manifestSha256, manifestSha256);
+    assert.equal(component.declaredLicense, licenseDeclaration(manifest.license), "Declared license differs from manifest evidence.");
     for (const name of dependencies(manifest)) {
       const resolved = await resolveDependency(directory, name, artifact);
       if (!resolved && optional(manifest, name)) continue;
@@ -529,11 +566,19 @@ export async function verifyInputs(artifact) {
   if (system.nodeVersions) assert.deepEqual(system.components.filter((entry) => entry.kind === "node-version").map((entry) => [entry.name.slice("Node process.versions.".length), entry.version]).sort(), Object.entries(system.nodeVersions).sort(), "Node bundled version omission.");
   const tools = system.components.filter((entry) => entry.scope === "final-image-bundled-tool");
   assert.deepEqual(tools.map((entry) => entry.location).sort(), Object.keys(system.bundledToolManifests ?? {}).sort(), "Bundled tool component omission.");
+  const systemEdges = system.components.filter((entry) => entry.kind === "node-version").map((entry) => ({ from: id("runtime-node"), type: "CONTAINS", to: entry.id }));
   for (const component of tools) {
     const record = system.bundledToolManifests[component.location];
     assert.equal(component.name, record.manifest.name); assert.equal(component.version, record.manifest.version);
-    for (const target of Object.values(record.resolved)) assert.ok(tools.some((entry) => entry.location === target), "Bundled tool dependency omission.");
+    assert.equal(component.declaredLicense, licenseDeclaration(record.manifest.license), "Declared license differs from manifest evidence.");
+    assert.equal(component.manifestSha256, record.manifestSha256);
+    for (const target of Object.values(record.resolved)) {
+      const dependency = tools.find((entry) => entry.location === target);
+      assert.ok(dependency, "Bundled tool dependency omission.");
+      systemEdges.push({ from: component.id, type: "DEPENDS_ON", to: dependency.id });
+    }
   }
+  assert.deepEqual(sorted(system.relationships ?? []), sorted(systemEdges), "Bundled system relationship omission.");
   for (const notice of system.commonNotices ?? []) { safeName(notice.path); assert.equal(await hashFile(path.join(artifact, "supply-chain", notice.path)), notice.sha256); }
   for (const component of allComponents(input, system)) {
     assert.deepEqual(component.unresolved, component.kind === "runtime" ? [...issues(component), "Node upstream LICENSE includes bundled third-party terms; review required"] : issues(component));
@@ -635,21 +680,14 @@ export async function imagePacket(imageId, archive, metadata, host, output, veri
     assert.equal(await hashFile(nodeBinary), system.components.find((item) => item.kind === "runtime")?.binarySha256, "Final image Node mismatch.");
     assert.equal(await hashFile(debianStatus), system.debianStatusSha256, "Final image Debian status mismatch.");
     assert.deepEqual(sorted(debianPackages((await readBounded(debianStatus)).toString("utf8"))), sorted(system.debian), "Final image Debian omission.");
-    const toolRoots = new Set();
-    for (const location of Object.keys(system.bundledToolManifests)) {
-      safeName(location);
-      assert.ok(location.startsWith("usr/local/lib/node_modules/") || /^opt\/yarn-v[0-9.]+\//.test(location));
-      toolRoots.add(location.startsWith("usr/local") ? "usr/local/lib/node_modules" : location.split("/").slice(0, 2).join("/"));
-    }
-    for (const root of toolRoots) {
+    // Copy fixed actual roots independently of any captured component list.
+    for (const root of ["usr/local/lib/node_modules", "opt"]) {
       await mkdir(path.join(temporary, root), { recursive: true });
       execFileSync("docker", ["cp", `${container}:/${root}/.`, path.join(temporary, root)], { timeout: 60000, maxBuffer: MAX_METADATA });
     }
-    for (const component of system.components.filter((item) => item.scope === "final-image-bundled-tool")) {
-      const { manifest, manifestSha256 } = await manifestAt(path.join(temporary, component.location));
-      assert.equal(manifestSha256, component.manifestSha256, "Final bundled tool manifest mismatch.");
-      assert.deepEqual(manifest, system.bundledToolManifests[component.location].manifest);
-    }
+    const actualTools = await inspectToolPackages(await discoverToolRoots(temporary));
+    assert.deepEqual(actualTools.manifests, system.bundledToolManifests, "Final bundled tool component/manifest omission.");
+    assert.deepEqual(actualTools.relationships, sorted(system.relationships.filter((edge) => edge.type === "DEPENDS_ON")), "Final bundled tool dependency omission.");
     if (verifyOnly) return await verifyPacket(output, artifact, archive, metadata, host);
     await writePacket(artifact, archive, metadata, host, output);
   } finally {
