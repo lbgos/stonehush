@@ -4,7 +4,7 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { collectInventory, createSpdx, hashFile, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
+import { collectInventory, createSpdx, hashFile, imagePacket, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
 
 const id = (key) => `SPDXRef-${sha256(key)}`;
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -145,6 +145,8 @@ test("unsafe metadata, escaping links, hardlinks, special files and oversized re
   await rm(path.join(f.artifact, "escape"));
   await link(f.archive, path.join(f.artifact, "hardlink"));
   await assert.rejects(walkFiles(f.artifact, true), /hardlink/);
+  await assert.rejects(readBounded(f.archive), /Unsafe/);
+  assert.equal((await readBounded(f.archive, 1024, true)).toString(), "synthetic archive");
   await rm(path.join(f.artifact, "hardlink"));
   await assert.rejects(readBounded(f.archive, 2), /oversized/);
   const fifo = path.join(f.artifact, "fifo");
@@ -217,4 +219,49 @@ test("collector reads installed graph and font/icon notices without invoking met
   }
   assert.equal(inputs.lockfileSha256, sha256("synthetic frozen lock"));
   assert.ok(inputs.externalPrerequisites.includes("wordlists"));
+});
+
+test("image packet independently verifies copied final Node and Debian bytes", async (t) => {
+  const f = await fixture(t);
+  f.input.kind = "control-plane";
+  f.system.kind = "control-plane";
+  f.system.bundledToolManifests = {};
+  f.metadata.imageId = `sha256:${"c".repeat(64)}`;
+  f.system.baseImage = "node:24.18.0-bookworm-slim@sha256:d45d78e7929b46875bbd4e29bea672d5bc48186c6c3588306521c815e78352d6";
+  f.system.debian = [["fixture-deb", "1"]];
+  f.system.components.push({ id: id("deb:fixture-deb:1"), kind: "deb", scope: "final-image-installed-package", name: "fixture-deb", version: "1", declaredLicense: null, notices: [], unresolved: ["missing-declared-license", "missing-upstream-notice-text", "debian-copyright-needs-license-review"] });
+  const status = "Package: fixture-deb\nStatus: install ok installed\nVersion: 1\nArchitecture: amd64\n\n";
+  f.system.debianStatusSha256 = sha256(status);
+  await writeFile(path.join(f.root, "debian-status"), status);
+  await mkdir(path.join(f.artifact, "web"));
+  await writeFile(path.join(f.artifact, "web/index.html"), "synthetic");
+  f.input.assets = [{ path: "web/index.html", sha256: sha256("synthetic") }];
+  const component = { ...f.input.components[0], id: id("frontend-conservative-production-closure:apps/web"), location: "apps/web", scope: "frontend-conservative-production-closure" };
+  f.input.components.push(component);
+  f.input.frontendManifests["apps/web"] = { manifest: { name: component.name, version: component.version }, resolved: {} };
+  await f.save();
+  const executable = path.join(f.root, "docker");
+  await writeFile(executable, `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+if (args[0] === 'image') process.stdout.write(JSON.stringify({Id:${JSON.stringify(f.metadata.imageId)},Config:{Labels:{'org.opencontainers.image.revision':${JSON.stringify(f.metadata.revision)},'dev.stonehush.source-tree':${JSON.stringify(f.metadata.tree)}}}}));
+else if (args[0] === 'create') process.stdout.write('d'.repeat(64));
+else if (args[0] === 'rm') process.exit(0);
+else if (args[0] === 'cp') {
+  const source = args[1].split(':').slice(1).join(':');
+  if (source === '/opt/stonehush/.') fs.cpSync(${JSON.stringify(f.artifact)},args[2],{recursive:true,verbatimSymlinks:true});
+  else if (source === '/usr/local/bin/node') fs.copyFileSync(${JSON.stringify(path.join(f.artifact, "node"))},args[2]);
+  else if (source === '/var/lib/dpkg/status') fs.copyFileSync(${JSON.stringify(path.join(f.root, "debian-status"))},args[2]);
+  else process.exit(12);
+} else process.exit(11);
+`, { mode: 0o700 });
+  const previousPath = process.env.PATH;
+  process.env.PATH = f.root;
+  try {
+    await imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output);
+    await imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output, true);
+    await writeFile(path.join(f.root, "debian-status"), `${status}Package: omitted\nStatus: install ok installed\nVersion: 2\nArchitecture: amd64\n\n`);
+    await assert.rejects(imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output, true), /Final image Debian status mismatch/);
+  } finally { process.env.PATH = previousPath; }
 });

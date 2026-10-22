@@ -24,7 +24,8 @@ function inside(root, filename) {
   if (!filename.startsWith(`${root}${path.sep}`)) throw new Error("Inventory path escapes root.");
   return filename;
 }
-// No-follow open plus fstat bounds every metadata read. Streaming hashes also
+// No-follow open plus fstat bounds every metadata read. Only installed pnpm
+// source inputs allow store hardlinks; artifact and packet files never do. Streaming hashes also
 // cover large archives without loading their bytes into the model or heap.
 export async function freshOutputs(filenames) {
   for (const filename of filenames) {
@@ -34,11 +35,11 @@ export async function freshOutputs(filenames) {
   }
 }
 
-export async function readBounded(filename, maximum = MAX_METADATA) {
+export async function readBounded(filename, maximum = MAX_METADATA, installedInput = false) {
   const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await handle.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.size > maximum) throw new Error("Unsafe or oversized inventory file.");
+    if (!info.isFile() || (!installedInput && info.nlink !== 1) || info.size > maximum) throw new Error("Unsafe or oversized inventory file.");
     const bytes = await handle.readFile();
     if (bytes.length !== info.size || bytes.length > maximum) throw new Error("Inventory file changed during read.");
     return bytes;
@@ -125,8 +126,8 @@ async function resolveDependency(directory, name, root) {
 }
 const dependencies = (manifest) => [...new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.optionalDependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})])].sort();
 const optional = (manifest, name) => name in (manifest.optionalDependencies ?? {}) || manifest.peerDependenciesMeta?.[name]?.optional === true;
-async function manifestAt(directory) {
-  const bytes = await readBounded(path.join(directory, "package.json"));
+async function manifestAt(directory, installedInput = false) {
+  const bytes = await readBounded(path.join(directory, "package.json"), MAX_METADATA, installedInput);
   const manifest = JSON.parse(bytes);
   if (typeof manifest.name !== "string" || typeof manifest.version !== "string") throw new Error("Package identity missing.");
   return { manifest, manifestSha256: sha256(bytes) };
@@ -134,8 +135,8 @@ async function manifestAt(directory) {
 async function noticeCollector(output) {
   const notices = new Map();
   let total = 0;
-  return async (filename, evidence) => {
-    const bytes = await readBounded(filename, 4 * 1024 * 1024);
+  return async (filename, evidence, installedInput = false) => {
+    const bytes = await readBounded(filename, 4 * 1024 * 1024, installedInput);
     const digest = sha256(bytes);
     if (!notices.has(digest)) {
       total += bytes.length;
@@ -147,7 +148,7 @@ async function noticeCollector(output) {
     return { evidence, path: `notices/${digest}.txt`, sha256: digest };
   };
 }
-async function packageNotices(directory, sourceRoot, collect) {
+async function packageNotices(directory, sourceRoot, collect, installedInput = false) {
   const notices = [];
   let count = 0;
   async function walk(relative = "") {
@@ -159,12 +160,12 @@ async function packageNotices(directory, sourceRoot, collect) {
       const info = await lstat(filename);
       if (info.isSymbolicLink()) {
         const resolved = await resolveInside(directory, filename);
-        if (/^(?:licen[cs]e|copying|copyright|notice|ofl|authors)(?:[._-].*)?$/i.test(entry.name)) notices.push(await collect(resolved, path.relative(sourceRoot, filename)));
+        if (/^(?:licen[cs]e|copying|copyright|notice|ofl|authors)(?:[._-].*)?$/i.test(entry.name)) notices.push(await collect(resolved, path.relative(sourceRoot, filename), installedInput));
         continue;
       }
-      if (!info.isDirectory() && (!info.isFile() || info.nlink !== 1)) throw new Error("Unsafe package notice input.");
+      if (!info.isDirectory() && (!info.isFile() || (!installedInput && info.nlink !== 1))) throw new Error("Unsafe package notice input.");
       if (info.isDirectory()) await walk(name);
-      else if (/^(?:licen[cs]e|copying|copyright|notice|ofl|authors)(?:[._-].*)?$/i.test(entry.name)) notices.push(await collect(filename, path.relative(sourceRoot, filename)));
+      else if (/^(?:licen[cs]e|copying|copyright|notice|ofl|authors)(?:[._-].*)?$/i.test(entry.name)) notices.push(await collect(filename, path.relative(sourceRoot, filename), installedInput));
     }
   }
   await walk();
@@ -225,9 +226,10 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
     const key = `${scope}:${location}`;
     const previous = byDirectory.get(key);
     if (previous) return previous;
-    const { manifest, manifestSha256 } = await manifestAt(directory);
+    const installedInput = scope !== "packaged-runtime";
+    const { manifest, manifestSha256 } = await manifestAt(directory, installedInput);
     const component = { id: id(key), kind: "npm", name: manifest.name, version: manifest.version, scope, location, manifestSha256,
-      declaredLicense: licenseDeclaration(manifest.license), notices: await packageNotices(directory, scope === "packaged-runtime" ? artifact : source, collect), missingOptional: [] };
+      declaredLicense: licenseDeclaration(manifest.license), notices: await packageNotices(directory, scope === "packaged-runtime" ? artifact : source, collect, installedInput), missingOptional: [] };
     if (manifest.name.startsWith("@stonehush/")) component.notices.push(rootNotice);
     component.unresolved = issues(component);
     components.push(component);
@@ -256,7 +258,7 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
     const existing = byDirectory.get(`${scope}:${location}`);
     if (existing) return existing;
     const component = await addPackage(directory, scope, location);
-    const { manifest } = await manifestAt(directory);
+    const { manifest } = await manifestAt(directory, true);
     frontendManifests[location] = { manifest, resolved: {} };
     for (const name of dependencies(manifest)) {
       const resolved = await resolveDependency(directory, name, source);
@@ -277,7 +279,7 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
     for (const name of Object.keys(manifest.devDependencies ?? {}).sort()) {
       const resolved = await resolveDependency(directory, name, source);
       if (!resolved) throw new Error(`Missing build-only dependency: ${name}`);
-      const { manifest: installed, manifestSha256 } = await manifestAt(resolved);
+      const { manifest: installed, manifestSha256 } = await manifestAt(resolved, true);
       buildOnly.push({ importer: relative || ".", name: installed.name, version: installed.version, manifestSha256, scope: "build-only-direct-root" });
     }
   }
