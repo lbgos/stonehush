@@ -144,6 +144,7 @@ export async function runFfufDiscovery(
           runRoot: deps.runContext.runRoot,
           executable: request.executable,
           argv: request.argv,
+          configuration: "ffuf",
         }));
 
     let exitCode: number | null;

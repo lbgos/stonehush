@@ -115,6 +115,17 @@ async function processProof(tool, wordlist) {
     assert.match(status, /Uid:\s+10003\s+10003\s+10003\s+10003/);
     assert.match(status, /CapEff:\s+0000000000000000/);
     const proof = { tool, pid, executable, argv, uid, observedAt: new Date().toISOString() };
+    if (tool === "ffuf") {
+      const entries = (await run("/usr/bin/sudo", ["cat", `/proc/${pid}/environ`])).stdout.split("\0").filter(Boolean);
+      const env = Object.fromEntries(entries.map((entry) => { const split = entry.indexOf("="); return [entry.slice(0, split), entry.slice(split + 1)]; }));
+      assert.deepEqual(Object.keys(env).sort(), ["LANG", "LC_ALL", "PATH", "TMPDIR", "TZ", "XDG_CONFIG_HOME"]);
+      const cwd = (await run("/usr/bin/sudo", ["readlink", "-e", `/proc/${pid}/cwd`])).stdout.trim();
+      const config = path.join(cwd, "ffuf-config");
+      assert.ok(env.XDG_CONFIG_HOME === config, "ffuf must use the generated run configuration");
+      assert.equal((await run("/usr/bin/sudo", ["readlink", "-e", config])).stdout.trim(), config);
+      assert.equal((await run("/usr/bin/sudo", ["stat", "-c", "%a:%u", config])).stdout.trim(), `700:${uid}`);
+      proof.configuration = { variable: "XDG_CONFIG_HOME", location: "private run directory", mode: "0700", uid, controlledKeysOnly: true };
+    }
     receipt.checks.push({ process: proof });
     return proof;
   }, `real ${tool} process`, 30000);

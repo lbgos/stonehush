@@ -162,6 +162,8 @@ describe("operator cancellation reaches installed action handlers", () => {
     const f = await harness(kind);
     await expect(f.execution).resolves.toBe(true);
     expect(f.cancel).toHaveBeenCalled();
+    const command = vi.mocked(runSupervisedCommand).mock.calls[0]?.[0];
+    expect(command?.configuration).toBe(kind === "nmap" ? undefined : "ffuf");
     const publish = kind === "nmap" ? publishEvidenceArtifacts : kind === "ffuf" ? publishFfufArtifacts : publishVhostArtifacts;
     expect(publish).toHaveBeenCalledWith(expect.anything(), f.lease, expect.objectContaining({ stdout: captured().stdout }),
       expect.objectContaining({ isCancelled: true, eventSequence: 2 }));
