@@ -55,7 +55,9 @@ export function assertPackagingHostPair(build, consumptionHost, revision, tree) 
 }
 
 export async function packagingHostProvenance(output, revision, tree) {
-  const build = JSON.parse(await readFile(path.join(output, "build-host.json"), "utf8"));
+  // Keep provenance beside the runtime-evidence directory. Its existing exact
+  // file allowlist must still reject unexpected files.
+  const build = JSON.parse(await readFile(path.join(output, "..", "build-host.json"), "utf8"));
   const consumptionHost = await observePackagingHost();
   assertPackagingHostPair(build, consumptionHost, revision, tree);
   return { buildHost: build.host, consumptionHost };
