@@ -195,9 +195,11 @@ function declaredExpression(value) {
   }
   return expression() && index === tokens.length ? value : "NOASSERTION";
 }
+const emptyNodeVersion = (component) => component?.kind === "node-version" && component.version === "";
 function issues(component) {
   const result = [];
   if (!component.declaredLicense) result.push("missing-declared-license");
+  if (emptyNodeVersion(component)) result.push("empty-node-version-entry");
   // This is a recording rule, never a compatibility or rights decision. Even
   // familiar declarations retain NOASSERTION as their license conclusion.
   if (component.declaredLicense && declaredExpression(component.declaredLicense) === "NOASSERTION") result.push("custom-or-ambiguous-declaration");
@@ -442,6 +444,7 @@ function allComponents(inputs, system) {
   const seen = new Set();
   const declarations = new Map();
   for (const component of components) {
+    assert.ok(typeof component.version === "string" && (component.version.length || emptyNodeVersion(component)), "Missing component version.");
     if (seen.has(component.id)) throw new Error("Duplicate or conflicting component identity.");
     seen.add(component.id);
     const identity = `${component.kind}:${component.name}@${component.version}`;
@@ -459,7 +462,7 @@ export function createSpdx(inputs, system, binding, created) {
   const sourceId = "SPDXRef-source";
   const packages = [{ SPDXID: artifactId, name: inputs.kind, versionInfo: binding.revision, downloadLocation: "NOASSERTION", filesAnalyzed: false, checksums: [{ algorithm: "SHA256", checksumValue: binding.sha256 }], sourceInfo: json(binding), licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION" },
     { SPDXID: sourceId, name: "Stonehush source", versionInfo: binding.revision, downloadLocation: `git+https://github.com/lbgos/stonehush.git@${binding.revision}`, filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: "AGPL-3.0-only", copyrightText: "NOASSERTION", sourceInfo: `Git tree ${binding.tree}; pnpm-lock.yaml SHA256 ${inputs.lockfileSha256}` },
-    ...components.map((component) => ({ SPDXID: component.id, name: component.name, versionInfo: component.version, downloadLocation: "NOASSERTION", filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: declaredExpression(component.declaredLicense), copyrightText: "NOASSERTION", sourceInfo: json(component), comment: "Declared license is recorded verbatim in sourceInfo with evidence; no license expression or compatibility inferred." }))];
+    ...components.map((component) => ({ SPDXID: component.id, name: component.name, ...(!emptyNodeVersion(component) ? { versionInfo: component.version } : {}), downloadLocation: "NOASSERTION", filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: declaredExpression(component.declaredLicense), copyrightText: "NOASSERTION", sourceInfo: json(component), comment: "Declared license is recorded verbatim in sourceInfo with evidence; no license expression or compatibility inferred." }))];
   // Unknown declarations stay NOASSERTION in the SPDX license field. Verbatim
   // declarations and their evidence are retained without inventing LicenseRefs.
   const relationships = [{ spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: artifactId }, { spdxElementId: artifactId, relationshipType: "GENERATED_FROM", relatedSpdxElement: sourceId },
@@ -479,7 +482,15 @@ export function validateSpdx(document) {
   const ids = new Set(elements.map((entry) => entry.SPDXID));
   assert.equal(ids.size, elements.length, "Duplicate SPDX identity.");
   for (const item of document.packages) {
-    for (const field of ["name", "versionInfo", "downloadLocation", "licenseConcluded", "licenseDeclared", "copyrightText"]) assert.ok(typeof item[field] === "string" && item[field].length, `Missing SPDX ${field}.`);
+    // SPDX versionInfo is optional. Only an observed empty Node entry may omit
+    // it here; sourceInfo preserves the raw value and its unresolved status.
+    let emptyVersionEvidence = false;
+    try {
+      const evidence = JSON.parse(item.sourceInfo);
+      emptyVersionEvidence = emptyNodeVersion(evidence) && evidence.name === item.name && evidence.id === item.SPDXID && evidence.unresolved.includes("empty-node-version-entry");
+    } catch { /* Other package sourceInfo need not be JSON. */ }
+    assert.ok(emptyVersionEvidence && !Object.hasOwn(item, "versionInfo") || typeof item.versionInfo === "string" && item.versionInfo.length, "Missing SPDX versionInfo.");
+    for (const field of ["name", "downloadLocation", "licenseConcluded", "licenseDeclared", "copyrightText"]) assert.ok(typeof item[field] === "string" && item[field].length, `Missing SPDX ${field}.`);
     assert.equal(item.filesAnalyzed, false);
   }
   const edges = new Set();

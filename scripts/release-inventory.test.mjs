@@ -4,7 +4,7 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { collectInventory, createSpdx, hashFile, imagePacket, inspectToolPackages, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
+import { collectInventory, collectSystem, createSpdx, hashFile, imagePacket, inspectToolPackages, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
 
 const id = (key) => `SPDXRef-${sha256(key)}`;
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -73,6 +73,56 @@ test("packet binds actual bytes, versions, dependency relationships and notices 
   assert.ok(!sums.includes("  SHA256SUMS"));
   await assert.rejects(f.packet(), { code: "EEXIST" });
   assert.deepEqual(await f.verify(), result);
+});
+
+test("empty Node version entries stay visible without inventing SPDX versions", async (t) => {
+  const f = await fixture(t);
+  f.system.nodeVersions = { nghttp3: "", uv: "1.0.0" };
+  f.system.relationships = [];
+  for (const [name, version] of Object.entries(f.system.nodeVersions)) {
+    const component = { id: id(`node-version:${name}`), kind: "node-version", scope: "bundled-node-version-entry", name: `Node process.versions.${name}`, version, declaredLicense: null, notices: f.system.components[0].notices, unresolved: ["missing-declared-license", ...(version === "" ? ["empty-node-version-entry"] : [])] };
+    f.system.components.push(component);
+    f.system.relationships.push({ from: id("runtime-node"), type: "CONTAINS", to: component.id });
+  }
+  createSpdx(f.input, f.system, f.metadata, new Date().toISOString());
+  await f.save();
+  await f.packet();
+  assert.equal((await f.verify()).redistribution, "NOT CLEARED");
+  const document = JSON.parse(await readFile(path.join(f.output, "sbom.spdx.json")));
+  const empty = document.packages.find((item) => item.name === "Node process.versions.nghttp3");
+  assert.ok(!Object.hasOwn(empty, "versionInfo"));
+  assert.equal(JSON.parse(empty.sourceInfo).version, "");
+  assert.equal(document.packages.find((item) => item.name === "Node process.versions.uv").versionInfo, "1.0.0");
+  assert.ok(document.relationships.some((edge) => edge.spdxElementId === id("runtime-node") && edge.relatedSpdxElement === empty.SPDXID));
+  const report = JSON.parse(await readFile(path.join(f.output, "inventory.json")));
+  assert.ok(report.unresolved.some((item) => item.name === empty.name && item.version === "" && item.issues.includes("empty-node-version-entry")));
+  const original = structuredClone(document);
+  for (const name of ["fixture", "Node.js", "Node process.versions.uv"]) {
+    const changed = structuredClone(original);
+    delete changed.packages.find((item) => item.name === name).versionInfo;
+    assert.throws(() => validateSpdx(changed), /Missing SPDX versionInfo/);
+  }
+  f.input.components[0].version = "";
+  assert.throws(() => createSpdx(f.input, f.system, f.metadata, new Date().toISOString()), /Missing component version/);
+  f.input.components[0].version = "1.0.0";
+  empty.versionInfo = "";
+  assert.throws(() => validateSpdx(document), /Missing SPDX versionInfo/);
+  f.system.components.pop(); await f.save();
+  await assert.rejects(verifyInputs(f.artifact), /Node bundled version omission/);
+});
+
+test("system collection retains every actual Node version entry including empty values", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-node-versions-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(path.join(root, "supply-chain/notices"), { recursive: true });
+  await collectSystem(root, "native-runner");
+  const system = JSON.parse(await readFile(path.join(root, "supply-chain/system.json")));
+  const expected = Object.fromEntries(Object.entries(process.versions).filter(([name]) => !["node", "modules", "napi"].includes(name)));
+  assert.deepEqual(system.nodeVersions, expected);
+  assert.deepEqual(Object.fromEntries(system.components.filter((item) => item.kind === "node-version").map((item) => [item.name.slice("Node process.versions.".length), item.version])), expected);
+  for (const component of system.components.filter((item) => item.kind === "node-version")) {
+    assert.equal(component.unresolved.includes("empty-node-version-entry"), component.version === "");
+  }
 });
 
 test("unknown and custom terms remain visible and uncleared", async (t) => {
