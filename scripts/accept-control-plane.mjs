@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { packagingHostProvenance } from "./acceptance-real-tools-assertions.mjs";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -108,6 +109,7 @@ async function stopRunner() {
   runner = undefined;
 }
 try {
+  Object.assign(evidence, await packagingHostProvenance(output, metadata.revision, metadata.tree));
   const disk = await statfs(temporary);
   assert.ok(disk.bavail * disk.bsize > 1_610_612_736);
   const hash = createHash("sha256");

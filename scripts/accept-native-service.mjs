@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { packagingHostProvenance } from "./acceptance-real-tools-assertions.mjs";
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -29,7 +30,7 @@ const user = "stonehush-service-fixture";
 const uid = "10002";
 const origin = "http://127.0.0.1:18789";
 const environment = { ...process.env, STONEHUSH_IMAGE: image.imageId, STONEHUSH_PORT: "18789", COMPOSE_PROJECT_NAME: project };
-const evidence = { revision: image.revision, tree: image.tree, imageId: image.imageId, runnerArchiveSha256: native.sha256, host: { platform: process.platform, architecture: process.arch }, checks: [], status: "running" };
+const evidence = { revision: image.revision, tree: image.tree, imageId: image.imageId, runnerArchiveSha256: native.sha256, checks: [], status: "running" };
 let accountCreated = false;
 let managerStarted = false;
 let secret = "";
@@ -65,13 +66,13 @@ async function until(callback, label) {
   throw new Error(`Timed out during ${label}.`);
 }
 try {
+  Object.assign(evidence, await packagingHostProvenance(output, image.revision, image.tree));
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(runnerArchive)) hash.update(chunk);
   assert.equal(hash.digest("hex"), native.sha256);
   await mkdir(extracted, { mode: 0o755 });
   await run("tar", ["-xzf", runnerArchive, "-C", extracted]);
   const artifact = path.join(extracted, "stonehush-runner");
-  evidence.host.os = (await readFile("/etc/os-release", "utf8")).split("\n").find((line) => line.startsWith("PRETTY_NAME="));
   const started = path.join(stateDir, "synthetic-started");
   const fake = path.join(temporary, "synthetic-nmap");
   await writeFile(fake, `#!${path.join(runtime, "node")}\nimport {writeFileSync} from 'node:fs';\nconst args=process.argv.slice(2);\nif(!args.includes('-sT')||args.includes('-sS'))process.exit(12);\nwriteFileSync(args[args.indexOf('-oX')+1],'<nmaprun><runstats><finished exit="success"/><hosts up="0" down="0" total="0"/></runstats></nmaprun>');\nprocess.stdout.write('synthetic service output\\n');\nprocess.stderr.write('synthetic service stderr\\n');\nif(args.includes('192.0.2.2')){writeFileSync(${JSON.stringify(started)},'started');setTimeout(()=>{},120000);}\n`, { mode: 0o755 });
@@ -213,7 +214,7 @@ try {
   await command(runtime, "remove");
   evidence.checks.push("runner/control-plane restart and reinstall preserve identity and evidence without re-enrollment", "active removal refused, stop cleans a live tool and preserves truthful interrupted evidence, removal preserves credentials/state", "missing credential and revoked-credential handshake never report ready or silently enroll; logs/argv exclude credentials");
   evidence.status = "passed";
-  evidence.limits = ["Actual Ubuntu 24.04 GitHub disposable-host service proof only; Ubuntu 22.04 and Kali matrix remains unpassed", "Synthetic operator-managed executable, not external-tool certification", "No owner-host installation, public release, historical migration, signing or SBOM proof"];
+  evidence.limits = ["Recorded build/consumption Ubuntu host pair only; other build/host combinations and Kali remain unproven", "Synthetic operator-managed executable, not external-tool certification", "No owner-host installation, public release, historical migration, signing or SBOM proof"];
 } catch (error) {
   evidence.status = "failed";
   evidence.failure = String(error.message).replaceAll(secret || "\0", "[redacted]").slice(0, 1000);

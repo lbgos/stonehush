@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, realToolFailureDiagnostic, sha256 } from "./acceptance-real-tools-assertions.mjs";
+import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, packagingHostProvenance, realToolFailureDiagnostic, sha256 } from "./acceptance-real-tools-assertions.mjs";
 
 // This entrypoint deliberately refuses shared/local hosts. Tool installation,
 // account creation and user-manager operations belong only to disposable CI.
@@ -137,11 +137,7 @@ async function gone(pid) {
 }
 
 try {
-  const os = await readFile("/etc/os-release", "utf8");
-  assert.match(os, /^ID=ubuntu$/m);
-  assert.match(os, /^VERSION_ID="24.04"$/m);
-  receipt.host = { os, architecture: process.arch, node: process.version, pnpm: (await run("/usr/bin/env", ["pnpm", "--version"], { cwd: temporary })).stdout.trim() };
-  assert.equal(receipt.host.pnpm, "10.24.0");
+  Object.assign(receipt, await packagingHostProvenance(output, image.revision, image.tree));
   for (const tool of ["nmap", "ffuf"]) {
     const executable = `/usr/bin/${tool}`;
     const ownership = (await run("/usr/bin/dpkg-query", ["-S", executable])).stdout.trim();
@@ -423,7 +419,7 @@ try {
   }
   if (accountCreated) await clean("disable fixture linger", () => run("/usr/bin/sudo", ["loginctl", "disable-linger", user]));
   await clean("remove owned Compose volume", () => compose("down", "--volumes", "--remove-orphans"));
-  receipt.limits = ["Recorded Ubuntu 24.04 x64 distribution tools and synthetic loopback target only", "No CTF/VPN/DNS/inference/other-OS or whole-RC certification", "No ffuf rate enforcement, forced KILL or escaped-descendant claim", "Prior service and broader M9/M10 limits remain open"];
+  receipt.limits = ["Recorded build/consumption Ubuntu host pair, actual x64 distribution tools and synthetic loopback target only", "No CTF/VPN/DNS/inference/other-OS or whole-RC certification", "No ffuf rate enforcement, forced KILL or escaped-descendant claim", "Prior service and broader M9/M10 limits remain open"];
   const json = JSON.stringify(receipt, null, 2);
   assert.equal(secret ? json.includes(secret) : false, false);
   await writeFile(path.join(output, "real-tools-acceptance.json"), `${json}\n`, { flag: "wx", mode: 0o600 });

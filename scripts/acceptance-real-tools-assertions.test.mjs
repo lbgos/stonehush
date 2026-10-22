@@ -1,6 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, realToolFailureDiagnostic, sha256 } from "./acceptance-real-tools-assertions.mjs";
+import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertPackagingHostPair, assertToolProcess, assertUbuntuRelease, realToolFailureDiagnostic, sha256 } from "./acceptance-real-tools-assertions.mjs";
+
+test("Ubuntu acceptance requires an allowlisted workflow release matching the observed OS", () => {
+  for (const release of ["22.04", "24.04"]) {
+    const os = `ID=ubuntu\nVERSION_ID="${release}"\n`;
+    assert.equal(assertUbuntuRelease(os, release), release);
+    assert.equal(assertUbuntuRelease(`ID="ubuntu"\nVERSION_ID=${release}\n`, release), release);
+    for (const expected of [undefined, "", "20.04", "26.04", "ubuntu-22.04", release === "22.04" ? "24.04" : "22.04"]) {
+      assert.throws(() => assertUbuntuRelease(os, expected));
+    }
+    for (const observed of ["ID=debian\nVERSION_ID=22.04\n", "ID=ubuntu\n", "ID=ubuntu\nVERSION_ID=22.04.1\n", "ID=ubuntu\nVERSION_ID=22.04-extra\n"]) {
+      assert.throws(() => assertUbuntuRelease(observed, release));
+    }
+  }
+});
+
+test("build and consumption host provenance requires the same source, Ubuntu VM job and attempt", () => {
+  const host = { os: 'ID=ubuntu\nVERSION_ID="22.04"\n', expectedUbuntuRelease: "22.04", ubuntuRelease: "22.04", runId: "123", runAttempt: "1" };
+  const build = { revision: "source", tree: "tree", host };
+  assertPackagingHostPair(build, { ...host }, "source", "tree");
+  assert.throws(() => assertPackagingHostPair(build, host, "other-source", "tree"));
+  assert.throws(() => assertPackagingHostPair(build, host, "source", "other-tree"));
+  for (const change of [{ os: 'ID=ubuntu\nVERSION_ID="24.04"\n' }, { expectedUbuntuRelease: "24.04" }, { ubuntuRelease: "24.04" }, { runId: "other-job" }, { runAttempt: "2" }]) {
+    assert.throws(() => assertPackagingHostPair({ ...build, host: { ...host, ...change } }, host, "source", "tree"));
+  }
+});
 
 test("published bytes require exact run association, length and digest", () => {
   const bytes = Buffer.from("synthetic partial bytes {");
