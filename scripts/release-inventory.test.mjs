@@ -41,6 +41,14 @@ async function fixture(t) {
   const save = async () => {
     await writeFile(path.join(artifact, "supply-chain/components.json"), json(input));
     await writeFile(path.join(artifact, "supply-chain/system.json"), json(system));
+    const links = [];
+    const inventory = [];
+    for (const name of (await walkFiles(artifact, true, links)).filter((name) => name !== "artifact.json")) {
+      const bytes = await readFile(path.join(artifact, name));
+      inventory.push(input.kind === "native-runner" ? { path: name, sha256: sha256(bytes), executable: false } : { path: name, sha256: sha256(bytes), sizeBytes: bytes.length });
+    }
+    if (input.kind === "native-runner") inventory.push(...links);
+    await writeFile(path.join(artifact, "artifact.json"), json({ kind: input.kind, revision: metadata.revision, tree: metadata.tree, inventory }));
   };
   await save();
   const packet = () => writePacket(artifact, archive, metadata, host, output);
@@ -163,6 +171,7 @@ test("frontend closure and emitted assets are compared independently to manifest
   delete f.input.frontendManifests["apps/web"].manifest.dependencies;
   await f.save(); await verifyInputs(f.artifact);
   await writeFile(path.join(f.artifact, "web/omitted.woff2"), "font");
+  await f.save();
   await assert.rejects(verifyInputs(f.artifact), /Emitted asset omission/);
   await rm(path.join(f.artifact, "web/omitted.woff2"));
   f.system.debian = [["omitted", "1"]]; await f.save();

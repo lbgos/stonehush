@@ -75,7 +75,7 @@ async function rootDirectory(directory) {
   if (!(await lstat(directory)).isDirectory()) throw new Error("Inventory root must be a real directory.");
   return realpath(directory);
 }
-export async function walkFiles(directory, links = false) {
+export async function walkFiles(directory, links = false, linkRecords = []) {
   const root = await rootDirectory(directory);
   const files = [];
   let count = 0;
@@ -90,6 +90,7 @@ export async function walkFiles(directory, links = false) {
         const target = await readlink(filename);
         if (path.isAbsolute(target)) throw new Error("Absolute inventory link refused.");
         await resolveInside(root, filename);
+        linkRecords.push({ path: name, link: target });
       } else if (info.isFile() && info.nlink === 1) files.push(name);
       else throw new Error("Inventory link, hardlink or special file refused.");
     }
@@ -156,7 +157,12 @@ async function packageNotices(directory, sourceRoot, collect) {
       const name = safeName(relative ? `${relative}/${entry.name}` : entry.name);
       const filename = path.join(directory, name);
       const info = await lstat(filename);
-      if (info.isSymbolicLink() || (!info.isDirectory() && (!info.isFile() || info.nlink !== 1))) throw new Error("Unsafe package notice input.");
+      if (info.isSymbolicLink()) {
+        const resolved = await resolveInside(directory, filename);
+        if (/^(?:licen[cs]e|copying|copyright|notice|ofl|authors)(?:[._-].*)?$/i.test(entry.name)) notices.push(await collect(resolved, path.relative(sourceRoot, filename)));
+        continue;
+      }
+      if (!info.isDirectory() && (!info.isFile() || info.nlink !== 1)) throw new Error("Unsafe package notice input.");
       if (info.isDirectory()) await walk(name);
       else if (/^(?:licen[cs]e|copying|copyright|notice|ofl|authors)(?:[._-].*)?$/i.test(entry.name)) notices.push(await collect(filename, path.relative(sourceRoot, filename)));
     }
@@ -420,7 +426,7 @@ export function createSpdx(inputs, system, binding, created) {
   const components = allComponents(inputs, system);
   const artifactId = "SPDXRef-artifact";
   const sourceId = "SPDXRef-source";
-  const packages = [{ SPDXID: artifactId, name: inputs.kind, versionInfo: binding.revision, downloadLocation: "NOASSERTION", filesAnalyzed: false, checksums: [{ algorithm: "SHA256", checksumValue: binding.sha256 }], licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION" },
+  const packages = [{ SPDXID: artifactId, name: inputs.kind, versionInfo: binding.revision, downloadLocation: "NOASSERTION", filesAnalyzed: false, checksums: [{ algorithm: "SHA256", checksumValue: binding.sha256 }], sourceInfo: json(binding), licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION" },
     { SPDXID: sourceId, name: "Stonehush source", versionInfo: binding.revision, downloadLocation: `git+https://github.com/lbgos/stonehush.git@${binding.revision}`, filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: "AGPL-3.0-only", copyrightText: "NOASSERTION", sourceInfo: `Git tree ${binding.tree}; pnpm-lock.yaml SHA256 ${inputs.lockfileSha256}` },
     ...components.map((component) => ({ SPDXID: component.id, name: component.name, versionInfo: component.version, downloadLocation: "NOASSERTION", filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: declaredExpression(component.declaredLicense), copyrightText: "NOASSERTION", sourceInfo: json(component), comment: "Declared license is recorded verbatim in sourceInfo with evidence; no license expression or compatibility inferred." }))];
   // Unknown declarations stay NOASSERTION in the SPDX license field. Verbatim
@@ -454,6 +460,16 @@ export function validateSpdx(document) {
 }
 
 export async function verifyInputs(artifact) {
+  const manifest = await readJson(path.join(artifact, "artifact.json"));
+  const linkRecords = [];
+  const names = (await walkFiles(artifact, true, linkRecords)).filter((name) => name !== "artifact.json");
+  const records = [];
+  for (const name of names) {
+    const info = await lstat(path.join(artifact, name));
+    records.push(manifest.kind === "native-runner" ? { path: name, sha256: await hashFile(path.join(artifact, name)), executable: Boolean(info.mode & 0o111) } : { path: name, sizeBytes: info.size, sha256: await hashFile(path.join(artifact, name)) });
+  }
+  if (manifest.kind === "native-runner") records.push(...linkRecords);
+  assert.deepEqual(sorted(manifest.inventory), sorted(records), "Artifact file/member inventory mismatch.");
   const input = await readJson(path.join(artifact, "supply-chain/components.json"));
   const graph = await readJson(path.join(artifact, "package-graph.json"));
   assert.deepEqual(input.runtime, graph, "Packaged graph differs from inventory input.");
@@ -577,7 +593,7 @@ export async function verifyPacket(output, artifactDirectory, archive, metadata,
   const report = await readJson(path.join(output, "inventory.json"));
   assert.equal(input.lockfileSha256, metadata.lockfileSha256, "Frozen source lockfile mismatch.");
   assert.equal(report.redistribution, "NOT CLEARED"); assert.deepEqual(report.binding.host, host);
-  for (const key of ["revision", "tree", "sha256"]) assert.equal(report.binding[key], metadata[key], "Packet binding mismatch.");
+  for (const key of Object.keys(metadata)) assert.deepEqual(report.binding[key], metadata[key], "Packet binding mismatch.");
   const manifest = await readJson(path.join(artifact, "artifact.json"));
   assert.equal(manifest.revision, metadata.revision); assert.equal(manifest.tree, metadata.tree);
   assert.equal(report.componentCount, allComponents(input, system).length);
