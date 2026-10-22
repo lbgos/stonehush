@@ -8,7 +8,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, sha256 } from "./acceptance-real-tools-assertions.mjs";
+import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, realToolFailureDiagnostic, sha256 } from "./acceptance-real-tools-assertions.mjs";
 
 // This entrypoint deliberately refuses shared/local hosts. Tool installation,
 // account creation and user-manager operations belong only to disposable CI.
@@ -44,6 +44,8 @@ let managerStarted = false;
 let secret = "";
 let fixture;
 let fixtureOrigin;
+let engagementBase;
+let activeActionId;
 let slowRequests = 0;
 let slowClosed = 0;
 const slowRequest = { startedAt: 0, closedAt: 0, deadlineExpired: false, normalResponse: false };
@@ -222,6 +224,7 @@ try {
   await asUser([path.join(runtime, "node"), "--input-type=module", "-e", "import {writeFileSync} from 'node:fs';writeFileSync(process.argv[1], 'planted-acceptance\\nmissing-acceptance\\n', {flag:'wx',mode:0o600});writeFileSync(process.argv[2], 'slow-acceptance\\n', {flag:'wx',mode:0o600});", wordlist, slowWordlist]);
   const engagement = await api("/api/v1/engagements", { name: "Packaged real tools", kind: "lab", autoContinueWarnings: false });
   const base = `/api/v1/engagements/${engagement.id}`;
+  engagementBase = base;
   await api(`${base}/scope-revisions`, { expectedRevision: engagement.revision, rules: [{ id: "scope-fixture", kind: "ip", target: { kind: "ip", normalizationProfile: "d1-v1", family: 4, address: "192.0.2.1", zone: null } }] });
   const savedScope = (await api(base)).activeScopeRevision;
   assert.ok(savedScope && savedScope.rules.length === 1);
@@ -240,6 +243,7 @@ try {
     assert.ok(planned.action.warningAcknowledgment.reasonCodes.includes("outside_scope"));
     assert.deepEqual((await api(base)).activeScopeRevision, savedScope);
     receipt.checks.push({ actionId: planned.action.actionId, snapshot: planned.action.snapshots[0], warningAcknowledgment: planned.action.warningAcknowledgment });
+    activeActionId = planned.action.actionId;
     return planned.action.actionId;
   }
   async function terminal(actionId, kind) {
@@ -373,9 +377,29 @@ try {
 } catch (error) {
   receipt.status = "failed";
   receipt.failure = { phase, message: String(error.message).replaceAll(secret || "\0", "[redacted]").slice(0, 1500), classification: "unclassified; inspect assertion and hosted step before attributing to product or infrastructure" };
+  // Capture before teardown. A process-observation timeout alone cannot
+  // distinguish an early tool exit from an action that never started.
+  if (engagementBase && activeActionId) {
+    try {
+      const run = (await api(`${engagementBase}/runs`)).runs.find((item) => item.actionId === activeActionId);
+      if (!run) receipt.failure.diagnosticCapture = "run_not_found";
+      else {
+        receipt.failureRun = { id: run.id, actionId: run.actionId, state: run.state, terminalKind: run.terminalKind, terminalReason: run.terminalReason };
+        if (run.terminalKind) {
+          const output = await api(`${engagementBase}/runs/${run.id}/output`);
+          receipt.failureOutput = realToolFailureDiagnostic(output, activeActionId, run.id, secret);
+          receipt.failure.diagnosticCapture = "recorded";
+        } else receipt.failure.diagnosticCapture = "run_not_terminal";
+      }
+    } catch {
+      // Diagnostic failure cannot replace the original failure or pass the gate.
+      receipt.failure.diagnosticCapture = "unavailable";
+    }
+  }
   process.exitCode = 1;
 } finally {
   phase = "cleanup";
+  receipt.routeCounts = routeCounts;
   for (const timer of timers) clearTimeout(timer);
   if (fixture) { fixture.closeAllConnections(); await new Promise((resolve) => fixture.close(resolve)); receipt.cleanup.push("fixture closed"); }
   async function clean(label, callback) {

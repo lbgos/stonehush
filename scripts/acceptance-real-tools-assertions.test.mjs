@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, sha256 } from "./acceptance-real-tools-assertions.mjs";
+import { assertCancelledRequest, assertContinued, assertDownload, assertFindingReferences, assertToolProcess, realToolFailureDiagnostic, sha256 } from "./acceptance-real-tools-assertions.mjs";
 
 test("published bytes require exact run association, length and digest", () => {
   const bytes = Buffer.from("synthetic partial bytes {");
@@ -60,4 +60,20 @@ test("cancellation cannot pass on a normal response, stale request or tool timeo
     assert.throws(() => assertCancelledRequest({ ...request, ...change }, 2000, 12500));
   }
   assert.throws(() => assertCancelledRequest(request, 2000, 31000));
+});
+
+test("failure diagnostics retain bounded tool output only for the exact failed action and run", () => {
+  const secret = "synthetic-private-credential";
+  const stream = { present: true, artifactId: "stderr", digest: sha256(Buffer.from("output")), sizeBytes: 10000, completeness: "complete", truncated: false, content: `${"x".repeat(4080)}${secret}${"y".repeat(10000)}`, unexpected: secret };
+  const output = { run: { id: "run-1", actionId: "action-1", state: "failed", terminalKind: "failed", terminalReason: "ffuf_parse_error", unexpected: secret }, stdout: { present: false, content: "" }, stderr: stream, unexpected: secret };
+  const diagnostic = realToolFailureDiagnostic(output, "action-1", "run-1", secret);
+  assert.equal(diagnostic.run.terminalReason, "ffuf_parse_error");
+  assert.equal(diagnostic.stderr.content.length, 4096);
+  assert.equal(diagnostic.stderr.excerptTruncated, true);
+  assert.equal(diagnostic.stderr.content.includes("[redacted]"), true);
+  assert.equal(JSON.stringify(diagnostic).includes(secret), false);
+  assert.equal(diagnostic.run.unexpected, undefined);
+  assert.equal(diagnostic.stderr.unexpected, undefined);
+  assert.throws(() => realToolFailureDiagnostic(output, "other-action", "run-1", secret));
+  assert.throws(() => realToolFailureDiagnostic(output, "action-1", "other-run", secret));
 });

@@ -50,3 +50,20 @@ export function assertCancelledRequest({ startedAt, closedAt, deadlineExpired, n
   // Finishing within 25 seconds of request start excludes both natural exits.
   assert.ok(finishedAt - startedAt < 25000, "Cleanup must precede ffuf's own deadlines.");
 }
+
+// Published operator output from the synthetic action, never service logs or
+// configuration. Redact before taking the excerpt so a boundary cannot split a secret.
+export function realToolFailureDiagnostic(output, actionId, runId, secret) {
+  assert.equal(output.run.actionId, actionId);
+  assert.equal(output.run.id, runId);
+  const { id, state, terminalKind, terminalReason } = output.run;
+  const diagnostic = { run: { id, actionId, state, terminalKind, terminalReason } };
+  for (const name of ["stdout", "stderr"]) {
+    const stream = output[name];
+    if (!stream.present) { diagnostic[name] = { present: false }; continue; }
+    const content = secret ? stream.content.replaceAll(secret, "[redacted]") : stream.content;
+    const { artifactId, digest, sizeBytes, completeness, truncated } = stream;
+    diagnostic[name] = { present: true, artifactId, digest, sizeBytes, completeness, truncated, content: content.slice(0, 4096), excerptTruncated: content.length > 4096 };
+  }
+  return diagnostic;
+}
