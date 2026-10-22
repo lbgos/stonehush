@@ -26,6 +26,14 @@ function inside(root, filename) {
 }
 // No-follow open plus fstat bounds every metadata read. Streaming hashes also
 // cover large archives without loading their bytes into the model or heap.
+export async function freshOutputs(filenames) {
+  for (const filename of filenames) {
+    await rejectLinkedAncestors(path.dirname(filename));
+    try { await lstat(filename); throw new Error("Artifact output already exists."); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+  }
+}
+
 export async function readBounded(filename, maximum = MAX_METADATA) {
   const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -51,10 +59,19 @@ export async function hashFile(filename) {
 async function readJson(filename) { return JSON.parse(await readBounded(filename)); }
 async function put(root, name, bytes) {
   safeName(name);
+  await rejectLinkedAncestors(root);
   await mkdir(path.dirname(path.join(root, name)), { recursive: true });
   await writeFile(path.join(root, name), bytes, { flag: "wx", mode: 0o644 });
 }
+async function rejectLinkedAncestors(directory) {
+  let current = path.resolve(directory);
+  while (current !== path.dirname(current)) {
+    if ((await lstat(current)).isSymbolicLink()) throw new Error("Linked inventory ancestor refused.");
+    current = path.dirname(current);
+  }
+}
 async function rootDirectory(directory) {
+  await rejectLinkedAncestors(directory);
   if (!(await lstat(directory)).isDirectory()) throw new Error("Inventory root must be a real directory.");
   return realpath(directory);
 }
@@ -72,7 +89,7 @@ export async function walkFiles(directory, links = false) {
       else if (info.isSymbolicLink() && links) {
         const target = await readlink(filename);
         if (path.isAbsolute(target)) throw new Error("Absolute inventory link refused.");
-        inside(root, await realpath(filename));
+        await resolveInside(root, filename);
       } else if (info.isFile() && info.nlink === 1) files.push(name);
       else throw new Error("Inventory link, hardlink or special file refused.");
     }
@@ -80,11 +97,28 @@ export async function walkFiles(directory, links = false) {
   await walk();
   return files.sort();
 }
+async function resolveInside(root, filename, depth = 0) {
+  if (depth > 40) throw new Error("Inventory link depth exceeds limit.");
+  inside(root, path.resolve(filename));
+  const parts = path.relative(root, filename).split(path.sep);
+  let current = root;
+  for (let index = 0; index < parts.length; index++) {
+    current = path.join(current, parts[index]);
+    if ((await lstat(current)).isSymbolicLink()) {
+      const target = await readlink(current);
+      if (path.isAbsolute(target)) throw new Error("Absolute inventory link refused.");
+      const resolved = inside(root, path.resolve(path.dirname(current), target, ...parts.slice(index + 1)));
+      return resolveInside(root, resolved, depth + 1);
+    }
+  }
+  return current;
+}
 async function resolveDependency(directory, name, root) {
   if (!/^(?:@[a-z0-9_.-]+\/)?[a-z0-9_.-]+$/i.test(name)) throw new Error("Unsafe dependency name.");
   for (const search of createRequire(path.join(directory, "package.json")).resolve.paths(`${name}/package.json`) ?? []) {
     const candidate = path.join(search, name);
-    try { return inside(root, await realpath(candidate)); }
+    if (!candidate.startsWith(`${root}${path.sep}`)) continue;
+    try { return await resolveInside(root, candidate); }
     catch (error) { if (error.code !== "ENOENT") throw error; }
   }
 }
@@ -133,11 +167,25 @@ async function packageNotices(directory, sourceRoot, collect) {
 function licenseDeclaration(value) {
   return typeof value === "string" ? value : value?.type ?? null;
 }
-const LICENSE_IDS = new Set(["MIT", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "AGPL-3.0-only", "OFL-1.1", "CC0-1.0", "CC-BY-4.0", "Unlicense", "Zlib", "BlueOak-1.0.0", "Python-2.0", "MPL-2.0"]);
+const LICENSE_IDS = new Set(["MIT", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "AGPL-3.0-only", "OFL-1.1", "CC0-1.0", "CC-BY-4.0", "Unlicense", "Zlib", "BlueOak-1.0.0", "Python-2.0", "MPL-2.0", "Artistic-2.0"]);
 function declaredExpression(value) {
-  if (typeof value !== "string") return "NOASSERTION";
-  const tokens = value.replace(/[()]/g, " ").split(/\s+/).filter(Boolean);
-  return tokens.length && tokens.every((token) => LICENSE_IDS.has(token) || token === "AND" || token === "OR") ? value : "NOASSERTION";
+  if (typeof value !== "string" || value.length > 1024) return "NOASSERTION";
+  const tokens = value.match(/[A-Za-z0-9.+-]+|[()]/g) ?? [];
+  if (tokens.join("") !== value.replace(/\s/g, "")) return "NOASSERTION";
+  let index = 0;
+  function expression(depth = 0) {
+    if (depth > 16) return false;
+    function atom() {
+      const token = tokens[index++];
+      if (token !== "(") return LICENSE_IDS.has(token);
+      if (!expression(depth + 1) || tokens[index++] !== ")") return false;
+      return true;
+    }
+    if (!atom()) return false;
+    while (tokens[index] === "AND" || tokens[index] === "OR") { index++; if (!atom()) return false; }
+    return true;
+  }
+  return expression() && index === tokens.length ? value : "NOASSERTION";
 }
 function issues(component) {
   const result = [];
@@ -183,7 +231,7 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
   const runtimeByPath = new Map();
   for (const record of runtime) {
     safeName(record.packaged); safeName(record.source);
-    const directory = inside(artifact, await realpath(path.join(artifact, record.packaged)));
+    const directory = await resolveInside(artifact, path.join(artifact, record.packaged));
     if (runtimeByPath.has(directory)) throw new Error("Duplicate packaged component location.");
     runtimeByPath.set(directory, await addPackage(directory, "packaged-runtime", record.packaged));
   }
@@ -254,11 +302,22 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
 
 // Executed in the final image, using its dpkg database and copyright files.
 // It never calls dependency scripts or installs additional tooling.
+export function debianPackages(status) {
+  return status.split(/\n\n+/).filter((paragraph) => /^Status: install ok installed$/m.test(paragraph)).map((paragraph) => {
+    const field = (name) => paragraph.match(new RegExp(`^${name}: (.+)$`, "m"))?.[1];
+    const name = field("Package"), version = field("Version"), architecture = field("Architecture");
+    assert.ok(name && version && architecture, "Incomplete Debian package metadata.");
+    return [`${name}${field("Multi-Arch") === "same" ? `:${architecture}` : ""}`, version];
+  }).sort((a, b) => a[0].localeCompare(b[0], "en"));
+}
 export async function collectSystem(artifactDirectory, kind, executable = process.execPath) {
   const artifact = await rootDirectory(artifactDirectory);
   const output = path.join(artifact, "supply-chain");
   const collect = await noticeCollector(output);
   const components = [];
+  const relationships = [];
+  const bundledToolManifests = {};
+  const commonNotices = [];
   const candidates = [path.resolve(path.dirname(executable), "../LICENSE"), path.resolve(path.dirname(executable), "../share/doc/node/LICENSE")];
   const notices = [];
   for (const candidate of candidates) {
@@ -268,9 +327,52 @@ export async function collectSystem(artifactDirectory, kind, executable = proces
   const node = { id: id("runtime-node"), kind: "runtime", scope: "bundled-runtime", name: "Node.js", version: process.version, declaredLicense: null, binarySha256: await hashFile(executable), notices };
   node.unresolved = [...issues(node), "Node upstream LICENSE includes bundled third-party terms; review required"];
   components.push(node);
+  const nodeVersions = Object.fromEntries(Object.entries(process.versions).filter(([name]) => !["node", "modules", "napi"].includes(name)));
+  for (const [name, version] of Object.entries(nodeVersions)) {
+    const component = { id: id(`node-version:${name}`), kind: "node-version", scope: "bundled-node-version-entry", name: `Node process.versions.${name}`, version, declaredLicense: null, notices };
+    component.unresolved = issues(component);
+    components.push(component);
+    relationships.push({ from: node.id, type: "CONTAINS", to: component.id });
+  }
+  async function toolPackages(directory, root) {
+    directory = directory === root ? root : await resolveInside(root, directory);
+    if (components.some((entry) => entry.location === directory.slice(1))) return;
+    const { manifest, manifestSha256 } = await manifestAt(directory);
+    const location = directory.slice(1);
+    const component = { id: id(`final-image-bundled-tool:${location}`), kind: "npm", scope: "final-image-bundled-tool", location, name: manifest.name, version: manifest.version, manifestSha256, declaredLicense: licenseDeclaration(manifest.license), notices: await packageNotices(directory, root, collect), missingOptional: [] };
+    component.unresolved = issues(component);
+    components.push(component);
+    bundledToolManifests[location] = { manifest, resolved: {} };
+    for (const name of dependencies(manifest)) {
+      const resolved = await resolveDependency(directory, name, root);
+      if (!resolved) { component.missingOptional.push({ name, optional: optional(manifest, name) }); continue; }
+      bundledToolManifests[location].resolved[name] = resolved.slice(1);
+      await toolPackages(resolved, root);
+      relationships.push({ from: component.id, type: "DEPENDS_ON", to: id(`final-image-bundled-tool:${resolved.slice(1)}`) });
+    }
+    // Published bundles can include packages outside their declared closure.
+    // Enumerate actual node_modules roots so those bytes remain accounted for.
+    const modules = path.join(directory, "node_modules");
+    let entries;
+    try { entries = await readdir(modules); } catch (error) { if (error.code !== "ENOENT") throw error; return; }
+    for (const name of entries) {
+      if (name.startsWith(".")) continue;
+      if (name.startsWith("@")) {
+        for (const child of await readdir(path.join(modules, name))) await toolPackages(path.join(modules, name, child), root);
+      } else await toolPackages(path.join(modules, name), root);
+    }
+  }
   let debian = null;
+  let debianStatusSha256 = null;
   if (kind === "control-plane") {
+    for (const name of await readdir("/usr/local/lib/node_modules")) {
+      if (!name.startsWith(".")) await toolPackages(path.join("/usr/local/lib/node_modules", name), "/usr/local/lib/node_modules");
+    }
+    for (const name of await readdir("/opt")) if (/^yarn-v[0-9.]+$/.test(name)) await toolPackages(path.join("/opt", name), path.join("/opt", name));
     debian = execFileSync("/usr/bin/dpkg-query", ["-W", "-f=${binary:Package}\t${Version}\t${db:Status-Status}\n"], { encoding: "utf8", maxBuffer: MAX_METADATA, timeout: 30000 }).trim().split("\n").filter((line) => line.endsWith("\tinstalled")).map((line) => line.split("\t").slice(0, 2));
+    const status = await readBounded("/var/lib/dpkg/status");
+    debianStatusSha256 = sha256(status);
+    assert.deepEqual(sorted(debian), sorted(debianPackages(status.toString("utf8"))), "Final dpkg query differs from installed status.");
     for (const [name, version] of debian) {
       if (!/^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9]+)?$/.test(name)) throw new Error("Unsafe Debian package identity.");
       const notices = [];
@@ -287,12 +389,12 @@ export async function collectSystem(artifactDirectory, kind, executable = proces
     for (const name of await readdir("/usr/share/common-licenses")) {
       const filename = path.join("/usr/share/common-licenses", name);
       const info = await lstat(filename);
-      if (info.isFile()) await collect(filename, filename);
-      else if (info.isSymbolicLink()) await collect(inside("/usr/share/common-licenses", await realpath(filename)), filename);
+      if (info.isFile()) commonNotices.push(await collect(filename, filename));
+      else if (info.isSymbolicLink()) commonNotices.push(await collect(inside("/usr/share/common-licenses", await realpath(filename)), filename));
       else throw new Error("Unsafe Debian common-license input.");
     }
   }
-  await put(output, "system.json", json({ kind, baseImage: kind === "control-plane" ? BASE : null, node: process.version, components: sorted(components), debian, coverageGaps: ["Node bundled-library components and Debian multi-license paragraphs require human review; upstream full texts are retained where available."] }));
+  await put(output, "system.json", json({ kind, baseImage: kind === "control-plane" ? BASE : null, node: process.version, components: sorted(components), relationships: sorted(relationships), nodeVersions, bundledToolManifests, commonNotices, debianStatusSha256, debian, coverageGaps: ["Node bundled-library components and Debian multi-license paragraphs require human review; upstream full texts are retained where available."] }));
 }
 
 function checkIdentity(binding) {
@@ -309,7 +411,7 @@ function allComponents(inputs, system) {
     const declaration = JSON.stringify({ declaredLicense: component.declaredLicense, manifestSha256: component.manifestSha256 });
     if (declarations.has(identity) && declarations.get(identity) !== declaration) throw new Error("Conflicting duplicate package declaration.");
     declarations.set(identity, declaration);
-    if (component.id !== id(component.kind === "runtime" ? "runtime-node" : component.kind === "deb" ? `deb:${component.name}:${component.version}` : component.kind === "asset" ? `apps/web/public/brand/${component.name}` : `${component.scope}:${component.location}`)) throw new Error("Component identity mismatch.");
+    if (component.id !== id(component.kind === "runtime" ? "runtime-node" : component.kind === "node-version" ? `node-version:${component.name.slice("Node process.versions.".length)}` : component.kind === "deb" ? `deb:${component.name}:${component.version}` : component.kind === "asset" ? `apps/web/public/brand/${component.name}` : `${component.scope}:${component.location}`)) throw new Error("Component identity mismatch.");
   }
   return components;
 }
@@ -325,7 +427,7 @@ export function createSpdx(inputs, system, binding, created) {
   // declarations and their evidence are retained without inventing LicenseRefs.
   const relationships = [{ spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: artifactId }, { spdxElementId: artifactId, relationshipType: "GENERATED_FROM", relatedSpdxElement: sourceId },
     ...components.map((component) => ({ spdxElementId: artifactId, relationshipType: "CONTAINS", relatedSpdxElement: component.id })),
-    ...inputs.relationships.map((edge) => ({ spdxElementId: edge.from, relationshipType: edge.type, relatedSpdxElement: edge.to }))];
+    ...[...inputs.relationships, ...(system.relationships ?? [])].map((edge) => ({ spdxElementId: edge.from, relationshipType: edge.type, relatedSpdxElement: edge.to }))];
   const files = [...inputs.assets, ...inputs.nativeFiles].map((file) => ({ SPDXID: id(`file:${file.path}`), fileName: `./${file.path}`, checksums: [{ algorithm: "SHA256", checksumValue: file.sha256 }], licenseConcluded: "NOASSERTION", licenseInfoInFiles: ["NOASSERTION"], copyrightText: "NOASSERTION" }));
   for (const file of files) relationships.push({ spdxElementId: artifactId, relationshipType: "CONTAINS", relatedSpdxElement: file.SPDXID });
   const document = { spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT", name: `Stonehush ${inputs.kind} inventory`, documentNamespace: `https://stonehush.invalid/spdx/${inputs.kind}/${binding.sha256}`, creationInfo: { creators: ["Tool: stonehush-release-inventory"], created }, packages, files, relationships };
@@ -406,6 +508,15 @@ export async function verifyInputs(artifact) {
     assert.equal(system.baseImage, BASE);
     assert.deepEqual(system.components.filter((entry) => entry.kind === "deb").map((entry) => [entry.name, entry.version]).sort(), system.debian.toSorted(), "Debian component omission.");
   }
+  if (system.nodeVersions) assert.deepEqual(system.components.filter((entry) => entry.kind === "node-version").map((entry) => [entry.name.slice("Node process.versions.".length), entry.version]).sort(), Object.entries(system.nodeVersions).sort(), "Node bundled version omission.");
+  const tools = system.components.filter((entry) => entry.scope === "final-image-bundled-tool");
+  assert.deepEqual(tools.map((entry) => entry.location).sort(), Object.keys(system.bundledToolManifests ?? {}).sort(), "Bundled tool component omission.");
+  for (const component of tools) {
+    const record = system.bundledToolManifests[component.location];
+    assert.equal(component.name, record.manifest.name); assert.equal(component.version, record.manifest.version);
+    for (const target of Object.values(record.resolved)) assert.ok(tools.some((entry) => entry.location === target), "Bundled tool dependency omission.");
+  }
+  for (const notice of system.commonNotices ?? []) { safeName(notice.path); assert.equal(await hashFile(path.join(artifact, "supply-chain", notice.path)), notice.sha256); }
   for (const component of allComponents(input, system)) {
     assert.deepEqual(component.unresolved, component.kind === "runtime" ? [...issues(component), "Node upstream LICENSE includes bundled third-party terms; review required"] : issues(component));
   }
@@ -421,14 +532,17 @@ export async function writePacket(artifactDirectory, archive, metadata, host, ou
   await walkFiles(artifact, true);
   const { input, system } = await verifyInputs(artifact);
   checkIdentity(metadata);
+  if (input.kind === "control-plane" && !/^sha256:[a-f0-9]{64}$/.test(metadata.imageId ?? "")) throw new Error("Missing exact image identity.");
   const manifest = await readJson(path.join(artifact, "artifact.json"));
   for (const key of ["revision", "tree"]) { assert.equal(metadata[key], manifest[key], "Artifact/source mismatch."); assert.equal(metadata[key], host[key], "Build host/source mismatch."); }
   assert.equal(await hashFile(archive), metadata.sha256, "Archive checksum mismatch.");
+  assert.equal(input.lockfileSha256, metadata.lockfileSha256, "Frozen source lockfile mismatch.");
   const binding = { ...metadata, kind: input.kind, lockfileSha256: input.lockfileSha256, node: input.node, pnpm: input.pnpm, baseImage: system.baseImage, host };
   const created = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
   const document = createSpdx(input, system, binding, created);
   const components = allComponents(input, system);
   const report = { status: "INVENTORY TOOLING ONLY", redistribution: "NOT CLEARED", binding, componentCount: components.length, scopes: Object.fromEntries([...new Set(components.map((item) => item.scope))].sort().map((scope) => [scope, components.filter((item) => item.scope === scope).length])), unresolved: components.filter((item) => item.unresolved.length).map((item) => ({ component: item.id, name: item.name, version: item.version, issues: item.unresolved, notices: item.notices })), coverageGaps: [...input.coverageGaps, ...system.coverageGaps], buildOnly: input.buildOnly, externalPrerequisites: input.externalPrerequisites };
+  await rejectLinkedAncestors(path.dirname(output));
   await mkdir(output); // Partial packets stay diagnosable; existing output is refused.
   await put(output, "sbom.spdx.json", json(document));
   await put(output, "inventory.json", json(report));
@@ -461,6 +575,7 @@ export async function verifyPacket(output, artifactDirectory, archive, metadata,
   assert.deepEqual(await readJson(path.join(output, "components.json")), input);
   assert.deepEqual(await readJson(path.join(output, "system.json")), system);
   const report = await readJson(path.join(output, "inventory.json"));
+  assert.equal(input.lockfileSha256, metadata.lockfileSha256, "Frozen source lockfile mismatch.");
   assert.equal(report.redistribution, "NOT CLEARED"); assert.deepEqual(report.binding.host, host);
   for (const key of ["revision", "tree", "sha256"]) assert.equal(report.binding[key], metadata[key], "Packet binding mismatch.");
   const manifest = await readJson(path.join(artifact, "artifact.json"));
@@ -475,20 +590,49 @@ export async function verifyPacket(output, artifactDirectory, archive, metadata,
 
 export async function buildHost(revision, tree) {
   if (process.env.STONEHUSH_BUILD_HOST_RECEIPT) return readJson(process.env.STONEHUSH_BUILD_HOST_RECEIPT);
-  return { revision, tree, host: { platform: platform(), arch: arch(), kernel: release(), osRelease: (await readBounded("/etc/os-release")).toString("utf8"), workflow: { runId: process.env.GITHUB_RUN_ID ?? null, runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null } } };
+  return { revision, tree, host: { platform: platform(), arch: arch(), kernel: release(), osRelease: (await readBounded(await realpath("/etc/os-release"))).toString("utf8"), workflow: { runId: process.env.GITHUB_RUN_ID ?? null, runAttempt: process.env.GITHUB_RUN_ATTEMPT ?? null } } };
 }
 
-export async function imagePacket(imageId, archive, metadata, host, output) {
+export async function imagePacket(imageId, archive, metadata, host, output, verifyOnly = false) {
   const { mkdtemp, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const temporary = await mkdtemp(path.join(tmpdir(), "stonehush-image-inventory-"));
   let container;
   try {
+    assert.equal(imageId, metadata.imageId, "Image metadata identity mismatch.");
+    const image = JSON.parse(execFileSync("docker", ["image", "inspect", "--format={{json .}}", imageId], { encoding: "utf8", timeout: 30000, maxBuffer: MAX_METADATA }));
+    assert.equal(image.Id, imageId);
+    assert.equal(image.Config?.Labels?.["org.opencontainers.image.revision"], metadata.revision);
+    assert.equal(image.Config?.Labels?.["dev.stonehush.source-tree"], metadata.tree);
     container = execFileSync("docker", ["create", "--network", "none", "--entrypoint", "/bin/true", imageId], { encoding: "utf8", timeout: 30000, maxBuffer: MAX_METADATA }).trim();
     if (!/^[a-f0-9]{64}$/.test(container)) throw new Error("Invalid inventory container identity.");
     const artifact = path.join(temporary, "artifact");
     await mkdir(artifact);
     execFileSync("docker", ["cp", `${container}:/opt/stonehush/.`, artifact], { timeout: 120000, maxBuffer: MAX_METADATA });
+    const system = await readJson(path.join(artifact, "supply-chain/system.json"));
+    const nodeBinary = path.join(temporary, "node");
+    const debianStatus = path.join(temporary, "debian-status");
+    execFileSync("docker", ["cp", `${container}:/usr/local/bin/node`, nodeBinary], { timeout: 30000, maxBuffer: MAX_METADATA });
+    execFileSync("docker", ["cp", `${container}:/var/lib/dpkg/status`, debianStatus], { timeout: 30000, maxBuffer: MAX_METADATA });
+    assert.equal(await hashFile(nodeBinary), system.components.find((item) => item.kind === "runtime")?.binarySha256, "Final image Node mismatch.");
+    assert.equal(await hashFile(debianStatus), system.debianStatusSha256, "Final image Debian status mismatch.");
+    assert.deepEqual(sorted(debianPackages((await readBounded(debianStatus)).toString("utf8"))), sorted(system.debian), "Final image Debian omission.");
+    const toolRoots = new Set();
+    for (const location of Object.keys(system.bundledToolManifests)) {
+      safeName(location);
+      assert.ok(location.startsWith("usr/local/lib/node_modules/") || /^opt\/yarn-v[0-9.]+\//.test(location));
+      toolRoots.add(location.startsWith("usr/local") ? "usr/local/lib/node_modules" : location.split("/").slice(0, 2).join("/"));
+    }
+    for (const root of toolRoots) {
+      await mkdir(path.join(temporary, root), { recursive: true });
+      execFileSync("docker", ["cp", `${container}:/${root}/.`, path.join(temporary, root)], { timeout: 60000, maxBuffer: MAX_METADATA });
+    }
+    for (const component of system.components.filter((item) => item.scope === "final-image-bundled-tool")) {
+      const { manifest, manifestSha256 } = await manifestAt(path.join(temporary, component.location));
+      assert.equal(manifestSha256, component.manifestSha256, "Final bundled tool manifest mismatch.");
+      assert.deepEqual(manifest, system.bundledToolManifests[component.location].manifest);
+    }
+    if (verifyOnly) return await verifyPacket(output, artifact, archive, metadata, host);
     await writePacket(artifact, archive, metadata, host, output);
   } finally {
     if (container && /^[a-f0-9]{64}$/.test(container)) execFileSync("docker", ["rm", container], { timeout: 30000, maxBuffer: MAX_METADATA });

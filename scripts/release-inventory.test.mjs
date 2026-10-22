@@ -4,7 +4,7 @@ import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { createSpdx, hashFile, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
+import { collectInventory, createSpdx, hashFile, readBounded, sha256, validateSpdx, verifyInputs, verifyPacket, walkFiles, writePacket } from "./release-inventory.mjs";
 
 const id = (key) => `SPDXRef-${sha256(key)}`;
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
@@ -34,7 +34,7 @@ async function fixture(t) {
   await writeFile(path.join(artifact, "package-graph.json"), json(runtime));
   const input = { format: "stonehush-inventory-input-v1", kind: "native-runner", runtime, components, frontendManifests: {}, relationships: [{ from: components[0].id, type: "DEPENDS_ON", to: components[1].id }], node: "v24.18.0", pnpm: "10.24.0", lockfileSha256: "f".repeat(64), nativeFiles: [{ path: "node", sha256: sha256("synthetic Node binary") }], assets: [], buildOnly: [], coverageGaps: ["Synthetic fixture"], externalPrerequisites: ["Nmap", "ffuf", "wordlists"] };
   const system = { kind: "native-runner", node: "v24.18.0", baseImage: null, debian: null, components: [{ id: id("runtime-node"), kind: "runtime", scope: "bundled-runtime", name: "Node.js", version: "v24.18.0", binarySha256: sha256("synthetic Node binary"), declaredLicense: null, notices, unresolved: ["missing-declared-license", "Node upstream LICENSE includes bundled third-party terms; review required"] }], coverageGaps: ["Synthetic system fixture"] };
-  const metadata = { revision: "a".repeat(40), tree: "b".repeat(40), sha256: sha256("synthetic archive") };
+  const metadata = { lockfileSha256: "f".repeat(64), revision: "a".repeat(40), tree: "b".repeat(40), sha256: sha256("synthetic archive") };
   await writeFile(path.join(artifact, "artifact.json"), json({ kind: "native-runner", revision: metadata.revision, tree: metadata.tree }));
   await writeFile(archive, "synthetic archive");
   const host = { revision: metadata.revision, tree: metadata.tree, host: { workflow: { runId: "123", runAttempt: "1" }, observed: "synthetic" } };
@@ -167,4 +167,45 @@ test("frontend closure and emitted assets are compared independently to manifest
   await rm(path.join(f.artifact, "web/omitted.woff2"));
   f.system.debian = [["omitted", "1"]]; await f.save();
   await assert.rejects(verifyInputs(f.artifact), /Debian component omission/);
+});
+
+test("collector reads installed graph and font/icon notices without invoking metadata scripts", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "stonehush-inventory-collect-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = path.join(root, "source");
+  const artifact = path.join(root, "artifact");
+  const workspaces = ["apps/api", "apps/runner", "apps/web", "packages/contracts", "packages/domain", "packages/db", "packages/evidence-native", "packages/ui"];
+  for (const name of workspaces) {
+    await mkdir(path.join(source, name), { recursive: true });
+    await writeFile(path.join(source, name, "package.json"), json({ name, version: "1" }));
+  }
+  for (const name of ["api", "web", "api/node_modules/.runtime/font", "api/node_modules/.runtime/icon"]) await mkdir(path.join(artifact, name), { recursive: true });
+  await writeFile(path.join(source, "package.json"), json({ name: "root", version: "1" }));
+  await writeFile(path.join(source, "LICENSE"), "Synthetic root terms");
+  await writeFile(path.join(source, "pnpm-lock.yaml"), "synthetic frozen lock");
+  await mkdir(path.join(source, "packaging"));
+  await writeFile(path.join(source, "packaging/third-party-assets.json"), json({ assets: [] }));
+  const rootManifest = { name: "@stonehush/api", version: "1", license: "AGPL-3.0-only", dependencies: { font: "1", icon: "2" } };
+  await writeFile(path.join(artifact, "api/package.json"), json(rootManifest));
+  const graph = [{ source: "apps/api", packaged: "api" }];
+  for (const [name, version, license] of [["font", "1", "OFL-1.1"], ["icon", "2", "ISC"]]) {
+    const directory = path.join(artifact, "api/node_modules/.runtime", name);
+    await writeFile(path.join(directory, "package.json"), json({ name, version, license, scripts: { install: "exit 99" } }));
+    await writeFile(path.join(directory, "LICENSE"), `${name} upstream copyright and terms`);
+    await symlink(`.runtime/${name}`, path.join(artifact, "api/node_modules", name));
+    graph.push({ source: `node_modules/${name}`, packaged: `api/node_modules/.runtime/${name}` });
+  }
+  await writeFile(path.join(artifact, "package-graph.json"), json(graph));
+  await writeFile(path.join(artifact, "web/index.html"), "Synthetic emitted asset");
+  await collectInventory(source, artifact, "control-plane");
+  const inputs = JSON.parse(await readFile(path.join(artifact, "supply-chain/components.json")));
+  assert.equal(inputs.components.filter((item) => item.scope === "packaged-runtime").length, 3);
+  assert.equal(inputs.components.filter((item) => item.scope === "frontend-conservative-production-closure").length, 1);
+  assert.equal(inputs.relationships.length, 2);
+  for (const name of ["font", "icon"]) {
+    const component = inputs.components.find((item) => item.name === name);
+    assert.equal(await readFile(path.join(artifact, "supply-chain", component.notices[0].path), "utf8"), `${name} upstream copyright and terms`);
+  }
+  assert.equal(inputs.lockfileSha256, sha256("synthetic frozen lock"));
+  assert.ok(inputs.externalPrerequisites.includes("wordlists"));
 });
