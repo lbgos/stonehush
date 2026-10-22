@@ -1,7 +1,65 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { release } from "node:os";
+import path from "node:path";
 
 export const sha256 = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+
+export function assertUbuntuRelease(os, expected) {
+  assert.ok(["22.04", "24.04"].includes(expected), "Workflow must declare an allowlisted Ubuntu release.");
+  assert.match(os, /^ID=(?:ubuntu|"ubuntu")$/m);
+  const observed = os.match(/^VERSION_ID="?([0-9.]+)"?$/m)?.[1];
+  assert.equal(observed, expected, "Observed Ubuntu release must match the workflow declaration.");
+  return observed;
+}
+
+// Observe the VM separately at build time and at each artifact-consumption stage.
+// Version output is bounded and contains no service logs or configuration.
+export async function observePackagingHost() {
+  assert.equal(process.env.GITHUB_ACTIONS, "true");
+  assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
+  assert.equal(process.platform, "linux");
+  assert.equal(process.arch, "x64");
+  assert.equal(process.version, "v24.18.0");
+  const os = await readFile("/etc/os-release", "utf8");
+  const expectedUbuntuRelease = process.env.EXPECTED_UBUNTU_RELEASE;
+  const ubuntuRelease = assertUbuntuRelease(os, expectedUbuntuRelease);
+  const version = (executable, argv) => execFileSync(executable, argv, {
+    encoding: "utf8", timeout: 10000, maxBuffer: 16384, shell: false,
+    env: { PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`, LANG: "C.UTF-8" },
+  }).trim();
+  const pnpm = version("pnpm", ["--version"]);
+  assert.equal(pnpm, "10.24.0");
+  return {
+    observedAt: new Date().toISOString(), expectedUbuntuRelease, ubuntuRelease, os,
+    kernel: release(), platform: process.platform, architecture: process.arch,
+    systemd: version("/usr/bin/systemctl", ["--version"]),
+    engine: JSON.parse(version("/usr/bin/docker", ["version", "--format", "{{json .}}"])),
+    compose: version("/usr/bin/docker", ["compose", "version", "--short"]),
+    node: process.version, pnpm, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT,
+  };
+}
+
+export function assertPackagingHostPair(build, consumptionHost, revision, tree) {
+  assert.equal(build.revision, revision);
+  assert.equal(build.tree, tree);
+  for (const host of [build.host, consumptionHost]) {
+    assertUbuntuRelease(host.os, consumptionHost.expectedUbuntuRelease);
+    assert.equal(host.expectedUbuntuRelease, consumptionHost.expectedUbuntuRelease);
+    assert.equal(host.ubuntuRelease, consumptionHost.ubuntuRelease);
+    assert.equal(host.runId, consumptionHost.runId);
+    assert.equal(host.runAttempt, consumptionHost.runAttempt);
+  }
+}
+
+export async function packagingHostProvenance(output, revision, tree) {
+  const build = JSON.parse(await readFile(path.join(output, "build-host.json"), "utf8"));
+  const consumptionHost = await observePackagingHost();
+  assertPackagingHostPair(build, consumptionHost, revision, tree);
+  return { buildHost: build.host, consumptionHost };
+}
 
 export function assertDownload(artifact, bytes, runId) {
   assert.equal(artifact.runId, runId);

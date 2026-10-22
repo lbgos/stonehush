@@ -12,12 +12,24 @@ concurrency:
 
 jobs:
   image:
-    name: Exact-head image acceptance
-    runs-on: ubuntu-24.04
+    name: ${{ matrix.check-name }}
+    runs-on: ${{ matrix.host }}
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - host: ubuntu-24.04
+            release: '24.04'
+            check-name: Exact-head image acceptance
+          - host: ubuntu-22.04
+            release: '22.04'
+            check-name: Exact-head image acceptance (Ubuntu 22.04)
     timeout-minutes: 40
     env:
       NODE_OPTIONS: --max-old-space-size=3072
       BUILDX_BUILDER: stonehush-acceptance
+      EXPECTED_UBUNTU_RELEASE: ${{ matrix.release }}
     steps:
       - name: Check out the PR source, not its merge ref
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -39,6 +51,22 @@ jobs:
           docker buildx create --name stonehush-acceptance --driver docker-container --driver-opt memory=4g,cpu-period=100000,cpu-quota=200000 --use
           mkdir -m 700 "$RUNNER_TEMP/stonehush-results"
 
+      - name: Record the actual build host
+        timeout-minutes: 1
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { writeFile } from 'node:fs/promises';
+          import { observePackagingHost } from './scripts/acceptance-real-tools-assertions.mjs';
+          const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+          assert.equal(revision, process.env.PR_HEAD);
+          const tree = execFileSync('git', ['rev-parse', `${revision}^{tree}`], { encoding: 'utf8' }).trim();
+          await writeFile(`${process.env.RUNNER_TEMP}/stonehush-results/build-host.json`, `${JSON.stringify({ revision, tree, host: await observePackagingHost() }, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+          NODE
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+
       - name: Build and export the exact committed image
         timeout-minutes: 20
         run: timeout 1200 node scripts/build-control-plane.mjs stonehush-acceptance:local "$RUNNER_TEMP/control-plane.tar"
@@ -52,6 +80,23 @@ jobs:
       - name: Build the exact committed native service archive
         timeout-minutes: 20
         run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 timeout 1200 node scripts/build-native-runner.mjs "$RUNNER_TEMP/native-runner.tar.gz"
+
+      - name: Bind artifact digests to the recorded build host
+        timeout-minutes: 1
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFile, writeFile } from 'node:fs/promises';
+          const read = async (name) => JSON.parse(await readFile(`${process.env.RUNNER_TEMP}/${name}`, 'utf8'));
+          const build = await read('stonehush-results/build-host.json');
+          const image = await read('control-plane.tar.json');
+          const native = await read('native-runner.tar.gz.json');
+          for (const artifact of [image, native]) {
+            assert.equal(artifact.revision, build.revision);
+            assert.equal(artifact.tree, build.tree);
+          }
+          await writeFile(`${process.env.RUNNER_TEMP}/stonehush-results/build-artifacts.json`, `${JSON.stringify({ ...build, image, native }, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+          NODE
 
       - name: Exercise the loaded image, native runner and recovery
         timeout-minutes: 12
@@ -78,13 +123,13 @@ jobs:
         timeout-minutes: 8
         env:
           EXPECTED_REVISION: ${{ github.event.pull_request.head.sha }}
-        run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" GITHUB_ACTIONS=true "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" "GITHUB_RUN_ID=$GITHUB_RUN_ID" "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT" "EXPECTED_REVISION=$EXPECTED_REVISION" NODE_OPTIONS=--max-old-space-size=3072 timeout 420 node scripts/accept-real-tools.mjs "$RUNNER_TEMP/control-plane.tar" "$RUNNER_TEMP/native-runner.tar.gz" "$RUNNER_TEMP/stonehush-results"
+        run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" GITHUB_ACTIONS=true "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" "GITHUB_RUN_ID=$GITHUB_RUN_ID" "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT" "EXPECTED_REVISION=$EXPECTED_REVISION" "EXPECTED_UBUNTU_RELEASE=$EXPECTED_UBUNTU_RELEASE" NODE_OPTIONS=--max-old-space-size=3072 timeout 420 node scripts/accept-real-tools.mjs "$RUNNER_TEMP/control-plane.tar" "$RUNNER_TEMP/native-runner.tar.gz" "$RUNNER_TEMP/stonehush-results"
 
       - name: Retain only synthetic acceptance evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: control-plane-acceptance-${{ github.event.pull_request.head.sha }}
+          name: control-plane-acceptance-${{ matrix.host }}-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/stonehush-results/
           retention-days: 7
           if-no-files-found: error
