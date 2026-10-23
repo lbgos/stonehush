@@ -131,6 +131,7 @@ else if (args[0] === 'rev-parse' && args[1] === 'HEAD') process.stdout.write('a'
 // HEAD moves after the commit lookup; only the captured commit identifies its tree.
 else if (args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}') process.stdout.write('d'.repeat(40) + '\\n');
 else if (args[0] === 'rev-parse' && args[1] === 'a'.repeat(40) + '^{tree}') process.stdout.write('b'.repeat(40) + '\\n');
+else if (args[0] === 'show' && args[1] === 'a'.repeat(40) + ':pnpm-lock.yaml') process.stdout.write('synthetic frozen lockfile');
 else process.exit(12);
 `, { mode: 0o700 });
     await writeFile(path.join(root, "docker"), `#!${process.execPath}
@@ -156,7 +157,10 @@ if (args[0] === 'build') {
     // Missing shim interpreters must fail rather than invoke host Git/Docker.
     const env = { ...process.env, PATH: root };
     const result = spawnSync(process.execPath, [helper, "synthetic:moved", output], { env, encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr);
+    // The synthetic image has no component packet. Export still binds bytes,
+    // then fails closed instead of claiming an inventory for omitted inputs.
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /docker create/);
     const metadata = JSON.parse(await readFile(`${output}.json`, "utf8"));
     assert.equal(metadata.imageId, id);
     assert.equal(metadata.revision, "a".repeat(40));

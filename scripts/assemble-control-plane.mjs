@@ -105,3 +105,9 @@ if (mode?.startsWith("native-")) {
 }
 await cp(path.join(source, "LICENSE"), path.join(destination, "LICENSE"));
 await writeFile(path.join(destination, "package-graph.json"), `${JSON.stringify([...packages].map(([from, to]) => ({ source: path.relative(source, from), packaged: path.relative(destination, to) })), null, 2)}\n`);
+
+if (process.env.STONEHUSH_COLLECT_INVENTORY === "1") {
+  const { collectInventory, collectSystem } = await import("./release-inventory.mjs");
+  await collectInventory(source, destination, mode === "native-service" ? "native-runner" : "control-plane");
+  if (mode === "native-service") await collectSystem(destination, "native-runner");
+}

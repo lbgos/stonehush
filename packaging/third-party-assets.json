@@ -1,0 +1,47 @@
+{
+  "format": "stonehush-asset-provenance-v1",
+  "assets": [
+    {
+      "path": "apps/web/public/brand/stonehush-icon.svg",
+      "sha256": "257ee4043c4ef60bd3019353ccf46d0b713fd7eadb9eb2cbfb861a9f6e0ade12",
+      "provenance": {
+        "repositoryCommit": "70c402494c371be1a8bb62f968a927f0135b48b0",
+        "repositoryChange": "https://github.com/lbgos/stonehush/pull/133",
+        "embeddedDescription": "SVG title and description in this file; no separate author or rights grant is asserted."
+      },
+      "obligations": [
+        "Brand authorship and rights are not independently established by repository history."
+      ]
+    },
+    {
+      "path": "apps/web/public/brand/stonehush-wordmark.svg",
+      "sha256": "c159c3e5f2e247fb4a9542d9e9f166a39814a06dcd1ffc2801c9a866b3def2ea",
+      "provenance": {
+        "repositoryCommit": "70c402494c371be1a8bb62f968a927f0135b48b0",
+        "repositoryChange": "https://github.com/lbgos/stonehush/pull/133",
+        "embeddedDescription": "SVG title and description in this file; no separate author or rights grant is asserted."
+      },
+      "obligations": [
+        "Brand authorship and rights are not independently established by repository history.",
+        "Embedded description identifies JetBrains Mono letterforms; retain the installed JetBrains Mono upstream license and review font-derived artwork obligations."
+      ]
+    }
+  ],
+  "packageEvidence": [
+    {
+      "name": "@fontsource-variable/dm-sans",
+      "source": "apps/web/src/styles.css:1",
+      "terms": "Read the installed package license and notices; no license inferred from this record."
+    },
+    {
+      "name": "@fontsource-variable/jetbrains-mono",
+      "source": "apps/web/src/styles.css:2",
+      "terms": "Read the installed package license and notices; review reserved font names and modification terms."
+    },
+    {
+      "name": "lucide-react",
+      "source": "packages/ui/package.json",
+      "terms": "Retain installed upstream license, copyright and icon attribution notices."
+    }
+  ]
+}
