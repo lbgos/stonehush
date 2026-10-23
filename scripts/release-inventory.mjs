@@ -460,7 +460,7 @@ export function createSpdx(inputs, system, binding, created) {
   const components = allComponents(inputs, system);
   const artifactId = "SPDXRef-artifact";
   const sourceId = "SPDXRef-source";
-  const packages = [{ SPDXID: artifactId, name: inputs.kind, versionInfo: binding.revision, downloadLocation: "NOASSERTION", filesAnalyzed: false, checksums: [{ algorithm: "SHA256", checksumValue: binding.sha256 }], sourceInfo: json(binding), licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION" },
+  const packages = [{ SPDXID: artifactId, name: inputs.kind, versionInfo: binding.revision, downloadLocation: "NOASSERTION", filesAnalyzed: true, checksums: [{ algorithm: "SHA256", checksumValue: binding.sha256 }], sourceInfo: json(binding), licenseConcluded: "NOASSERTION", licenseDeclared: "NOASSERTION", copyrightText: "NOASSERTION" },
     { SPDXID: sourceId, name: "Stonehush source", versionInfo: binding.revision, downloadLocation: `git+https://github.com/lbgos/stonehush.git@${binding.revision}`, filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: "AGPL-3.0-only", copyrightText: "NOASSERTION", sourceInfo: `Git tree ${binding.tree}; pnpm-lock.yaml SHA256 ${inputs.lockfileSha256}` },
     ...components.map((component) => ({ SPDXID: component.id, name: component.name, ...(!emptyNodeVersion(component) ? { versionInfo: component.version } : {}), downloadLocation: "NOASSERTION", filesAnalyzed: false, licenseConcluded: "NOASSERTION", licenseDeclared: declaredExpression(component.declaredLicense), copyrightText: "NOASSERTION", sourceInfo: json(component), comment: "Declared license is recorded verbatim in sourceInfo with evidence; no license expression or compatibility inferred." }))];
   // Unknown declarations stay NOASSERTION in the SPDX license field. Verbatim
@@ -491,12 +491,17 @@ export function validateSpdx(document) {
     } catch { /* Other package sourceInfo need not be JSON. */ }
     assert.ok(emptyVersionEvidence && !Object.hasOwn(item, "versionInfo") || typeof item.versionInfo === "string" && item.versionInfo.length, "Missing SPDX versionInfo.");
     for (const field of ["name", "downloadLocation", "licenseConcluded", "licenseDeclared", "copyrightText"]) assert.ok(typeof item[field] === "string" && item[field].length, `Missing SPDX ${field}.`);
-    assert.equal(item.filesAnalyzed, false);
+    // SPDX 2.3 section 7.8 forbids file containment for unanalyzed packages.
+    // Only the artifact describes analyzed files; other packages are metadata.
+    assert.equal(item.filesAnalyzed, item.SPDXID === "SPDXRef-artifact", "Invalid SPDX filesAnalyzed.");
   }
+  const fileIds = new Set((document.files ?? []).map((file) => file.SPDXID));
+  const unanalyzedPackages = new Set(document.packages.filter((item) => !item.filesAnalyzed).map((item) => item.SPDXID));
   const edges = new Set();
   for (const edge of document.relationships) {
     assert.ok(ids.has(edge.spdxElementId) && ids.has(edge.relatedSpdxElement), "Dangling SPDX relationship.");
     assert.ok(["DESCRIBES", "GENERATED_FROM", "CONTAINS", "DEPENDS_ON"].includes(edge.relationshipType));
+    assert.ok(!(edge.relationshipType === "CONTAINS" && unanalyzedPackages.has(edge.spdxElementId) && fileIds.has(edge.relatedSpdxElement)), "Unanalyzed SPDX package contains a file.");
     const key = JSON.stringify(edge); assert.ok(!edges.has(key), "Duplicate SPDX relationship."); edges.add(key);
   }
 }

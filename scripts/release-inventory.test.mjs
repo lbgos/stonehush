@@ -75,6 +75,40 @@ test("packet binds actual bytes, versions, dependency relationships and notices 
   assert.deepEqual(await f.verify(), result);
 });
 
+test("SPDX file analysis describes actual artifact files and keeps metadata packages unanalyzed", async (t) => {
+  for (const kind of ["native-runner", "control-plane"]) {
+    const f = await fixture(t, kind);
+    if (kind === "control-plane") f.input.assets.push({ path: "web/app.js", sha256: sha256("synthetic emitted web asset") });
+    const document = createSpdx(f.input, f.system, f.metadata, new Date().toISOString());
+    const artifact = document.packages.find((item) => item.SPDXID === "SPDXRef-artifact");
+    assert.equal(artifact.filesAnalyzed, true);
+    assert.ok(document.packages.filter((item) => item !== artifact).every((item) => item.filesAnalyzed === false));
+    assert.deepEqual(artifact.checksums, [{ algorithm: "SHA256", checksumValue: f.metadata.sha256 }]);
+    assert.deepEqual(JSON.parse(artifact.sourceInfo), f.metadata);
+    assert.ok(!Object.hasOwn(artifact, "packageVerificationCode"));
+    const fileIds = new Set(document.files.map((file) => file.SPDXID));
+    assert.deepEqual(new Set(document.relationships.filter((edge) => edge.spdxElementId === artifact.SPDXID && edge.relationshipType === "CONTAINS" && fileIds.has(edge.relatedSpdxElement)).map((edge) => edge.relatedSpdxElement)), fileIds);
+    assert.ok(fileIds.size >= (kind === "control-plane" ? 2 : 1));
+    validateSpdx(document);
+  }
+});
+
+test("SPDX validation rejects false artifact analysis and analyzed metadata packages", async (t) => {
+  const f = await fixture(t);
+  const original = createSpdx(f.input, f.system, f.metadata, new Date().toISOString());
+  const changed = structuredClone(original);
+  changed.packages.find((item) => item.SPDXID === "SPDXRef-artifact").filesAnalyzed = false;
+  assert.throws(() => validateSpdx(changed), /Invalid SPDX filesAnalyzed/);
+  for (const item of original.packages.filter((item) => item.SPDXID !== "SPDXRef-artifact")) {
+    const changed = structuredClone(original);
+    changed.packages.find((candidate) => candidate.SPDXID === item.SPDXID).filesAnalyzed = true;
+    assert.throws(() => validateSpdx(changed), /Invalid SPDX filesAnalyzed/);
+  }
+  const component = original.packages.find((item) => item.name === "fixture");
+  original.relationships.push({ spdxElementId: component.SPDXID, relationshipType: "CONTAINS", relatedSpdxElement: original.files[0].SPDXID });
+  assert.throws(() => validateSpdx(original), /Unanalyzed SPDX package contains a file/);
+});
+
 test("empty Node version entries stay visible without inventing SPDX versions", async (t) => {
   const f = await fixture(t);
   f.system.nodeVersions = { nghttp3: "", uv: "1.0.0" };
