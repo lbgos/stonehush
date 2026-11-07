@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +9,7 @@ import { collectInventory, collectSystem, createSpdx, hashFile, imagePacket, ins
 
 const id = (key) => `SPDXRef-${sha256(key)}`;
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
+const digests = (bytes) => ({ sha1: createHash("sha1").update(bytes).digest("hex"), sha256: createHash("sha256").update(bytes).digest("hex") });
 async function fixture(t, kind = "native-runner") {
   const entry = kind === "native-runner" ? "apps/runner" : "api";
   const root = await mkdtemp(path.join(tmpdir(), "stonehush-inventory-test-"));
@@ -33,7 +35,7 @@ async function fixture(t, kind = "native-runner") {
   await symlink(".runtime/1", path.join(artifact, entry, "node_modules/fixture"));
   const runtime = definitions.map(({ location }) => ({ source: location, packaged: location }));
   await writeFile(path.join(artifact, "package-graph.json"), json(runtime));
-  const input = { format: "stonehush-inventory-input-v1", kind, runtime, components, frontendManifests: {}, relationships: [{ from: components[0].id, type: "DEPENDS_ON", to: components[1].id }], node: "v24.18.0", pnpm: "10.24.0", lockfileSha256: "f".repeat(64), nativeFiles: [{ path: "node", sha256: sha256("synthetic Node binary") }], assets: [], buildOnly: [], coverageGaps: ["Synthetic fixture"], externalPrerequisites: ["Nmap", "ffuf", "wordlists"] };
+  const input = { format: "stonehush-inventory-input-v1", kind, runtime, components, frontendManifests: {}, relationships: [{ from: components[0].id, type: "DEPENDS_ON", to: components[1].id }], node: "v24.18.0", pnpm: "10.24.0", lockfileSha256: "f".repeat(64), nativeFiles: [{ path: "node", ...digests("synthetic Node binary") }], assets: [], buildOnly: [], coverageGaps: ["Synthetic fixture"], externalPrerequisites: ["Nmap", "ffuf", "wordlists"] };
   const system = { kind: "native-runner", node: "v24.18.0", baseImage: null, debian: null, components: [{ id: id("runtime-node"), kind: "runtime", scope: "bundled-runtime", name: "Node.js", version: "v24.18.0", binarySha256: sha256("synthetic Node binary"), declaredLicense: null, notices, unresolved: ["missing-declared-license", "Node upstream LICENSE includes bundled third-party terms; review required"] }], coverageGaps: ["Synthetic system fixture"] };
   const metadata = { lockfileSha256: "f".repeat(64), revision: "a".repeat(40), tree: "b".repeat(40), sha256: sha256("synthetic archive") };
   await writeFile(path.join(artifact, "artifact.json"), json({ kind: "native-runner", revision: metadata.revision, tree: metadata.tree }));
@@ -78,7 +80,7 @@ test("packet binds actual bytes, versions, dependency relationships and notices 
 test("SPDX file analysis describes actual artifact files and keeps metadata packages unanalyzed", async (t) => {
   for (const kind of ["native-runner", "control-plane"]) {
     const f = await fixture(t, kind);
-    if (kind === "control-plane") f.input.assets.push({ path: "web/app.js", sha256: sha256("synthetic emitted web asset") });
+    if (kind === "control-plane") f.input.assets.push({ path: "web/app.js", ...digests("synthetic emitted web asset") });
     const document = createSpdx(f.input, f.system, f.metadata, new Date().toISOString());
     const artifact = document.packages.find((item) => item.SPDXID === "SPDXRef-artifact");
     assert.equal(artifact.filesAnalyzed, true);
@@ -91,6 +93,100 @@ test("SPDX file analysis describes actual artifact files and keeps metadata pack
     assert.ok(fileIds.size >= (kind === "control-plane" ? 2 : 1));
     validateSpdx(document);
   }
+});
+
+test("SPDX listed files carry exactly one actual SHA1 and SHA256", async (t) => {
+  for (const kind of ["native-runner", "control-plane"]) {
+    const f = await fixture(t, kind);
+    if (kind === "control-plane") f.input.assets.push({ path: "web/app.js", ...digests("synthetic emitted web asset") });
+    const document = createSpdx(f.input, f.system, f.metadata, new Date().toISOString());
+    for (const file of [...f.input.assets, ...f.input.nativeFiles]) {
+      assert.deepEqual(document.files.find((item) => item.fileName === `./${file.path}`).checksums, [
+        { algorithm: "SHA1", checksumValue: file.sha1 },
+        { algorithm: "SHA256", checksumValue: file.sha256 },
+      ]);
+    }
+    validateSpdx(document);
+  }
+});
+
+test("SPDX validation rejects missing, malformed and duplicate file checksums", async (t) => {
+  const f = await fixture(t);
+  const original = createSpdx(f.input, f.system, f.metadata, new Date().toISOString());
+  const valid = [{ algorithm: "SHA1", checksumValue: f.input.nativeFiles[0].sha1 }, { algorithm: "SHA256", checksumValue: f.input.nativeFiles[0].sha256 }];
+  const cases = [
+    ["SHA256 only", valid.slice(1)],
+    ["empty", []],
+    ["missing", undefined],
+    ["short SHA1", [{ ...valid[0], checksumValue: "a".repeat(39) }, valid[1]]],
+    ["long SHA1", [{ ...valid[0], checksumValue: "a".repeat(41) }, valid[1]]],
+    ["nonhex SHA1", [{ ...valid[0], checksumValue: "g".repeat(40) }, valid[1]]],
+    ["uppercase SHA1", [{ ...valid[0], checksumValue: "A".repeat(40) }, valid[1]]],
+    ["duplicate SHA1", [valid[0], ...valid]],
+    ["missing SHA256", valid.slice(0, 1)],
+    ["malformed SHA256", [valid[0], { ...valid[1], checksumValue: "g".repeat(64) }]],
+    ["duplicate SHA256", [...valid, valid[1]]],
+  ];
+  for (const [name, checksums] of cases) await t.test(name, () => {
+    const changed = structuredClone(original);
+    changed.files[0].checksums = checksums;
+    assert.throws(() => validateSpdx(changed), /Invalid SPDX file (SHA1|SHA256|checksums)/);
+  });
+});
+
+test("input verification binds both file digests after refreshing the outer manifest", async (t) => {
+  for (const kind of ["native-runner", "control-plane"]) await t.test(kind, async (t) => {
+    const f = await fixture(t, kind);
+    await mkdir(path.join(f.artifact, "web"));
+    await writeFile(path.join(f.artifact, "web/index.html"), "synthetic web");
+    f.input.assets.push({ path: "web/index.html", ...digests("synthetic web") });
+    if (kind === "control-plane") {
+      f.system.kind = kind;
+      f.system.baseImage = "node:24.18.0-bookworm-slim@sha256:d45d78e7929b46875bbd4e29bea672d5bc48186c6c3588306521c815e78352d6";
+      f.system.debian = [];
+      f.input.components.push({ ...f.input.components[0], id: id("frontend-conservative-production-closure:apps/web"), location: "apps/web", scope: "frontend-conservative-production-closure" });
+      f.input.frontendManifests["apps/web"] = { manifest: { name: "fixture", version: "1.0.0", license: "MIT" }, resolved: {} };
+    }
+    await f.save(); await verifyInputs(f.artifact);
+    for (const array of ["assets", "nativeFiles"]) {
+      const file = f.input[array][0];
+      const original = { ...file };
+      for (const [name, value] of [["missing", undefined], ["malformed", "g".repeat(40)], ["short", "a".repeat(39)], ["wrong", "0".repeat(40)]]) await t.test(`${array} ${name} SHA1`, async () => {
+        if (value === undefined) delete file.sha1;
+        else file.sha1 = value;
+        await f.save();
+        await assert.rejects(verifyInputs(f.artifact), /Packaged file SHA1 checksum mismatch/);
+        Object.assign(file, original);
+      });
+      await t.test(`${array} wrong SHA256 with correct SHA1`, async () => {
+        file.sha256 = "0".repeat(64);
+        await f.save();
+        await assert.rejects(verifyInputs(f.artifact), /Packaged file checksum mismatch/);
+        Object.assign(file, original);
+      });
+    }
+    await f.save(); await verifyInputs(f.artifact);
+  });
+});
+
+test("packet reconstruction rejects tampered SPDX digests with refreshed unsigned sidecars", async (t) => {
+  const f = await fixture(t);
+  await f.packet();
+  const filename = path.join(f.output, "sbom.spdx.json");
+  const original = JSON.parse(await readFile(filename));
+  for (const algorithm of ["SHA1", "SHA256"]) await t.test(algorithm, async () => {
+    const changed = structuredClone(original);
+    const checksum = changed.files[0].checksums.find((item) => item.algorithm === algorithm);
+    assert.ok(checksum, `${algorithm} must be present before tampering`);
+    checksum.checksumValue = "0".repeat(algorithm === "SHA1" ? 40 : 64);
+    validateSpdx(changed);
+    const bytes = json(changed);
+    await writeFile(filename, bytes);
+    const sumsPath = path.join(f.output, "SHA256SUMS");
+    const sums = await readFile(sumsPath, "utf8");
+    await writeFile(sumsPath, sums.replace(/^[a-f0-9]{64}  sbom\.spdx\.json$/m, `${sha256(bytes)}  sbom.spdx.json`));
+    await assert.rejects(f.verify(), /SPDX component or relationship mismatch/);
+  });
 });
 
 test("SPDX validation rejects false artifact analysis and analyzed metadata packages", async (t) => {
@@ -251,7 +347,7 @@ test("frontend closure and emitted assets are compared independently to manifest
   f.system.debian = [];
   await mkdir(path.join(f.artifact, "web"));
   await writeFile(path.join(f.artifact, "web/index.html"), "synthetic web");
-  f.input.assets = [{ path: "web/index.html", sha256: sha256("synthetic web") }];
+  f.input.assets = [{ path: "web/index.html", ...digests("synthetic web") }];
   f.input.components.push({ id: id("frontend-conservative-production-closure:apps/web"), kind: "npm", name: "web", version: "1", scope: "frontend-conservative-production-closure", location: "apps/web", declaredLicense: "MIT", notices: f.input.components[0].notices, unresolved: [] });
   f.input.frontendManifests["apps/web"] = { manifest: { name: "web", version: "1", license: "MIT", dependencies: { omitted: "1" } }, resolved: {} };
   await f.save(); await assert.rejects(verifyInputs(f.artifact), /Frontend dependency omission/);
@@ -266,44 +362,60 @@ test("frontend closure and emitted assets are compared independently to manifest
 });
 
 test("collector reads installed graph and font/icon notices without invoking metadata scripts", async (t) => {
-  const root = await mkdtemp(path.join(tmpdir(), "stonehush-inventory-collect-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  const source = path.join(root, "source");
-  const artifact = path.join(root, "artifact");
-  const workspaces = ["apps/api", "apps/runner", "apps/web", "packages/contracts", "packages/domain", "packages/db", "packages/evidence-native", "packages/ui"];
-  for (const name of workspaces) {
-    await mkdir(path.join(source, name), { recursive: true });
-    await writeFile(path.join(source, name, "package.json"), json({ name, version: "1" }));
-  }
-  for (const name of ["api", "web", "api/node_modules/.runtime/font", "api/node_modules/.runtime/icon"]) await mkdir(path.join(artifact, name), { recursive: true });
-  await writeFile(path.join(source, "package.json"), json({ name: "root", version: "1" }));
-  await writeFile(path.join(source, "LICENSE"), "Synthetic root terms");
-  await writeFile(path.join(source, "pnpm-lock.yaml"), "synthetic frozen lock");
-  await mkdir(path.join(source, "packaging"));
-  await writeFile(path.join(source, "packaging/third-party-assets.json"), json({ assets: [] }));
-  const rootManifest = { name: "@stonehush/api", version: "1", license: "AGPL-3.0-only", dependencies: { font: "1", icon: "2" } };
-  await writeFile(path.join(artifact, "api/package.json"), json(rootManifest));
-  const graph = [{ source: "apps/api", packaged: "api" }];
-  for (const [name, version, license] of [["font", "1", "OFL-1.1"], ["icon", "2", "ISC"]]) {
-    const directory = path.join(artifact, "api/node_modules/.runtime", name);
-    await writeFile(path.join(directory, "package.json"), json({ name, version, license, scripts: { install: "exit 99" } }));
-    await writeFile(path.join(directory, "LICENSE"), `${name} upstream copyright and terms`);
-    await symlink(`.runtime/${name}`, path.join(artifact, "api/node_modules", name));
-    graph.push({ source: `node_modules/${name}`, packaged: `api/node_modules/.runtime/${name}` });
-  }
-  await writeFile(path.join(artifact, "package-graph.json"), json(graph));
-  await writeFile(path.join(artifact, "web/index.html"), "Synthetic emitted asset");
-  await collectInventory(source, artifact, "control-plane");
-  const inputs = JSON.parse(await readFile(path.join(artifact, "supply-chain/components.json")));
-  assert.equal(inputs.components.filter((item) => item.scope === "packaged-runtime").length, 3);
-  assert.equal(inputs.components.filter((item) => item.scope === "frontend-conservative-production-closure").length, 1);
-  assert.equal(inputs.relationships.length, 2);
-  for (const name of ["font", "icon"]) {
-    const component = inputs.components.find((item) => item.name === name);
-    assert.equal(await readFile(path.join(artifact, "supply-chain", component.notices[0].path), "utf8"), `${name} upstream copyright and terms`);
-  }
-  assert.equal(inputs.lockfileSha256, sha256("synthetic frozen lock"));
-  assert.ok(inputs.externalPrerequisites.includes("wordlists"));
+  for (const kind of ["control-plane", "native-runner"]) await t.test(kind, async (t) => {
+    const entry = kind === "native-runner" ? "apps/runner" : "api";
+    const root = await mkdtemp(path.join(tmpdir(), "stonehush-inventory-collect-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const source = path.join(root, "source");
+    const artifact = path.join(root, "artifact");
+    const workspaces = ["apps/api", "apps/runner", "apps/web", "packages/contracts", "packages/domain", "packages/db", "packages/evidence-native", "packages/ui"];
+    for (const name of workspaces) {
+      await mkdir(path.join(source, name), { recursive: true });
+      await writeFile(path.join(source, name, "package.json"), json({ name, version: "1" }));
+    }
+    for (const name of [entry, "web", `${entry}/node_modules/.runtime/font`, `${entry}/node_modules/.runtime/icon`]) await mkdir(path.join(artifact, name), { recursive: true });
+    await writeFile(path.join(source, "package.json"), json({ name: "root", version: "1" }));
+    await writeFile(path.join(source, "LICENSE"), "Synthetic root terms");
+    await writeFile(path.join(source, "pnpm-lock.yaml"), "synthetic frozen lock");
+    await mkdir(path.join(source, "packaging"));
+    await writeFile(path.join(source, "packaging/third-party-assets.json"), json({ assets: [] }));
+    const rootManifest = { name: "@stonehush/api", version: "1", license: "AGPL-3.0-only", dependencies: { font: "1", icon: "2" } };
+    await writeFile(path.join(artifact, `${entry}/package.json`), json(rootManifest));
+    const graph = [{ source: "apps/api", packaged: entry }];
+    for (const [name, version, license] of [["font", "1", "OFL-1.1"], ["icon", "2", "ISC"]]) {
+      const directory = path.join(artifact, `${entry}/node_modules/.runtime`, name);
+      await writeFile(path.join(directory, "package.json"), json({ name, version, license, scripts: { install: "exit 99" } }));
+      await writeFile(path.join(directory, "LICENSE"), `${name} upstream copyright and terms`);
+      await symlink(`.runtime/${name}`, path.join(artifact, `${entry}/node_modules`, name));
+      graph.push({ source: `node_modules/${name}`, packaged: `${entry}/node_modules/.runtime/${name}` });
+    }
+    await writeFile(path.join(artifact, "package-graph.json"), json(graph));
+    await writeFile(path.join(artifact, "web/index.html"), "Synthetic emitted asset");
+    const nativeBytes = new Map([
+      ["node", Buffer.from([0, 255, 128, 10, 13])],
+      [`${entry}/addon.node`, Buffer.alloc(131073, 0xa5)],
+      [`${entry}/empty.node`, Buffer.alloc(0)],
+      [`${entry}/helper`, Buffer.from("synthetic executable bytes")],
+    ]);
+    for (const [name, bytes] of nativeBytes) await writeFile(path.join(artifact, name), bytes, { mode: name.endsWith("helper") ? 0o755 : 0o644 });
+    await writeFile(path.join(artifact, "web/empty.bin"), Buffer.alloc(0));
+    await writeFile(path.join(artifact, "web/binary.bin"), Buffer.from([0, 128, 255]));
+    await collectInventory(source, artifact, kind);
+    const inputs = JSON.parse(await readFile(path.join(artifact, "supply-chain/components.json")));
+    assert.equal(inputs.components.filter((item) => item.scope === "packaged-runtime").length, 3);
+    assert.equal(inputs.components.filter((item) => item.scope === "frontend-conservative-production-closure").length, kind === "control-plane" ? 1 : 0);
+    assert.equal(inputs.relationships.length, 2);
+    for (const name of ["font", "icon"]) {
+      const component = inputs.components.find((item) => item.name === name);
+      assert.equal(await readFile(path.join(artifact, "supply-chain", component.notices[0].path), "utf8"), `${name} upstream copyright and terms`);
+    }
+    assert.equal(inputs.lockfileSha256, sha256("synthetic frozen lock"));
+    assert.ok(inputs.externalPrerequisites.includes("wordlists"));
+    assert.deepEqual(inputs.nativeFiles, [...nativeBytes].map(([name, bytes]) => ({ path: name, ...digests(bytes) })).sort((a, b) => a.path.localeCompare(b.path)));
+    const webBytes = new Map([["web/binary.bin", Buffer.from([0, 128, 255])], ["web/empty.bin", Buffer.alloc(0)], ["web/index.html", Buffer.from("Synthetic emitted asset")]]);
+    assert.deepEqual(inputs.assets, kind === "control-plane" ? [...webBytes].map(([name, bytes]) => ({ path: name, ...digests(bytes) })) : []);
+    for (const [name, bytes] of nativeBytes) assert.equal(await hashFile(path.join(artifact, name)), digests(bytes).sha256);
+  });
 });
 
 test("image packet independently verifies copied final Node and Debian bytes", async (t) => {
@@ -321,7 +433,7 @@ test("image packet independently verifies copied final Node and Debian bytes", a
   await writeFile(path.join(f.root, "debian-status"), status);
   await mkdir(path.join(f.artifact, "web"));
   await writeFile(path.join(f.artifact, "web/index.html"), "synthetic");
-  f.input.assets = [{ path: "web/index.html", sha256: sha256("synthetic") }];
+  f.input.assets = [{ path: "web/index.html", ...digests("synthetic") }];
   const component = { ...f.input.components[0], id: id("frontend-conservative-production-closure:apps/web"), location: "apps/web", scope: "frontend-conservative-production-closure" };
   f.input.components.push(component);
   f.input.frontendManifests["apps/web"] = { manifest: { name: component.name, version: component.version, license: component.declaredLicense }, resolved: {} };

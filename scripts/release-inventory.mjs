@@ -45,17 +45,27 @@ export async function readBounded(filename, maximum = MAX_METADATA, installedInp
     return bytes;
   } finally { await handle.close(); }
 }
-export async function hashFile(filename) {
+async function fileDigests(filename) {
   const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const before = await handle.stat();
     if (!before.isFile() || before.nlink !== 1 || before.size > 16 * 1024 ** 3) throw new Error("Unsafe artifact file.");
-    const hash = createHash("sha256");
-    for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
+    const sha1 = createHash("sha1");
+    const sha256 = createHash("sha256");
+    let size = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+      size += chunk.length;
+      if (size > before.size) throw new Error("Artifact changed during hash.");
+      sha1.update(chunk); sha256.update(chunk);
+    }
     const after = await handle.stat();
-    if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("Artifact changed during hash.");
-    return hash.digest("hex");
+    if (size !== before.size || before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("Artifact changed during hash.");
+    return { sha1: sha1.digest("hex"), sha256: sha256.digest("hex") };
   } finally { await handle.close(); }
+}
+// Keep SHA256 as the identity digest for archives, sources, notices and packets.
+export async function hashFile(filename) {
+  return (await fileDigests(filename)).sha256;
 }
 async function readJson(filename) { return JSON.parse(await readBounded(filename)); }
 async function put(root, name, bytes) {
@@ -289,7 +299,7 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
   }
   const assets = [];
   if (kind === "control-plane") {
-    for (const name of await walkFiles(path.join(artifact, "web"))) assets.push({ path: `web/${name}`, sha256: await hashFile(path.join(artifact, "web", name)) });
+    for (const name of await walkFiles(path.join(artifact, "web"))) assets.push({ path: `web/${name}`, ...await fileDigests(path.join(artifact, "web", name)) });
     const attribution = await readJson(path.join(source, "packaging/third-party-assets.json"));
     for (const asset of attribution.assets) {
       safeName(asset.path);
@@ -306,7 +316,7 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
   for (const name of await walkFiles(artifact, true)) {
     if (name.startsWith("supply-chain/")) continue;
     const info = await lstat(path.join(artifact, name));
-    if (name.endsWith(".node") || name === "node" || info.mode & 0o111) nativeFiles.push({ path: name, sha256: await hashFile(path.join(artifact, name)) });
+    if (name.endsWith(".node") || name === "node" || info.mode & 0o111) nativeFiles.push({ path: name, ...await fileDigests(path.join(artifact, name)) });
   }
   const inputs = { format: "stonehush-inventory-input-v1", kind, lockfileSha256: await hashFile(path.join(source, "pnpm-lock.yaml")), node: process.version, pnpm: "10.24.0", runtime, components: sorted(components), frontendManifests, relationships: sorted(relationships), buildOnly: sorted(buildOnly), assets, nativeFiles, externalPrerequisites: ["Nmap", "ffuf", "wordlists", "Linux kernel", "host libc/shared libraries", "systemd user services for native installation"], coverageGaps: ["Frontend closure is conservative; exact bundled symbol ownership is not inferred.", "Build-only entries cover direct installed dev roots, not the entire build toolchain.", "Runtime-linked host libraries for the native archive are operator prerequisites, not bundled components."] };
   await put(output, "components.json", json(inputs));
@@ -468,7 +478,7 @@ export function createSpdx(inputs, system, binding, created) {
   const relationships = [{ spdxElementId: "SPDXRef-DOCUMENT", relationshipType: "DESCRIBES", relatedSpdxElement: artifactId }, { spdxElementId: artifactId, relationshipType: "GENERATED_FROM", relatedSpdxElement: sourceId },
     ...components.map((component) => ({ spdxElementId: artifactId, relationshipType: "CONTAINS", relatedSpdxElement: component.id })),
     ...[...inputs.relationships, ...(system.relationships ?? [])].map((edge) => ({ spdxElementId: edge.from, relationshipType: edge.type, relatedSpdxElement: edge.to }))];
-  const files = [...inputs.assets, ...inputs.nativeFiles].map((file) => ({ SPDXID: id(`file:${file.path}`), fileName: `./${file.path}`, checksums: [{ algorithm: "SHA256", checksumValue: file.sha256 }], licenseConcluded: "NOASSERTION", licenseInfoInFiles: ["NOASSERTION"], copyrightText: "NOASSERTION" }));
+  const files = [...inputs.assets, ...inputs.nativeFiles].map((file) => ({ SPDXID: id(`file:${file.path}`), fileName: `./${file.path}`, checksums: [{ algorithm: "SHA1", checksumValue: file.sha1 }, { algorithm: "SHA256", checksumValue: file.sha256 }], licenseConcluded: "NOASSERTION", licenseInfoInFiles: ["NOASSERTION"], copyrightText: "NOASSERTION" }));
   for (const file of files) relationships.push({ spdxElementId: artifactId, relationshipType: "CONTAINS", relatedSpdxElement: file.SPDXID });
   const document = { spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT", name: `Stonehush ${inputs.kind} inventory`, documentNamespace: `https://stonehush.invalid/spdx/${inputs.kind}/${binding.sha256}`, creationInfo: { creators: ["Tool: stonehush-release-inventory"], created }, packages, files, relationships };
   validateSpdx(document);
@@ -494,6 +504,15 @@ export function validateSpdx(document) {
     // SPDX 2.3 section 7.8 forbids file containment for unanalyzed packages.
     // Only the artifact describes analyzed files; other packages are metadata.
     assert.equal(item.filesAnalyzed, item.SPDXID === "SPDXRef-artifact", "Invalid SPDX filesAnalyzed.");
+  }
+  for (const file of document.files ?? []) {
+    assert.ok(Array.isArray(file.checksums), "Invalid SPDX file checksums.");
+    // SPDX 2.3 section 8.4 requires exactly one SHA1 from each file's bytes.
+    // Retain the SHA256 binding used by the artifact inventory as well.
+    for (const [algorithm, pattern] of [["SHA1", /^[a-f0-9]{40}$/], ["SHA256", /^[a-f0-9]{64}$/]]) {
+      const checksums = file.checksums.filter((item) => item?.algorithm === algorithm);
+      assert.ok(checksums.length === 1 && typeof checksums[0].checksumValue === "string" && pattern.test(checksums[0].checksumValue), `Invalid SPDX file ${algorithm} checksum.`);
+    }
   }
   const fileIds = new Set((document.files ?? []).map((file) => file.SPDXID));
   const unanalyzedPackages = new Set(document.packages.filter((item) => !item.filesAnalyzed).map((item) => item.SPDXID));
@@ -571,7 +590,10 @@ export async function verifyInputs(artifact) {
     assert.deepEqual(input.assets.map((item) => item.path).sort(), emitted.map((name) => `web/${name}`).sort(), "Emitted asset omission.");
   }
   for (const file of [...input.assets, ...input.nativeFiles]) {
-    safeName(file.path); assert.equal(await hashFile(path.join(artifact, file.path)), file.sha256, "Packaged file checksum mismatch.");
+    safeName(file.path);
+    const actual = await fileDigests(path.join(artifact, file.path));
+    assert.equal(actual.sha1, file.sha1, "Packaged file SHA1 checksum mismatch.");
+    assert.equal(actual.sha256, file.sha256, "Packaged file checksum mismatch.");
   }
   const system = await readJson(path.join(artifact, "supply-chain/system.json"));
   if (input.kind === "native-runner") assert.equal(await hashFile(path.join(artifact, "node")), system.components.find((entry) => entry.kind === "runtime")?.binarySha256, "Bundled Node checksum mismatch.");
