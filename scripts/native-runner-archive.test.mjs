@@ -11,10 +11,15 @@ test("archive export exclusively creates a private file and refuses intervening 
   try {
     await mkdir(path.join(root, "stonehush-runner"));
     await writeFile(path.join(root, "stonehush-runner", "synthetic"), "synthetic artifact bytes");
+    await mkdir(path.join(root, "stonehush-runner/supply-chain/notices"), { recursive: true });
+    await writeFile(path.join(root, "stonehush-runner/supply-chain/components.json"), '{"kind":"native-runner","fixture":true}\n');
+    await writeFile(path.join(root, "stonehush-runner/supply-chain/notices/upstream.txt"), "Synthetic upstream copyright and license text");
     const output = path.join(root, "runner.tar.gz");
     await archiveRuntime(root, output);
     assert.equal((await stat(output)).mode & 0o777, 0o600);
     assert.ok(gunzipSync(await readFile(output)).includes(Buffer.from("synthetic artifact bytes")));
+    assert.ok(gunzipSync(await readFile(output)).includes(Buffer.from("Synthetic upstream copyright and license text")));
+    assert.ok(gunzipSync(await readFile(output)).includes(Buffer.from("supply-chain/components.json")));
     const original = await readFile(output);
     await assert.rejects(archiveRuntime(root, output), { code: "EEXIST" });
     assert.deepEqual(await readFile(output), original);

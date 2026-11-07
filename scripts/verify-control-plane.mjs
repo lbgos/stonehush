@@ -22,7 +22,7 @@ async function inspect(relative = "") {
     } else if (entry.isDirectory()) {
       await inspect(name);
     } else {
-      if (!entry.isFile()) throw new Error("Package contains a special file.");
+      if (!entry.isFile() || (await lstat(filename)).nlink !== 1) throw new Error("Package contains a special file or hardlink.");
       const bytes = await readFile(filename);
       inventory.push({ path: name, sizeBytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
     }
@@ -63,4 +63,4 @@ try {
 }
 await readFile(path.join(root, "web/index.html"));
 inventory.sort((a, b) => a.path.localeCompare(b.path, "en"));
-await writeFile(path.join(root, "artifact.json"), `${JSON.stringify({ revision, tree, node: process.version, pnpm: "10.24.0", schemaVersion: 27, migrations, inventory }, null, 2)}\n`);
+await writeFile(path.join(root, "artifact.json"), `${JSON.stringify({ revision, tree, node: process.version, pnpm: "10.24.0", schemaVersion: 27, migrations, inventory }, null, 2)}\n`, { flag: "wx" });

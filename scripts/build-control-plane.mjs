@@ -1,24 +1,18 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { buildHost, freshOutputs, imagePacket } from "./release-inventory.mjs";
 
 const [tag, output] = process.argv.slice(2);
 if (!tag || tag.startsWith("-") || !output || !path.isAbsolute(output) || process.argv.length !== 4) {
   throw new Error("usage: node scripts/build-control-plane.mjs <local-image-tag> <absolute-new-image.tar>");
 }
-for (const filename of [output, `${output}.json`]) {
-  try {
-    await lstat(filename);
-    throw new Error("Artifact output already exists.");
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-}
+await freshOutputs([output, `${output}.json`, `${output}.supply-chain`]);
 const cwd = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 function git(...args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -64,5 +58,8 @@ try {
 }
 const hash = createHash("sha256");
 for await (const chunk of createReadStream(output)) hash.update(chunk);
-await writeFile(`${output}.json`, `${JSON.stringify({ revision, tree, imageId, sha256: hash.digest("hex"), platform: "linux/amd64" }, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+const lockfileSha256 = createHash("sha256").update(execFileSync("git", ["show", `${revision}:pnpm-lock.yaml`], { cwd })).digest("hex");
+const metadata = { revision, tree, lockfileSha256, imageId, sha256: hash.digest("hex"), platform: "linux/amd64" };
+await writeFile(`${output}.json`, `${JSON.stringify(metadata, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+await imagePacket(imageId, output, metadata, await buildHost(revision, tree), `${output}.supply-chain`);
 console.log("Local image and archive created. Source and artifact identities are in the adjacent JSON file.");

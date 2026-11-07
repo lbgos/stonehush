@@ -70,6 +70,8 @@ jobs:
 
       - name: Build and export the exact committed image
         timeout-minutes: 20
+        env:
+          STONEHUSH_BUILD_HOST_RECEIPT: ${{ runner.temp }}/stonehush-results/build-host.json
         run: timeout 1200 node scripts/build-control-plane.mjs stonehush-acceptance:local "$RUNNER_TEMP/control-plane.tar"
 
       - name: Build the matching native runner
@@ -80,7 +82,9 @@ jobs:
 
       - name: Build the exact committed native service archive
         timeout-minutes: 20
-        run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 timeout 1200 node scripts/build-native-runner.mjs "$RUNNER_TEMP/native-runner.tar.gz"
+        env:
+          STONEHUSH_BUILD_HOST_RECEIPT: ${{ runner.temp }}/stonehush-results/build-host.json
+        run: sudo systemd-run --scope -p MemoryMax=4G -p CPUQuota=200% sudo -u "#$(id -u)" -g "#$(id -g)" env "PATH=$PATH" NODE_OPTIONS=--max-old-space-size=3072 "STONEHUSH_BUILD_HOST_RECEIPT=$STONEHUSH_BUILD_HOST_RECEIPT" timeout 1200 node scripts/build-native-runner.mjs "$RUNNER_TEMP/native-runner.tar.gz"
 
       - name: Bind artifact digests to the recorded build host
         timeout-minutes: 1
@@ -97,6 +101,39 @@ jobs:
             assert.equal(artifact.tree, build.tree);
           }
           await writeFile(`${process.env.RUNNER_TEMP}/stonehush-results/build-artifacts.json`, `${JSON.stringify({ ...build, image, native }, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+          NODE
+
+      - name: Independently verify and retain the artifact supply-chain packets
+        timeout-minutes: 4
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+          import path from 'node:path';
+          import { imagePacket, verifyPacket, walkFiles } from './scripts/release-inventory.mjs';
+          const root = process.env.RUNNER_TEMP;
+          const host = JSON.parse(await readFile(`${root}/stonehush-results/build-host.json`, 'utf8'));
+          const image = JSON.parse(await readFile(`${root}/control-plane.tar.json`, 'utf8'));
+          const native = JSON.parse(await readFile(`${root}/native-runner.tar.gz.json`, 'utf8'));
+          const destination = `${root}/stonehush-results/supply-chain`;
+          await mkdir(destination, { mode: 0o700 });
+          const temporary = await mkdtemp(`${root}/stonehush-packet-verify-`);
+          try {
+            // Re-extract the final native archive independently of its builder.
+            execFileSync('tar', ['-xzf', `${root}/native-runner.tar.gz`, '-C', temporary], { timeout: 60000 });
+            const nativeResult = await verifyPacket(`${root}/native-runner.tar.gz.supply-chain`, `${temporary}/stonehush-runner`, `${root}/native-runner.tar.gz`, native, host);
+            // Re-copy the immutable final image and verify every original packet byte.
+            const imageResult = await imagePacket(image.imageId, `${root}/control-plane.tar`, image, host, `${root}/control-plane.tar.supply-chain`, true);
+            for (const [name, source] of [['control-plane', `${root}/control-plane.tar.supply-chain`], ['native-runner', `${root}/native-runner.tar.gz.supply-chain`]]) {
+              for (const member of await walkFiles(source)) {
+                assert.ok(['sbom.spdx.json', 'inventory.json', 'components.json', 'system.json', 'SHA256SUMS'].includes(member) || /^notices\/[a-f0-9]{64}\.txt$/.test(member), 'Unexpected supply-chain retention member.');
+                await mkdir(path.dirname(`${destination}/${name}/${member}`), { recursive: true });
+                await cp(`${source}/${member}`, `${destination}/${name}/${member}`, { errorOnExist: true, force: false });
+              }
+            }
+            console.log(JSON.stringify({ imageResult, nativeResult, redistribution: 'NOT CLEARED', source: host.revision, tree: host.tree, imageId: image.imageId }));
+          } finally { await rm(temporary, { recursive: true, force: true }); }
           NODE
 
       - name: Exercise the loaded image, native runner and recovery
