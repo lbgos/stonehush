@@ -110,6 +110,10 @@ export async function walkFiles(directory, links = false, linkRecords = []) {
   await walk();
   return files.sort();
 }
+function isNativeFile(name, info) {
+  if (name.startsWith("supply-chain/")) return false;
+  return name.endsWith(".node") || name === "node" || Boolean(info.mode & 0o111);
+}
 async function resolveInside(root, filename, depth = 0) {
   if (depth > 40) throw new Error("Inventory link depth exceeds limit.");
   inside(root, path.resolve(filename));
@@ -314,9 +318,8 @@ export async function collectInventory(sourceDirectory, artifactDirectory, kind)
   }
   const nativeFiles = [];
   for (const name of await walkFiles(artifact, true)) {
-    if (name.startsWith("supply-chain/")) continue;
     const info = await lstat(path.join(artifact, name));
-    if (name.endsWith(".node") || name === "node" || info.mode & 0o111) nativeFiles.push({ path: name, ...await fileDigests(path.join(artifact, name)) });
+    if (isNativeFile(name, info)) nativeFiles.push({ path: name, ...await fileDigests(path.join(artifact, name)) });
   }
   const inputs = { format: "stonehush-inventory-input-v1", kind, lockfileSha256: await hashFile(path.join(source, "pnpm-lock.yaml")), node: process.version, pnpm: "10.24.0", runtime, components: sorted(components), frontendManifests, relationships: sorted(relationships), buildOnly: sorted(buildOnly), assets, nativeFiles, externalPrerequisites: ["Nmap", "ffuf", "wordlists", "Linux kernel", "host libc/shared libraries", "systemd user services for native installation"], coverageGaps: ["Frontend closure is conservative; exact bundled symbol ownership is not inferred.", "Build-only entries cover direct installed dev roots, not the entire build toolchain.", "Runtime-linked host libraries for the native archive are operator prerequisites, not bundled components."] };
   await put(output, "components.json", json(inputs));
@@ -530,13 +533,17 @@ export async function verifyInputs(artifact) {
   const linkRecords = [];
   const names = (await walkFiles(artifact, true, linkRecords)).filter((name) => name !== "artifact.json");
   const records = [];
+  const nativePaths = [];
   for (const name of names) {
     const info = await lstat(path.join(artifact, name));
+    if (isNativeFile(name, info)) nativePaths.push(name);
     records.push(manifest.kind === "native-runner" ? { path: name, sha256: await hashFile(path.join(artifact, name)), executable: Boolean(info.mode & 0o111) } : { path: name, sizeBytes: info.size, sha256: await hashFile(path.join(artifact, name)) });
   }
   if (manifest.kind === "native-runner") records.push(...linkRecords);
   assert.deepEqual(sorted(manifest.inventory), sorted(records), "Artifact file/member inventory mismatch.");
   const input = await readJson(path.join(artifact, "supply-chain/components.json"));
+  const listedNativePaths = input.nativeFiles.map((file) => { safeName(file.path); return file.path; });
+  assert.deepEqual(sorted(listedNativePaths), sorted(nativePaths), "Native file inventory mismatch.");
   const graph = await readJson(path.join(artifact, "package-graph.json"));
   assert.deepEqual(input.runtime, graph, "Packaged graph differs from inventory input.");
   const runtime = input.components.filter((component) => component.scope === "packaged-runtime");

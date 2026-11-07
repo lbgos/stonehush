@@ -216,6 +216,29 @@ test("input verification binds both file digests after refreshing the outer mani
   });
 });
 
+test("input verification rejects omitted native files after refreshing manifests and sidecars", async (t) => {
+  const f = await fixture(t);
+  await f.packet();
+  f.input.nativeFiles = [];
+  await f.save();
+  const componentsPath = path.join(f.output, "components.json");
+  await writeFile(componentsPath, json(f.input));
+  const sbomPath = path.join(f.output, "sbom.spdx.json");
+  const originalSpdx = JSON.parse(await readFile(sbomPath));
+  await writeFile(sbomPath, json(createSpdx(f.input, f.system, f.metadata, originalSpdx.creationInfo.created)));
+  const inventoryPath = path.join(f.output, "inventory.json");
+  await writeFile(inventoryPath, json(JSON.parse(await readFile(inventoryPath))));
+  const sumsPath = path.join(f.output, "SHA256SUMS");
+  const sums = (await readFile(sumsPath, "utf8")).split("\n");
+  for (const file of ["sbom.spdx.json", "inventory.json", "components.json"]) {
+    const index = sums.findIndex((line) => line.endsWith(`  ${file}`));
+    assert.ok(index >= 0);
+    sums[index] = `${sha256(await readFile(path.join(f.output, file)))}  ${file}`;
+  }
+  await writeFile(sumsPath, sums.join("\n"));
+  await assert.rejects(f.verify(), /Native file inventory mismatch/);
+});
+
 test("packet reconstruction rejects tampered SPDX digests with refreshed unsigned sidecars", async (t) => {
   const f = await fixture(t);
   await f.packet();
