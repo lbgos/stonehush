@@ -6,6 +6,8 @@ Finding 4503941807 is corrected on the isolated implementation branch.
 
 - Pre-fix PR head: `e67db80955844a83503f229979ace6b5dbf3e732`
 - Pre-fix head tree: `65a23c163a5fff5f6a5b8cb9e59ff90428db322d`
+- Fix commit head: `0ff62f13cc91dace1a67c42633e6b3cd6a597a91`
+- Fix commit tree: `c9fffed16f61735a0dd14fae699abe374951a17d`
 - PR base: `main` at `09c56feb228073f5fd8ab88030d12940f25dd57c`
 - Commit author and committer required: `285507185+lbgos@users.noreply.github.com`
 
