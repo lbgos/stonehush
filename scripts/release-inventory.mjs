@@ -628,6 +628,12 @@ export async function verifyInputs(artifact) {
   return { input, system };
 }
 
+function packetReport(input, system, metadata, host) {
+  const binding = { ...metadata, kind: input.kind, lockfileSha256: input.lockfileSha256, node: input.node, pnpm: input.pnpm, baseImage: system.baseImage, host };
+  const components = allComponents(input, system);
+  return { status: "INVENTORY TOOLING ONLY", redistribution: "NOT CLEARED", binding, componentCount: components.length, scopes: Object.fromEntries([...new Set(components.map((item) => item.scope))].sort().map((scope) => [scope, components.filter((item) => item.scope === scope).length])), unresolved: components.filter((item) => item.unresolved.length).map((item) => ({ component: item.id, name: item.name, version: item.version, issues: item.unresolved, notices: item.notices })), coverageGaps: [...input.coverageGaps, ...system.coverageGaps], buildOnly: input.buildOnly, externalPrerequisites: input.externalPrerequisites };
+}
+
 export async function writePacket(artifactDirectory, archive, metadata, host, output) {
   const artifact = await rootDirectory(artifactDirectory);
   await walkFiles(artifact, true);
@@ -638,11 +644,9 @@ export async function writePacket(artifactDirectory, archive, metadata, host, ou
   for (const key of ["revision", "tree"]) { assert.equal(metadata[key], manifest[key], "Artifact/source mismatch."); assert.equal(metadata[key], host[key], "Build host/source mismatch."); }
   assert.equal(await hashFile(archive), metadata.sha256, "Archive checksum mismatch.");
   assert.equal(input.lockfileSha256, metadata.lockfileSha256, "Frozen source lockfile mismatch.");
-  const binding = { ...metadata, kind: input.kind, lockfileSha256: input.lockfileSha256, node: input.node, pnpm: input.pnpm, baseImage: system.baseImage, host };
+  const report = packetReport(input, system, metadata, host);
   const created = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-  const document = createSpdx(input, system, binding, created);
-  const components = allComponents(input, system);
-  const report = { status: "INVENTORY TOOLING ONLY", redistribution: "NOT CLEARED", binding, componentCount: components.length, scopes: Object.fromEntries([...new Set(components.map((item) => item.scope))].sort().map((scope) => [scope, components.filter((item) => item.scope === scope).length])), unresolved: components.filter((item) => item.unresolved.length).map((item) => ({ component: item.id, name: item.name, version: item.version, issues: item.unresolved, notices: item.notices })), coverageGaps: [...input.coverageGaps, ...system.coverageGaps], buildOnly: input.buildOnly, externalPrerequisites: input.externalPrerequisites };
+  const document = createSpdx(input, system, report.binding, created);
   await rejectLinkedAncestors(path.dirname(output));
   await mkdir(output); // Partial packets stay diagnosable; existing output is refused.
   await put(output, "sbom.spdx.json", json(document));
@@ -677,15 +681,20 @@ export async function verifyPacket(output, artifactDirectory, archive, metadata,
   assert.deepEqual(await readJson(path.join(output, "system.json")), system);
   const report = await readJson(path.join(output, "inventory.json"));
   assert.equal(input.lockfileSha256, metadata.lockfileSha256, "Frozen source lockfile mismatch.");
-  assert.equal(report.redistribution, "NOT CLEARED"); assert.deepEqual(report.binding.host, host);
-  for (const key of Object.keys(metadata)) assert.deepEqual(report.binding[key], metadata[key], "Packet binding mismatch.");
+  const expectedReport = packetReport(input, system, metadata, host);
+  assert.deepEqual(report, expectedReport, "Packet report mismatch.");
+  for (const name of actualFiles.filter((item) => item.startsWith("notices/"))) {
+    const match = /^notices\/([a-f0-9]{64})\.txt$/.exec(name);
+    assert.ok(match, "Packet notice filename mismatch.");
+    const digest = await hashFile(path.join(output, name));
+    assert.equal(digest, match[1], "Packet notice digest mismatch.");
+    assert.equal(digest, await hashFile(path.join(artifact, "supply-chain", name)), "Packet notice mismatch.");
+  }
   const manifest = await readJson(path.join(artifact, "artifact.json"));
   assert.equal(manifest.revision, metadata.revision); assert.equal(manifest.tree, metadata.tree);
-  assert.equal(report.componentCount, allComponents(input, system).length);
-  assert.deepEqual(report.unresolved, allComponents(input, system).filter((item) => item.unresolved.length).map((item) => ({ component: item.id, name: item.name, version: item.version, issues: item.unresolved, notices: item.notices })));
   const document = await readJson(path.join(output, "sbom.spdx.json"));
   validateSpdx(document);
-  assert.deepEqual(document, createSpdx(input, system, report.binding, document.creationInfo.created), "SPDX component or relationship mismatch.");
+  assert.deepEqual(document, createSpdx(input, system, expectedReport.binding, document.creationInfo.created), "SPDX component or relationship mismatch.");
   return { redistribution: report.redistribution, componentCount: report.componentCount, checksumSha256: await hashFile(path.join(output, "SHA256SUMS")) };
 }
 

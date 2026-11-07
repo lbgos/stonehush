@@ -59,7 +59,13 @@ The SPDX 2.3 documents bind the source commit/tree, frozen lockfile digest, arti
 
 The image inventory records the assembled server dependency graph, conservative installed frontend production closure, emitted web files, font/icon package notices, brand provenance, native helpers/addons, Node version entries, bundled package-manager packages and the final runtime image's installed Debian package versions and copyright files. Build-only direct dev roots and operator prerequisites are separate. A conservative frontend entry does not establish that every symbol survived bundling. Nmap, ffuf and wordlists remain external. The native archive inventories its assembled dependency graph and bundled Node, without claiming to bundle the host's shared libraries.
 
-Verification compares runtime components and relationships with the packaged graph and manifests, frontend components with captured installed manifest/resolution evidence, Debian components with the final-image package query, and files/notices with their actual bytes. To recheck a native packet against a fresh extraction of the matching archive:
+Verification compares runtime components and relationships with the packaged graph and manifests, frontend components with captured installed manifest/resolution evidence, Debian components with the final-image package query, and files/notices with their actual bytes. CI retains a separate build-host receipt. Local build helpers keep that receipt in the packet's `inventory.json` rather than writing a separate file. To recheck a local native packet, first copy its host binding to a new receipt file:
+
+```sh
+node --input-type=module -e 'import { readFileSync, writeFileSync } from "node:fs"; const packet = JSON.parse(readFileSync(process.argv[1], "utf8")); writeFileSync(process.argv[2], JSON.stringify(packet.binding.host, null, 2) + "\n", { flag: "wx", mode: 0o600 });' /absolute/native-runner.tar.gz.supply-chain/inventory.json /absolute/build-host.json
+```
+
+This copied receipt comes from the unsigned packet. It enables consistency checks and is not independent proof of the build host or provenance. Use a separately trusted receipt when one is available. Then verify against a fresh extraction of the matching archive:
 
 ```sh
 node scripts/release-inventory.mjs verify /absolute/extraction/stonehush-runner /absolute/native-runner.tar.gz /absolute/native-runner.tar.gz.json /absolute/build-host.json /absolute/native-runner.tar.gz.supply-chain

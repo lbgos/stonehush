@@ -77,6 +77,53 @@ test("packet binds actual bytes, versions, dependency relationships and notices 
   assert.deepEqual(await f.verify(), result);
 });
 
+test("packet reconstruction rejects report and notice changes with refreshed unsigned sidecars", async (t) => {
+  const cases = [
+    ["kind", (report) => { report.binding.kind = "control-plane"; }],
+    ["base image", (report) => { report.binding.baseImage = "modified base"; }],
+    ["Node", (report) => { report.binding.node = "modified Node"; }],
+    ["pnpm", (report) => { report.binding.pnpm = "modified pnpm"; }],
+    ["status", (report) => { report.status = "CLEARED"; }],
+    ["scopes", (report) => { report.scopes = {}; }],
+    ["coverage gaps", (report) => { report.coverageGaps = []; }],
+    ["build only", (report) => { report.buildOnly = ["modified"]; }],
+    ["external prerequisites", (report) => { report.externalPrerequisites = []; }],
+    ["unexpected report member", (report) => { report.extra = true; }],
+  ];
+  for (const [name, mutate] of cases) await t.test(name, async (t) => {
+    const f = await fixture(t);
+    await f.packet();
+    const report = JSON.parse(await readFile(path.join(f.output, "inventory.json")));
+    mutate(report);
+    const document = JSON.parse(await readFile(path.join(f.output, "sbom.spdx.json")));
+    await writeFile(path.join(f.output, "inventory.json"), json(report));
+    await writeFile(path.join(f.output, "sbom.spdx.json"), json(createSpdx(f.input, f.system, report.binding, document.creationInfo.created)));
+    const sumsPath = path.join(f.output, "SHA256SUMS");
+    const sums = (await readFile(sumsPath, "utf8")).split("\n");
+    for (const file of ["inventory.json", "sbom.spdx.json"]) {
+      const index = sums.findIndex((line) => line.endsWith(`  ${file}`));
+      assert.ok(index >= 0);
+      sums[index] = `${sha256(await readFile(path.join(f.output, file)))}  ${file}`;
+    }
+    await writeFile(sumsPath, sums.join("\n"));
+    await assert.rejects(f.verify(), /Packet report mismatch/);
+  });
+  await t.test("notice bytes", async (t) => {
+    const f = await fixture(t);
+    await f.packet();
+    const name = f.input.components[0].notices[0].path;
+    const bytes = "Modified notice terms\n";
+    await writeFile(path.join(f.output, name), bytes);
+    const sumsPath = path.join(f.output, "SHA256SUMS");
+    const sums = (await readFile(sumsPath, "utf8")).split("\n");
+    const index = sums.findIndex((line) => line.endsWith(`  ${name}`));
+    assert.ok(index >= 0);
+    sums[index] = `${sha256(bytes)}  ${name}`;
+    await writeFile(sumsPath, sums.join("\n"));
+    await assert.rejects(f.verify(), /Packet notice/);
+  });
+});
+
 test("SPDX file analysis describes actual artifact files and keeps metadata packages unanalyzed", async (t) => {
   for (const kind of ["native-runner", "control-plane"]) {
     const f = await fixture(t, kind);
