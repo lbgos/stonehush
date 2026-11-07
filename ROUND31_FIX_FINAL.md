@@ -8,6 +8,8 @@ Finding: CodeRabbit 4503941807 on PR 208.
 - Confirmed head tree: `65a23c163a5fff5f6a5b8cb9e59ff90428db322d`
 - Fix commit head: `0ff62f13cc91dace1a67c42633e6b3cd6a597a91`
 - Fix commit tree: `c9fffed16f61735a0dd14fae699abe374951a17d`
+- Final branch head: `fd0aa9336a5a8dbc0d81ad44ba498bfc16fab77f`
+- Final branch tree: `f1da7d38ceb63ff85ada151d4f97a79dcb64e771`
 - PR base: `main` at `09c56feb228073f5fd8ab88030d12940f25dd57c`
 - Requested branch: `t3/release-component-inventory`
 
