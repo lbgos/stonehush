@@ -33,6 +33,15 @@ test("Chrome startup waits for a valid port without changing the polling deadlin
   assert.equal(chrome.stderr.listenerCount("data"), 0);
 });
 
+test("Chrome startup rejects a port that appears as the process exits", async (t) => {
+  const { chrome, profile } = await startupFixture(t);
+  let exitReads = 0;
+  Object.defineProperty(chrome, "exitCode", { configurable: true, get: () => exitReads++ === 0 ? null : 9 });
+  chrome.stderr.write("FATAL startup race\n");
+  await writeFile(path.join(profile, "DevToolsActivePort"), "43210\n");
+  await assert.rejects(waitForChromePort(chrome, profile, noWait), { message: "Chrome CDP startup failed: exit=9, signal=none, stderr=fatal." });
+});
+
 test("Chrome startup distinguishes spawn failure and early process exit without private output", async (t) => {
   for (const code of ["ENOENT", "EACCES", "EPERM", privateText]) {
     const { chrome, profile } = await startupFixture(t);

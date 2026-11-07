@@ -708,6 +708,8 @@ export async function imagePacket(imageId, archive, metadata, host, output, veri
   const { tmpdir } = await import("node:os");
   const temporary = await mkdtemp(path.join(tmpdir(), "stonehush-image-inventory-"));
   let container;
+  let operationError;
+  let result;
   try {
     assert.equal(imageId, metadata.imageId, "Image metadata identity mismatch.");
     const image = JSON.parse(execFileSync("docker", ["image", "inspect", "--format={{json .}}", imageId], { encoding: "utf8", timeout: 30000, maxBuffer: MAX_METADATA }));
@@ -735,12 +737,21 @@ export async function imagePacket(imageId, archive, metadata, host, output, veri
     const actualTools = await inspectToolPackages(await discoverToolRoots(temporary));
     assert.deepEqual(actualTools.manifests, system.bundledToolManifests, "Final bundled tool component/manifest omission.");
     assert.deepEqual(actualTools.relationships, sorted(system.relationships.filter((edge) => edge.type === "DEPENDS_ON")), "Final bundled tool dependency omission.");
-    if (verifyOnly) return await verifyPacket(output, artifact, archive, metadata, host);
-    await writePacket(artifact, archive, metadata, host, output);
+    result = verifyOnly ? await verifyPacket(output, artifact, archive, metadata, host) : await writePacket(artifact, archive, metadata, host, output);
+  } catch (error) {
+    operationError = error;
   } finally {
-    if (container && /^[a-f0-9]{64}$/.test(container)) execFileSync("docker", ["rm", container], { timeout: 30000, maxBuffer: MAX_METADATA });
-    await rm(temporary, { recursive: true, force: true });
+    let cleanupError;
+    if (container && /^[a-f0-9]{64}$/.test(container)) {
+      try { execFileSync("docker", ["rm", container], { timeout: 30000, maxBuffer: MAX_METADATA }); }
+      catch (error) { cleanupError = error; }
+    }
+    try { await rm(temporary, { recursive: true, force: true }); }
+    catch (error) { cleanupError ??= error; }
+    if (operationError) throw operationError;
+    if (cleanupError) throw cleanupError;
   }
+  return result;
 }
 
 async function main() {

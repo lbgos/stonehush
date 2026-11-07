@@ -54,6 +54,7 @@ export async function waitForChromePort(chrome, profile, pause = delay) {
         if (error.code !== "ENOENT") throw new Error("Chrome CDP startup failed: port file unreadable.");
       }
       if (value !== undefined) {
+        if (chrome.exitCode !== null || chrome.signalCode !== null) throw new Error(`Chrome CDP startup failed: ${diagnostic()}.`);
         const port = Number(value.split("\n")[0]);
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("Chrome CDP startup failed: invalid port file.");
         return port;

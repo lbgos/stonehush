@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -502,19 +502,22 @@ test("image packet independently verifies copied final Node and Debian bytes", a
   for (const [location, record] of Object.entries(observed.manifests)) f.system.components.push({ id: id(`final-image-bundled-tool:${location}`), kind: "npm", scope: "final-image-bundled-tool", location, name: record.manifest.name, version: record.manifest.version, manifestSha256: record.manifestSha256, declaredLicense: record.manifest.license, notices: f.input.components[0].notices, unresolved: [] });
   await f.save();
   const executable = path.join(f.root, "docker");
+  const dockerRecord = path.join(f.root, "docker-record");
   await writeFile(executable, `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
 if (args[0] === 'image') process.stdout.write(JSON.stringify({Id:${JSON.stringify(f.metadata.imageId)},Config:{Labels:{'org.opencontainers.image.revision':${JSON.stringify(f.metadata.revision)},'dev.stonehush.source-tree':${JSON.stringify(f.metadata.tree)}}}}));
 else if (args[0] === 'create') process.stdout.write('d'.repeat(64));
-else if (args[0] === 'rm') process.exit(0);
+else if (args[0] === 'rm') { if (fs.existsSync(${JSON.stringify(`${dockerRecord}.fail-rm`)})) { process.stderr.write('container cleanup failure\\n'); process.exit(23); } process.exit(0); }
 else if (args[0] === 'cp') {
   const source = args[1].split(':').slice(1).join(':');
+  fs.writeFileSync(${JSON.stringify(dockerRecord)}, path.dirname(args[2]));
   if (source === '/opt/stonehush/.') fs.cpSync(${JSON.stringify(f.artifact)},args[2],{recursive:true,verbatimSymlinks:true});
   else if (source === '/usr/local/bin/node') fs.copyFileSync(${JSON.stringify(path.join(f.artifact, "node"))},args[2]);
   else if (source === '/usr/local/lib/node_modules/.') fs.cpSync(${JSON.stringify(path.join(f.root, 'actual-image/usr/local/lib/node_modules'))},args[2],{recursive:true});
   else if (source === '/opt/.') fs.cpSync(${JSON.stringify(path.join(f.root, 'actual-image/opt'))},args[2],{recursive:true});
+  else if (source === '/var/lib/dpkg/status' && fs.existsSync(${JSON.stringify(`${dockerRecord}.fail-status`)})) { process.stderr.write('status copy failure\\n'); process.exit(22); }
   else if (source === '/var/lib/dpkg/status') fs.copyFileSync(${JSON.stringify(path.join(f.root, "debian-status"))},args[2]);
   else process.exit(12);
 } else process.exit(11);
@@ -539,6 +542,18 @@ else if (args[0] === 'cp') {
     Object.assign(f.system, original); await f.save();
     await writeFile(path.join(f.root, "debian-status"), `${status}Package: omitted\nStatus: install ok installed\nVersion: 2\nArchitecture: amd64\n\n`);
     await assert.rejects(imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, f.output, true), /Final image Debian status mismatch/);
+    await writeFile(path.join(f.root, "debian-status"), status);
+    await rm(path.join(f.root, "docker-record"), { force: true });
+    await writeFile(`${dockerRecord}.fail-rm`, "");
+    const cleanupOutput = path.join(f.root, "cleanup-packet");
+    await assert.rejects(imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, cleanupOutput), /container cleanup failure/);
+    const temporary = (await readFile(dockerRecord, "utf8")).trim();
+    await assert.rejects(access(temporary), { code: "ENOENT" });
+    await rm(cleanupOutput, { recursive: true, force: true });
+    await writeFile(`${dockerRecord}.fail-status`, "");
+    await assert.rejects(imagePacket(f.metadata.imageId, f.archive, f.metadata, f.host, cleanupOutput), /status copy failure/);
+    const failedTemporary = (await readFile(dockerRecord, "utf8")).trim();
+    await assert.rejects(access(failedTemporary), { code: "ENOENT" });
   } finally { process.env.PATH = previousPath; }
 });
 
